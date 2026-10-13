@@ -1,0 +1,214 @@
+// Types mirrored from the Rust backend (serde camelCase).
+
+/** User-selected colour theme. "system" follows the OS appearance. */
+export type ThemeMode = "system" | "light" | "dark";
+
+export interface Course {
+  id: number;
+  externalCourseId: string;
+  name: string;
+  shortName: string | null;
+  url: string;
+  firstSeenAt: string;
+  lastScannedAt: string | null;
+  lastScanStatus: string | null;
+  monitoringStatus: string;
+  resourceCount: number;
+}
+
+export interface Resource {
+  id: number;
+  externalResourceId: string;
+  courseId: number | null;
+  courseName: string | null;
+  title: string;
+  /** Direct file / download URL of the resource. */
+  url: string;
+  /** Original page where the resource's link was listed (course, section or
+   * folder page). `null` until discovery has captured a listing page. */
+  sourcePageUrl: string | null;
+  resourceType: string;
+  uploadedAt: string | null;
+  publishedAt: string | null;
+  modifiedAt: string | null;
+  dueAt: string | null;
+  firstSeenAt: string;
+  lastSeenAt: string | null;
+  lastCheckedAt: string | null;
+  contentFingerprint: string | null;
+  availabilityStatus: string;
+  sizeBytes: number | null;
+  section: string | null;
+  /** Ordered real Quanta section and nested page names; empty until discovered. */
+  sectionPath?: string[];
+  isExternal: boolean;
+}
+
+export interface ChangeEvent {
+  id: number;
+  resourceId: number | null;
+  courseId: number | null;
+  courseName: string | null;
+  resourceTitle: string | null;
+  resourceUrl: string | null;
+  /** Listing page of the resource, when the linked resource row knows one. */
+  sourcePageUrl: string | null;
+  sectionPath?: string[];
+  resourceType: string | null;
+  uploadedAt: string | null;
+  changeType: string;
+  title: string;
+  description: string | null;
+  detectedAt: string;
+  read: boolean;
+}
+
+export interface ScanRun {
+  id: number;
+  startedAt: string;
+  completedAt: string | null;
+  status: string;
+  discoveredCount: number;
+  newCount: number;
+  updatedCount: number;
+  unavailableCount: number;
+  coursesScanned: number;
+  coursesFailed: number;
+  errorSummary: string | null;
+  isBaseline: boolean;
+}
+
+export interface SyncStatus {
+  running: boolean;
+  phase: string;
+  progress: number;
+  lastSuccessAt: string | null;
+  nextScheduledAt: string | null;
+  /** Unread new/announcement events — never a "since last scan" window. */
+  unreadNew: number;
+  lastError: string | null;
+  authState: string;
+}
+
+export interface AuthStatus {
+  authenticated: boolean;
+  email: string | null;
+  fullName: string | null;
+  method: string | null;
+  acquiredAt: string | null;
+  sessionExpired: boolean;
+}
+
+export interface SessionRefreshResult {
+  status: "restored" | "login_required" | "failed";
+  message: string;
+}
+
+export interface SessionResetResult {
+  status: "connected" | "login_required" | "failed";
+  message: string;
+}
+
+export interface Settings {
+  syncIntervalMinutes: number;
+  launchAtLogin: boolean;
+  runInBackground: boolean;
+  notificationsEnabled: boolean;
+  notifyNew: boolean;
+  notifyUpdated: boolean;
+  notifyAnnouncements: boolean;
+  notifyDeadlines: boolean;
+  notifyAvailability: boolean;
+  notifyAuth: boolean;
+  quietHoursStart: string | null;
+  quietHoursEnd: string | null;
+  deadlineReminderHours: number;
+  timezone: string;
+  maxCourses: number;
+  maxResourcesPerCourse: number;
+  maxDetailFetches: number;
+  requestTimeoutSecs: number;
+  concurrency: number;
+}
+
+export interface Digest {
+  date: string;
+  newCount: number;
+  updatedCount: number;
+  announcementCount: number;
+  deadlineCount: number;
+  unavailableCount: number;
+  coursesFailed: number;
+  lastSuccessAt: string | null;
+  items: ChangeEvent[];
+}
+
+export interface ScanOutcome {
+  discovered: number;
+  new: number;
+  updated: number;
+  unavailable: number;
+  coursesScanned: number;
+  coursesFailed: number;
+  errors: string[];
+  authExpired: boolean;
+  cancelled: boolean;
+}
+
+export interface DbInfo {
+  path: string;
+  sizeBytes: number;
+  courseCount: number;
+  resourceCount: number;
+  eventCount: number;
+  logDir: string | null;
+}
+
+export interface ResourceFilter {
+  courseId?: number | null;
+  search?: string | null;
+  kind?: string | null;
+  limit?: number;
+  offset?: number;
+}
+
+/** How a binary resource preview is rendered in the webview. */
+export type PreviewMode = "pdf" | "image" | "audio" | "video";
+
+/**
+ * Result of the on-demand `preview_resource` command. Tagged by `kind` and
+ * mirrors the Rust `ResourcePreview` enum exactly.
+ *
+ * - `text` — readable text extracted from an HTML/text response.
+ * - `binary` — base64 bytes plus the renderer `mode` and `mime`.
+ * - `unsupported` — a type the webview cannot render; open it externally.
+ * - `tooLarge` — exceeded `limitBytes`; open it externally.
+ */
+export type ResourcePreview =
+  | {
+      kind: "text";
+      text: string;
+      truncated: boolean;
+      sourceUrl: string;
+      contentType: string | null;
+    }
+  | {
+      kind: "binary";
+      mode: PreviewMode;
+      mime: string;
+      data: string;
+      sourceUrl: string;
+      sizeBytes: number;
+    }
+  | {
+      kind: "unsupported";
+      reason: string;
+      sourceUrl: string;
+      contentType: string | null;
+    }
+  | {
+      kind: "tooLarge";
+      sizeBytes: number | null;
+      limitBytes: number;
+      sourceUrl: string;
+    };

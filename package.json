@@ -1,0 +1,41 @@
+{
+  "name": "quanta-pulse",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Minimal native macOS tracker for BITS Pilani Quanta LMS.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint . --max-warnings 0",
+    "app:dev": "tauri dev",
+    "app:build": "tauri build --bundles app && bash scripts/make-dmg.sh",
+    "app:build:dmg": "bash scripts/make-dmg.sh",
+    "icon": "tauri icon"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-autostart": "^2",
+    "@tauri-apps/plugin-notification": "^2",
+    "@tauri-apps/plugin-opener": "^2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@tauri-apps/cli": "^2",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "eslint": "^9.17.0",
+    "globals": "^15.14.0",
+    "jsdom": "^25.0.1",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.18.0",
+    "vite": "^6.0.5",
+    "vitest": "^2.1.8"
+  }
+}

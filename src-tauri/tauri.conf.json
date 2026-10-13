@@ -1,0 +1,48 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Quanta Pulse",
+  "version": "0.1.0",
+  "identifier": "com.quantapulse.desktop",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Quanta Pulse",
+        "width": 1040,
+        "height": 720,
+        "minWidth": 820,
+        "minHeight": 540,
+        "resizable": true,
+        "titleBarStyle": "Visible"
+      }
+    ],
+    "security": {
+      "csp": null
+    },
+    "macOSPrivateApi": false
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app"],
+    "category": "Education",
+    "shortDescription": "Minimal tracker for BITS Pilani Quanta LMS",
+    "longDescription": "Quanta Pulse discovers your Quanta courses and resources, checks for new uploads every hour, and shows accurate upload timestamps in a minimal local-first dashboard.",
+    "copyright": "Quanta Pulse",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    }
+  }
+}

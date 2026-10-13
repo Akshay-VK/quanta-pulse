@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+src-tauri/target/
+
+# macOS application and installers
+*.dmg
+*.app/
+
+# Windows installers
+*.exe
+*.msi
+
+# Build metadata
+*.tsbuildinfo
+
+# macOS system files
+.DS_Store
+
+# Logs
+*.log
+*.tmp
+
+# Environment files and secrets
+.env
+.env.*
+!.env.example
+
+# Private keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Editor settings
+.idea/
+.vscode/
