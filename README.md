@@ -1,6 +1,6 @@
 # Quanta Pulse
 
-A minimal, local-first macOS app that watches **BITS Pilani Quanta** (Moodle) for
+A minimal, local-first desktop app that watches **BITS Pilani Quanta** (Moodle) for
 you. It signs in to Quanta, discovers every course and resource you can access,
 checks once an hour, and surfaces new uploads, announcements, updated material,
 and deadlines — with **accurate upload timestamps** and native notifications.
@@ -8,6 +8,75 @@ and deadlines — with **accurate upload timestamps** and native notifications.
 Quanta Pulse is a native desktop app: Tauri 2 + Rust on the backend, React +
 TypeScript on the frontend and SQLite for local state. Session material stays
 in memory for the current run. There is no server, no analytics, and no telemetry.
+
+---
+
+## Installation and build (quick start)
+
+Choose the instructions for your operating system. These steps build the app from source; a prebuilt installer is not currently provided here.
+
+### Windows 10/11
+
+**Prerequisites**
+
+- [Node.js 18 or newer](https://nodejs.org/)
+- [Rust (stable)](https://www.rust-lang.org/tools/install)
+- [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) with **Desktop development with C++** selected
+- [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) (usually already present on Windows 10/11)
+- Git for Windows, if Git is not already installed
+
+**Build**
+
+Open PowerShell or Windows Terminal and run:
+
+```powershell
+# Install npm if it is not already installed (with Node.js, via the official installer)
+winget install OpenJS.NodeJS.LTS
+
+# Clone the repository and enter it
+git clone https://github.com/advayvguy/quanta-pulse.git
+cd quanta-pulse
+
+# Install frontend dependencies
+npm install
+
+# Build a Windows installer (NSIS)
+npx tauri build --bundles nsis
+```
+
+The installer should be in `src-tauri/target/release/bundle/nsis/`. If the build reports a missing Windows build tool, install the prerequisites above and reopen the terminal. `npm run app:build` is the macOS script; it calls a Bash/DMG packaging script and is not the Windows build command.
+
+To run the app locally during development, use `npm run app:dev` from the repository directory.
+
+### macOS
+
+**Prerequisites:** Node.js 18 or newer, Rust (stable), and Xcode Command Line Tools.
+
+```bash
+# Install npm if needed (Node.js includes npm)
+brew install node
+
+# Clone the repository and enter it
+git clone https://github.com/advayvguy/quanta-pulse.git
+cd quanta-pulse
+
+# Install frontend dependencies
+npm install
+
+# Build the .app and .dmg
+npm run app:build
+```
+
+The app bundle and disk image are written under `src-tauri/target/release/bundle/`.
+
+### Create a shortcut (optional)
+
+You can create a shortcut so you do not need to repeat the terminal commands:
+
+- **Windows:** after building, open `src-tauri\target\release\bundle\nsis\` and run the installer. Once installed, find **Quanta Pulse** in the Start menu, right-click it, and choose **Pin to Start**, **Pin to taskbar**, or **Open file location** to create a desktop shortcut. You can also right-click the installed app shortcut and choose **Send to → Desktop (create shortcut)** where available.
+- **macOS:** open `src-tauri/target/release/bundle/macos/`, then drag `Quanta Pulse.app` to Applications. To make a Dock shortcut, open the app and right-click its Dock icon → **Options → Keep in Dock**.
+
+For development, you can also save the commands in a `.ps1` PowerShell script (Windows) or `.command` shell script (macOS) and run that file when needed. Building still requires the relevant development tools to be installed.
 
 ---
 
@@ -27,25 +96,15 @@ in memory for the current run. There is no server, no analytics, and no telemetr
   request never looks like a deletion — a resource must miss repeatedly before
   it is marked unavailable, and history is never erased.
 - **Quiet, dense UI.** A white dashboard with one accent colour, compact rows,
-  filters, search, and a daily digest. A monochrome menu-bar icon keeps
-  monitoring visible while the window is closed.
+  filters, search, and a daily digest. On macOS, a monochrome menu-bar icon keeps monitoring visible while the window is closed.
 
 ---
 
 ## Requirements
 
-- macOS 10.15+ (Apple Silicon first; Intel works too)
-- For development: Node.js 18+, Rust (stable), Xcode Command Line Tools
-
-## Getting started (development)
-
-```bash
-# 1. Install frontend dependencies
-npm install
-
-# 2. Run the app in development
-npm run app:dev          # launches the Tauri window with hot reload
-```
+- **macOS:** macOS 10.15+ (Apple Silicon first; Intel works too), Node.js 18+, Rust (stable), and Xcode Command Line Tools.
+- **Windows:** Windows 10/11, Node.js 18+, Rust (stable), Microsoft C++ Build Tools with **Desktop development with C++**, and the WebView2 Runtime.
+- For development on either platform, install dependencies with `npm install` and launch with `npm run app:dev`.
 
 Useful scripts:
 
@@ -61,6 +120,8 @@ Useful scripts:
 
 ## Building a distributable app
 
+### macOS
+
 ```bash
 npm run app:build
 ```
@@ -71,13 +132,25 @@ Outputs land in `src-tauri/target/release/bundle/`:
 - `dmg/Quanta Pulse_<version>_<arch>.dmg` — a compressed disk image
 
 `app:build` first compiles the app bundle, then creates the DMG with
-`scripts/make-dmg.sh` (a small `hdiutil` wrapper). Tauri's own DMG bundler drives
-Finder/AppleScript to lay out the window and fails in non-interactive sessions,
-so the wrapper produces an equivalent image reliably. To re-create only the DMG
+`scripts/make-dmg.sh` (a small `hdiutil` wrapper). To re-create only the DMG
 after a build, run `npm run app:build:dmg`.
 
-The build is unsigned unless you provide signing credentials (see
-[Packaging & distribution](#packaging--distribution)).
+### Windows
+
+Run this from PowerShell or Windows Terminal in the repository root:
+
+```powershell
+npm install
+npx tauri build --bundles nsis
+```
+
+The NSIS installer is expected under `src-tauri/target/release/bundle/nsis/`.
+The macOS-specific `npm run app:build` script should not be used on Windows
+because it invokes `scripts/make-dmg.sh`.
+
+The macOS build is unsigned unless you provide signing credentials (see
+[Packaging & distribution](#packaging--distribution)). Windows installer signing
+is not configured by this repository's current instructions.
 
 ---
 
