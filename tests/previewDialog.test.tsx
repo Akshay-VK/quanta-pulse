@@ -1,5 +1,5 @@
-// Resource preview panel scenario test: the authenticated fetch result is
-// rendered in-app for text and binary kinds, unsupported/error states explain
+// Preview dialog scenario test: the authenticated fetch result is rendered
+// in-app for text and binary kinds, unsupported/error states explain
 // themselves, and the original resource is always reachable.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,7 +12,8 @@ vi.mock("../src/lib/api", () => ({
 }));
 
 import { api } from "../src/lib/api";
-import ResourcePreviewPanel from "../src/components/ResourcePreviewPanel";
+import PreviewDialog from "../src/components/PreviewDialog";
+import { TooltipProvider } from "../src/components/ui/Tooltip";
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;
@@ -69,24 +70,35 @@ async function flush() {
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 5; i += 1) {
     await act(async () => {
       await Promise.resolve();
     });
   }
 }
 
-async function render(resource: Resource, handlers: { onClose?: () => void; onOpen?: (u: string) => void } = {}) {
-  const onClose = handlers.onClose ?? vi.fn();
+async function render(
+  resource: Resource,
+  handlers: { onOpen?: (u: string) => void } = {},
+) {
   const onOpen = handlers.onOpen ?? vi.fn();
   await act(async () => {
-    root.render(<ResourcePreviewPanel resource={resource} onClose={onClose} onOpen={onOpen} />);
+    root.render(
+      <TooltipProvider>
+        <PreviewDialog resource={resource} open onOpenChange={() => {}} onOpen={onOpen} />
+      </TooltipProvider>,
+    );
   });
   await flush();
-  return { onClose, onOpen };
+  return { onOpen };
 }
 
-describe("ResourcePreviewPanel", () => {
+/** The dialog is portalled, so its content lives outside `container`. */
+function dialog(): HTMLElement {
+  return document.querySelector(".dialog-content") as HTMLElement;
+}
+
+describe("PreviewDialog", () => {
   it("renders extracted text and opens the original resource", async () => {
     vi.mocked(api.previewResource).mockResolvedValue({
       kind: "text",
@@ -99,10 +111,10 @@ describe("ResourcePreviewPanel", () => {
     const { onOpen } = await render(resource);
 
     expect(api.previewResource).toHaveBeenCalledWith(7);
-    expect(container.querySelector(".preview-text")?.textContent).toContain("Assignment 1");
+    expect(dialog().querySelector(".preview-text")?.textContent).toContain("Assignment 1");
 
-    const openBtn = [...container.querySelectorAll("button")].find(
-      (b) => b.textContent === "Open Original Resource",
+    const openBtn = [...dialog().querySelectorAll("button")].find(
+      (b) => b.textContent === "Open in Quanta",
     ) as HTMLButtonElement;
     await act(async () => openBtn.click());
     expect(onOpen).toHaveBeenCalledWith(resource.url);
@@ -119,7 +131,7 @@ describe("ResourcePreviewPanel", () => {
     });
     await render(buildResource());
 
-    const frame = container.querySelector("iframe.preview-frame") as HTMLIFrameElement;
+    const frame = dialog().querySelector("iframe.preview-frame") as HTMLIFrameElement;
     expect(frame).toBeTruthy();
     expect(frame.getAttribute("src")).toBe("blob:mock");
   });
@@ -132,7 +144,8 @@ describe("ResourcePreviewPanel", () => {
       contentType: null,
     });
     await render(buildResource({ resourceType: "presentation" }));
-    expect(container.textContent).toContain("can't be previewed");
+    expect(dialog().textContent).toContain("can't be previewed");
+    expect(dialog().textContent).toContain("Open in Quanta instead");
   });
 
   it("surfaces a fetch error and still offers the original", async () => {
@@ -140,7 +153,7 @@ describe("ResourcePreviewPanel", () => {
       "Your Quanta session expired. Sign in again to preview resources.",
     );
     await render(buildResource());
-    expect(container.textContent).toContain("session expired");
+    expect(dialog().textContent).toContain("session expired");
   });
 
   it("closes on Escape", async () => {
@@ -150,12 +163,27 @@ describe("ResourcePreviewPanel", () => {
       sourceUrl: "https://x",
       contentType: null,
     });
-    const onClose = vi.fn();
-    await render(buildResource(), { onClose });
+    let open = true;
+    const onOpenChange = vi.fn((next: boolean) => {
+      open = next;
+    });
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <PreviewDialog
+            resource={buildResource()}
+            open={open}
+            onOpenChange={onOpenChange}
+            onOpen={() => {}}
+          />
+        </TooltipProvider>,
+      );
+    });
+    await flush();
 
     await act(async () => {
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     });
-    expect(onClose).toHaveBeenCalled();
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 });

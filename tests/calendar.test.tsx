@@ -1,7 +1,7 @@
-// Calendar view scenario test: month dots and the selected-day summary both
-// come from stored events, month navigation refetches the right bounds, and
-// the activity list stays interactive. Runs against the real component with a
-// stubbed `api` (no Tauri runtime needed).
+// Calendar view scenario test: month dots and the selected-day digest both come
+// from stored events, month navigation refetches the right bounds, and the day
+// panel stays interactive. Runs against the real component with a stubbed `api`
+// (no Tauri runtime needed).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
@@ -17,6 +17,7 @@ vi.mock("../src/lib/api", () => ({
 
 import { api } from "../src/lib/api";
 import CalendarView from "../src/views/CalendarView";
+import { TooltipProvider } from "../src/components/ui/Tooltip";
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;
@@ -97,14 +98,23 @@ async function flush() {
 async function renderCalendar() {
   await act(async () => {
     root.render(
-      <CalendarView events={[]} courses={[buildCourse()]} onOpen={() => {}} />,
+      <TooltipProvider>
+        <CalendarView courses={[buildCourse()]} onOpen={() => {}} onOpenScan={() => {}} />
+      </TooltipProvider>,
     );
   });
   await flush();
 }
 
+function statValue(label: string): string | undefined {
+  const block = [...container.querySelectorAll(".stat-block")].find(
+    (el) => el.querySelector(".stat-label")?.textContent === label,
+  );
+  return block?.querySelector(".stat-value")?.textContent?.trim();
+}
+
 describe("CalendarView", () => {
-  it("draws day dots and the selected-day summary from stored events", async () => {
+  it("draws day dots and the selected-day digest from stored events", async () => {
     const now = new Date();
     const y = now.getFullYear();
     const m = now.getMonth();
@@ -134,33 +144,19 @@ describe("CalendarView", () => {
     expect(api.eventsRange).toHaveBeenCalledWith(from, to);
     expect(api.dailyDigest).toHaveBeenCalledWith(selected);
 
-    const selectedBtn = container.querySelector(
-      ".calendar-day.selected",
-    ) as HTMLButtonElement | null;
+    const selectedBtn = container.querySelector(".cal-day.selected") as HTMLButtonElement | null;
     expect(selectedBtn).toBeTruthy();
-    expect(selectedBtn!.querySelector(".calendar-day-num")?.textContent).toBe(String(day));
+    expect(selectedBtn!.querySelector(".cal-num")?.textContent).toBe(String(day));
     // A semantic dot on the day with activity.
     expect(selectedBtn!.querySelector(".cal-dot.ev-new")).toBeTruthy();
 
-    // Selected-day summary shows new-upload and failed-course figures.
-    const uploads = [...container.querySelectorAll(".day-summary .kv")].find((el) =>
-      el.textContent?.includes("New uploads"),
-    );
-    expect(uploads?.querySelector("dd")?.textContent?.trim()).toBe("1");
-    const failed = [...container.querySelectorAll(".day-summary .kv")].find((el) =>
-      el.textContent?.includes("could not be scanned"),
-    );
-    expect(failed?.querySelector("dd")?.textContent?.trim()).toBe("1");
+    // The day digest shows the new-upload and failed-course figures.
+    expect(statValue("New")).toBe("1");
+    expect(statValue("Courses failed")).toBe("1");
 
-    // Ordered activity list with the resource title and working links: the
-    // primary "Open" targets the listing page, "Open File" the direct file.
     expect(container.textContent).toContain("Worksheet-9.pdf");
     expect(container.textContent).toContain("MATH F211");
-    const links = [...container.querySelectorAll(".day-panel .btn-link")].map(
-      (el) => el.textContent,
-    );
-    expect(links).toContain("Open");
-    expect(links).toContain("Open File");
+    expect(container.querySelector(".cal-panel .resource-row")).toBeTruthy();
   });
 
   it("shows a clear empty state for a day without activity", async () => {
@@ -180,8 +176,8 @@ describe("CalendarView", () => {
 
     await renderCalendar();
 
-    expect(container.textContent).toContain("No activity recorded for this day.");
-    expect(container.textContent).toContain("none");
+    expect(container.textContent).toContain("No activity on this day");
+    expect(container.textContent).toContain("No scans ran on this day");
   });
 
   it("refetches the next month when navigating", async () => {

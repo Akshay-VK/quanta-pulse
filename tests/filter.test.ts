@@ -3,6 +3,7 @@ import {
   activityTimestamp,
   filterResources,
   groupByDate,
+  isBaselineResource,
   matchesKind,
   sortByRecency,
   statusLabel,
@@ -199,5 +200,36 @@ describe("groupByDate", () => {
     const groups = groupByDate(list, now);
     expect(groups).toHaveLength(1);
     expect(groups[0].items.map((r) => r.id)).toEqual([2, 1]);
+  });
+});
+
+describe("isBaselineResource", () => {
+  const now = new Date("2026-10-15T12:00:00Z");
+
+  it("treats an untouched discovered file as baseline", () => {
+    expect(isBaselineResource(resource(), undefined, now)).toBe(true);
+  });
+
+  it("keeps any file that produced a change event", () => {
+    const kinds = new Map([[1, new Set(["new"])]]);
+    expect(isBaselineResource(resource(), kinds, now)).toBe(false);
+  });
+
+  it("keeps an unavailable file, which has its own row to explain", () => {
+    expect(isBaselineResource(resource({ availabilityStatus: "unavailable" }), undefined, now)).toBe(
+      false,
+    );
+  });
+
+  it("keeps a file with a future deadline even without an event", () => {
+    expect(
+      isBaselineResource(resource({ dueAt: "2026-11-01T00:00:00Z" }), undefined, now),
+    ).toBe(false);
+  });
+
+  it("treats an already-due file with no event as baseline", () => {
+    expect(
+      isBaselineResource(resource({ dueAt: "2026-10-01T00:00:00Z" }), undefined, now),
+    ).toBe(true);
   });
 });

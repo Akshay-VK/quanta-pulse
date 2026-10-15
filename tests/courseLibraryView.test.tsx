@@ -1,18 +1,42 @@
+// Course page scenario test: the section tree expands and collapses, search
+// flattens results with paths and highlights, filters narrow the tree, and
+// the ARIA tree keyboard model moves a roving selection.
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import CourseLibrary from "../src/components/CourseLibrary";
 import type { Course, Resource } from "../src/lib/types";
 
 vi.mock("../src/lib/api", () => ({
   api: {
+    listResources: vi.fn(),
+    setMonitoring: vi.fn(),
+    rebuildBaseline: vi.fn(),
     previewResource: vi.fn().mockRejectedValue(new Error("preview unavailable")),
+    eventsRange: vi.fn().mockResolvedValue([]),
   },
 }));
+
+import { api } from "../src/lib/api";
+import CoursePage from "../src/views/library/CoursePage";
+import { TooltipProvider } from "../src/components/ui/Tooltip";
+
+class ResizeObserverMock {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;
 }
+
+globalThis.ResizeObserver = ResizeObserverMock as unknown as typeof ResizeObserver;
+// jsdom lacks scrollIntoView and the pointer-capture methods Radix Select uses.
+Element.prototype.scrollIntoView = () => {};
+Element.prototype.hasPointerCapture = () => false;
+Element.prototype.releasePointerCapture = () => {};
+Element.prototype.setPointerCapture = () => {};
 
 function makeCourse(overrides: Partial<Course> = {}): Course {
   return {
@@ -30,7 +54,12 @@ function makeCourse(overrides: Partial<Course> = {}): Course {
   };
 }
 
-function makeResource(id: number, title: string, sectionPath: string[], overrides: Partial<Resource> = {}): Resource {
+function makeResource(
+  id: number,
+  title: string,
+  sectionPath: string[],
+  overrides: Partial<Resource> = {},
+): Resource {
   return {
     id,
     externalResourceId: `resource-${id}`,
@@ -60,8 +89,10 @@ function makeResource(id: number, title: string, sectionPath: string[], override
 const initialResources = [
   makeResource(1, "Lecture One", ["Worksheets Folder", "Tutorial Set", "Week 1"]),
   makeResource(2, "Lecture Two", ["Worksheets Folder", "Tutorial Set", "Week 1"]),
-  makeResource(3, "Notice", ["Notices"]),
-  makeResource(4, "Consultation material", ["Section-4: Consultation Hour with a deliberately long heading"], { sourcePageUrl: null }),
+  makeResource(3, "Notice", ["Notices"], { resourceType: "announcement" }),
+  makeResource(4, "Consultation material", [
+    "Section-4: Consultation Hour with a deliberately long heading",
+  ], { sourcePageUrl: null }),
 ];
 
 let container: HTMLDivElement;
@@ -72,6 +103,9 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
+  vi.mocked(api.listResources).mockReset().mockResolvedValue(initialResources);
+  vi.mocked(api.setMonitoring).mockReset();
+  vi.mocked(api.rebuildBaseline).mockReset();
 });
 
 afterEach(() => {
@@ -80,145 +114,253 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-async function render(resources: Resource[], options: { loading?: boolean; error?: string | null; onOpen?: (url: string) => void; onRetry?: () => void } = {}) {
+async function render(
+  resources: Resource[] | null = initialResources,
+  options: {
+    course?: Course;
+    failWith?: string;
+    onOpen?: (url: string) => void;
+    onChanged?: () => void;
+    onSyncNow?: () => void;
+    onPreview?: (resource: Resource) => void;
+  } = {},
+) {
+  if (options.failWith) {
+    vi.mocked(api.listResources).mockRejectedValue(new Error(options.failWith));
+  } else if (resources === null) {
+    vi.mocked(api.listResources).mockReturnValue(new Promise(() => {}));
+  } else {
+    vi.mocked(api.listResources).mockResolvedValue(resources);
+  }
   await act(async () => {
     root.render(
-      <CourseLibrary
-        course={makeCourse({ resourceCount: resources.length })}
-        resources={resources}
-        loading={options.loading ?? false}
-        error={options.error ?? null}
-        onRetry={options.onRetry ?? (() => {})}
-        onOpen={options.onOpen ?? (() => {})}
-      />,
+      <TooltipProvider>
+        <CoursePage
+          course={options.course ?? makeCourse()}
+          onOpen={options.onOpen ?? (() => {})}
+          onPreview={options.onPreview ?? (() => {})}
+          onChanged={options.onChanged ?? (() => {})}
+          onSyncNow={options.onSyncNow ?? (() => {})}
+        />
+      </TooltipProvider>,
     );
+  });
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
   });
 }
 
+function treeRows(): HTMLElement[] {
+  return [...container.querySelectorAll<HTMLElement>('[role="treeitem"]')];
+}
+
 function byLabel(label: string): HTMLButtonElement {
-  const button = [...container.querySelectorAll("button")].find((item) => item.getAttribute("aria-label") === label);
+  const button = [...container.querySelectorAll("button")].find(
+    (item) => item.getAttribute("aria-label") === label,
+  );
   if (!button) throw new Error(`Missing button with aria-label: ${label}`);
   return button as HTMLButtonElement;
 }
 
-function byTitle(title: string): HTMLButtonElement {
-  const button = [...container.querySelectorAll("button")].find((item) => item.getAttribute("title") === title);
-  if (!button) throw new Error(`Missing button with title: ${title}`);
+function byText(text: string): HTMLButtonElement {
+  const button = [...container.querySelectorAll("button")].find(
+    (item) => item.textContent === text,
+  );
+  if (!button) throw new Error(`Missing button with text: ${text}`);
   return button as HTMLButtonElement;
 }
 
-function byText(text: string): HTMLButtonElement {
-  const button = [...container.querySelectorAll("button")].find((item) => item.textContent?.trim() === text);
-  if (!button) throw new Error(`Missing button with text: ${text}`);
-  return button as HTMLButtonElement;
+/** The new toolbar affordance: start every case from a collapsed tree. */
+async function collapseAll() {
+  const button = [...container.querySelectorAll("button")].find(
+    (item) => item.textContent === "Collapse all",
+  );
+  // Already collapsed — e.g. the previous case left it that way in the
+  // per-course session memory.
+  if (!button) return;
+  await act(async () => button.click());
 }
 
 async function click(button: HTMLButtonElement) {
   await act(async () => button.click());
 }
 
-describe("CourseLibrary hierarchy", () => {
+async function typeSearch(text: string) {
+  const search = container.querySelector<HTMLInputElement>(
+    'input[aria-label="Search resources in this course"]',
+  )!;
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    setter?.call(search, text);
+    search.dispatchEvent(new Event("input", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  });
+}
+
+async function key(keyName: string, index = 0) {
+  const el = treeRows()[index];
+  if (!el) throw new Error(`Missing treeitem at index ${index}`);
+  // Focus first and flush so the keydown handler sees the updated activeIndex.
+  await act(async () => {
+    el.focus();
+  });
+  await act(async () => {
+    el.dispatchEvent(new KeyboardEvent("keydown", { key: keyName, bubbles: true }));
+  });
+}
+
+async function chooseOption(ariaLabel: string, itemText: string) {
+  const trigger = [...container.querySelectorAll("button")].find(
+    (el) => el.getAttribute("aria-label") === ariaLabel,
+  );
+  if (!trigger) throw new Error(`Missing select: ${ariaLabel}`);
+  // Radix Select triggers open on pointerdown, which jsdom's React integration
+  // does not deliver; the keyboard path opens it reliably in tests.
+  await act(async () => {
+    (trigger as HTMLButtonElement).focus();
+  });
+  await act(async () => {
+    (trigger as HTMLButtonElement).dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+    );
+  });
+  await act(async () => {
+    const item = [...document.body.querySelectorAll(".select-item")].find((el) =>
+      el.textContent?.includes(itemText),
+    );
+    if (!item) throw new Error(`Missing select item: ${itemText}`);
+    item.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+}
+
+describe("CoursePage tree", () => {
   it("expands and collapses the same sections repeatedly without duplicates", async () => {
-    await render(initialResources);
+    await render();
+    await collapseAll();
+    // Three top-level folders; every file lives inside a folder.
+    expect(treeRows()).toHaveLength(3);
+
     await click(byLabel("Expand Worksheets Folder"));
-    expect(container.textContent).toContain("Tutorial Set");
+    expect(treeRows()).toHaveLength(4);
     await click(byLabel("Expand Tutorial Set"));
-    expect(container.textContent).toContain("Week 1");
+    expect(treeRows()).toHaveLength(5);
+    await click(byLabel("Expand Week 1"));
+    expect(treeRows()).toHaveLength(7);
+    expect(container.textContent).toContain("Lecture One");
+    expect(container.textContent).toContain("Lecture Two");
 
     for (let i = 0; i < 3; i += 1) {
-      await click(byLabel("Collapse Tutorial Set"));
-      expect(container.querySelectorAll(".course-tree-navigate").length).toBe(4);
-      await click(byLabel("Expand Tutorial Set"));
-      expect(container.querySelectorAll(".course-tree-navigate").length).toBe(5);
+      await click(byLabel("Collapse Week 1"));
+      expect(treeRows()).toHaveLength(5);
+      await click(byLabel("Expand Week 1"));
+      expect(treeRows()).toHaveLength(7);
     }
-
-    await click(byLabel("Expand Week 1"));
-    expect(container.querySelectorAll(".library-row-title")).toHaveLength(2);
-    await click(byLabel("Collapse Week 1"));
-    await click(byLabel("Expand Week 1"));
-    expect(container.querySelectorAll(".library-row-title")).toHaveLength(2);
   });
 
-  it("keeps a single row structure at every depth and truncates long names", async () => {
-    await render(initialResources);
-    const longName = "Section-4: Consultation Hour with a deliberately long heading";
-    const longRow = byTitle(`Open section ${longName}`).closest(".course-tree-row") as HTMLElement;
-    const normalRow = byTitle("Open section Notices").closest(".course-tree-row") as HTMLElement;
-    expect(longRow.children).toHaveLength(4);
-    expect(normalRow.children).toHaveLength(4);
-    expect(longRow.querySelector("strong")?.getAttribute("title")).toBe(longName);
-    expect(longRow.querySelector(".course-tree-external-placeholder")).toBeTruthy();
-
+  it("shows folder counts, external links, and never duplicates file rows", async () => {
+    await render();
+    await collapseAll();
     await click(byLabel("Expand Worksheets Folder"));
     await click(byLabel("Expand Tutorial Set"));
-    const depths = [...container.querySelectorAll<HTMLElement>(".course-tree-row")]
-      .map((row) => row.style.getPropertyValue("--tree-depth"));
-    expect(depths).toContain("0");
-    expect(depths).toContain("1");
-    expect(depths).toContain("2");
+    await click(byLabel("Expand Week 1"));
+    const lectureRows = [...container.querySelectorAll(".tree-name")].filter(
+      (el) => el.textContent === "Lecture One" || el.textContent === "Lecture Two",
+    );
+    expect(lectureRows).toHaveLength(2);
+    expect(byLabel("Open Quanta page for Week 1")).toBeTruthy();
   });
 
-  it("keeps disclosure, section navigation, breadcrumbs, and external links independent", async () => {
-    const onOpen = vi.fn();
-    await render(initialResources, { onOpen });
-    const folder = [...container.querySelectorAll<HTMLElement>(".course-tree-node")]
-      .find((node) => node.querySelector('[title="Open section Worksheets Folder"]'))!;
-    const external = folder.querySelector<HTMLButtonElement>(".course-tree-external")!;
-    await click(external);
-    expect(onOpen).toHaveBeenCalledWith(initialResources[0].sourcePageUrl);
-    expect(byLabel("Expand Section-4: Consultation Hour with a deliberately long heading").getAttribute("aria-expanded")).toBe("false");
+  it("moves a roving selection with arrow keys and expands with ArrowRight", async () => {
+    await render();
+    await collapseAll();
+    await key("ArrowDown", 0);
+    expect(treeRows()[1].getAttribute("aria-selected")).toBe("true");
 
-    await click(byLabel("Expand Worksheets Folder"));
-    expect(byLabel("Collapse Worksheets Folder").getAttribute("aria-expanded")).toBe("true");
-    await click(byTitle("Open section Worksheets Folder"));
-    expect(container.querySelector(".library-breadcrumb")?.textContent).toBe("MATH F211/Worksheets Folder");
-    await click(byText("MATH F211"));
-    expect(container.querySelector(".library-breadcrumb")?.textContent).toBe("MATH F211");
-    expect(byLabel("Collapse Worksheets Folder").getAttribute("aria-expanded")).toBe("true");
+    await key("ArrowRight", 0);
+    expect(treeRows()[0].getAttribute("aria-expanded")).toBe("true");
+    await key("ArrowLeft", 0);
+    expect(treeRows()[0].getAttribute("aria-expanded")).toBe("false");
   });
 
-  it("preserves selection and expansion when synchronization replaces resource data", async () => {
-    await render(initialResources);
-    await click(byLabel("Expand Worksheets Folder"));
-    await click(byLabel("Expand Tutorial Set"));
-    await click(byTitle("Open section Worksheets Folder"));
-    const updated = [...initialResources, makeResource(5, "Lecture Three", ["Worksheets Folder", "Tutorial Set", "Week 1"])];
-    await render(updated);
-
-    expect(container.querySelector(".library-breadcrumb")?.textContent).toContain("Worksheets Folder");
-    expect(container.textContent).toContain("3 descendant resources in Worksheets Folder");
-    expect(container.querySelector(".course-tree-navigate")?.textContent).toContain("Tutorial Set");
-    expect(container.querySelectorAll(".course-tree-navigate")[1]?.textContent).toContain("Week 1");
-  });
-
-  it("shows direct resources for a section without child sections and preserves sorting/search", async () => {
-    await render(initialResources);
-    await click(byLabel("Expand Notices"));
-    expect([...container.querySelectorAll(".library-row-title")].some((item) => item.textContent === "Notice")).toBe(true);
-
-    const search = container.querySelector<HTMLInputElement>('input[aria-label="Search resources in this course"]')!;
+  it("supports typeahead to jump to a matching row", async () => {
+    await render();
+    await collapseAll();
+    await click(byLabel("Expand Section-4: Consultation Hour with a deliberately long heading"));
+    const el = treeRows()[0];
     await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-      setter?.call(search, "Lecture Two");
-      search.dispatchEvent(new Event("input", { bubbles: true }));
+      el.focus();
     });
-    expect(container.textContent).toContain("Found 1 of 4 resources");
-    expect(container.querySelectorAll(".library-row-title")).toHaveLength(1);
-    expect(container.textContent).toContain("Worksheets Folder → Tutorial Set → Week 1");
+    await act(async () => {
+      el.dispatchEvent(new KeyboardEvent("keydown", { key: "c", bubbles: true }));
+    });
+    const selected = treeRows().findIndex(
+      (el) => el.getAttribute("aria-selected") === "true",
+    );
+    expect(treeRows()[selected].textContent).toContain("Consultation material");
   });
 
-  it("renders loading, error, and empty states without inventing empty sections", async () => {
-    await render([], { loading: true });
-    expect(container.textContent).toContain("Loading course structure");
+  it("flattens search results with section paths and highlights matches", async () => {
+    await render();
+    await collapseAll();
+    await typeSearch("Lecture Two");
+    expect(container.querySelector(".result-count")?.textContent).toBe("1 of 4");
+    expect(container.querySelector(".tree-match-path")?.textContent).toBe(
+      "Worksheets Folder → Tutorial Set → Week 1",
+    );
+    expect(container.querySelector("mark.match-hl")?.textContent).toBe("Lecture Two");
 
-    const retry = vi.fn();
-    await render([], { error: "Course resources unavailable", onRetry: retry });
+    await click(byText("Clear filters"));
+    const searchEl = container.querySelector<HTMLInputElement>(
+      'input[aria-label="Search resources in this course"]',
+    );
+    expect(searchEl?.value).toBe("");
+    expect(container.querySelector(".tree-match-path")).toBeNull();
+  });
+
+  it("filters by file type through the select", async () => {
+    await render();
+    await collapseAll();
+    await chooseOption("Filter by file type", "announcement");
+    expect(container.querySelector(".result-count")?.textContent).toBe("1 of 4");
+    expect(container.textContent).toContain("Notice");
+    expect(container.textContent).not.toContain("Lecture One");
+  });
+
+  it("offers Preview only for previewable resources and shows restored status", async () => {
+    await render([
+      makeResource(1, "Lecture One", ["Week 1"]),
+      makeResource(2, "Old archive", ["Week 1"], {
+        resourceType: "archive",
+        url: "https://quanta.bits-pilani.ac.in/mod/resource/view.php?id=2",
+        sizeBytes: 1024,
+      }),
+      makeResource(3, "Back again", ["Week 1"], { availabilityStatus: "restored" }),
+    ]);
+    await collapseAll();
+    await click(byLabel("Expand Week 1"));
+    expect(byLabel("Preview Lecture One")).toBeTruthy();
+    expect(container.querySelector('button[aria-label="Preview Old archive"]')).toBeNull();
+    expect(container.textContent).toContain("Restored");
+  });
+
+  it("renders loading, error with retry, and empty states", async () => {
+    await render(null, { course: makeCourse({ id: 11 }) });
+    expect(container.querySelector(".skeleton-stack")).toBeTruthy();
+
+    await render([], { course: makeCourse({ id: 12 }), failWith: "Course resources unavailable" });
     expect(container.textContent).toContain("Course resources unavailable");
-    await click([...container.querySelectorAll("button")].find((button) => button.textContent === "Retry") as HTMLButtonElement);
-    expect(retry).toHaveBeenCalledOnce();
+    await click(byText("Retry"));
+    expect(api.listResources).toHaveBeenCalledTimes(3);
 
-    await render([]);
-    expect(container.textContent).toContain("No resources have been discovered");
-    expect(container.querySelector(".course-tree")).toBeNull();
+    await render([], { course: makeCourse({ id: 13 }) });
+    expect(container.textContent).toContain("This course has not been scanned yet");
+    expect(byText("Sync now")).toBeTruthy();
+  });
+
+  it("pauses and resumes monitoring from the title row", async () => {
+    await render(initialResources);
+    await collapseAll();
+    await click(byText("Pause"));
+    expect(api.setMonitoring).toHaveBeenCalledWith(1, "paused");
   });
 });
