@@ -17,6 +17,7 @@ const base: Settings = {
   quietHoursEnd: null,
   deadlineReminderHours: 48,
   timezone: "system",
+  cacheLimitBytes: 2 * 1024 * 1024 * 1024,
   maxCourses: 60,
   maxResourcesPerCourse: 400,
   maxDetailFetches: 600,

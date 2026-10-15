@@ -25,6 +25,14 @@ pub struct Settings {
     // Display
     pub timezone: String,
 
+    // Storage
+    /// LRU ceiling for files/<resource_id>/<content_hash>, in bytes.
+    /// `#[serde(default)]` because `load_settings` falls back to `default()` on
+    /// a deserialisation failure: a missing field would otherwise wipe the
+    /// whole settings row for anyone upgrading.
+    #[serde(default = "default_cache_limit_bytes")]
+    pub cache_limit_bytes: u64,
+
     // Crawl limits (safety rails; conservative defaults)
     pub max_courses: usize,
     pub max_resources_per_course: usize,
@@ -50,6 +58,8 @@ impl Default for Settings {
             quiet_hours_end: None,
             deadline_reminder_hours: 48,
             timezone: "system".to_string(),
+            cache_limit_bytes: default_cache_limit_bytes(),
+
             max_courses: 60,
             max_resources_per_course: 400,
             max_detail_fetches: 600,
@@ -62,6 +72,9 @@ impl Default for Settings {
 impl Settings {
     /// Clamp values that would otherwise make the crawler unsafe.
     pub fn sanitize(&mut self) {
+        // Floor at 64 MB so eviction cannot thrash, ceiling at 64 GB so a typo
+        // cannot promise more disk than a machine has.
+        self.cache_limit_bytes = self.cache_limit_bytes.clamp(64 * 1024 * 1024, 64 * 1024 * 1024 * 1024);
         self.sync_interval_minutes = self.sync_interval_minutes.clamp(15, 24 * 60);
         self.max_courses = self.max_courses.clamp(1, 500);
         self.max_resources_per_course = self.max_resources_per_course.clamp(1, 5000);
@@ -94,6 +107,12 @@ impl Settings {
     }
 }
 
+/// 2 GB. Large enough to hold a semester of slides, small enough that the
+/// eviction pass stays cheap.
+fn default_cache_limit_bytes() -> u64 {
+    2 * 1024 * 1024 * 1024
+}
+
 pub fn is_valid_hhmm(s: &str) -> bool {
     let bytes = s.as_bytes();
     if bytes.len() != 5 || bytes[2] != b':' {
@@ -107,6 +126,24 @@ pub fn is_valid_hhmm(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cache_limit_defaults_to_two_gigabytes_and_clamps() {
+        assert_eq!(Settings::default().cache_limit_bytes, 2 * 1024 * 1024 * 1024);
+
+        let mut s = Settings { cache_limit_bytes: 0, ..Settings::default() };
+        s.sanitize();
+        assert_eq!(s.cache_limit_bytes, 64 * 1024 * 1024);
+    }
+
+    #[test]
+    fn missing_cache_limit_field_does_not_discard_the_settings_row() {
+        // A settings row written before this field existed.
+        let mut json = serde_json::to_value(Settings::default()).unwrap();
+        json.as_object_mut().unwrap().remove("cacheLimitBytes");
+        let parsed: Settings = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.cache_limit_bytes, Settings::default().cache_limit_bytes);
+    }
 
     #[test]
     fn quiet_hours_within_same_day() {

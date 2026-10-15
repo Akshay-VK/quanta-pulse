@@ -6,6 +6,7 @@
 
 pub mod auth;
 pub mod commands;
+pub mod core;
 pub mod db;
 pub mod logging;
 pub mod models;
@@ -56,6 +57,8 @@ pub fn run() {
             commands::daily_digest,
             commands::rebuild_baseline,
             commands::db_info,
+            commands::cache_stats,
+            commands::clear_file_cache,
             commands::open_external,
             commands::set_monitoring,
             commands::preview_resource,

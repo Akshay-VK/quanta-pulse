@@ -4,7 +4,7 @@ import { api } from "../lib/api";
 import { cx } from "../lib/cx";
 import { formatBytes, formatCompact } from "../lib/format";
 import type { DetailProperty } from "../lib/details";
-import type { AuthStatus, DbInfo, Settings, ThemeMode } from "../lib/types";
+import type { AuthStatus, CacheStats, DbInfo, Settings, ThemeMode } from "../lib/types";
 import PageHeader from "../components/PageHeader";
 import SettingRow from "../components/SettingRow";
 import { ToggleGroup } from "../components/ui/ToggleGroup";
@@ -66,6 +66,11 @@ const NAV_ITEMS = [
   { id: "data", label: "Data" },
 ];
 
+const GIB = 1024 * 1024 * 1024;
+
+/** Cache ceilings the UI offers, in bytes. */
+const CACHE_LIMITS = [1, 2, 5, 10, 20].map((gb) => ({ value: String(gb * GIB), label: `${gb} GB` }));
+
 /** 7.6: the permission row reads Allowed, Blocked or Not asked. */
 function permissionLabel(permission: string): string {
   if (permission === "granted") return "Allowed";
@@ -92,9 +97,20 @@ export default function SettingsView({
   const [showDiscard, setShowDiscard] = useState(false);
   const [showSignOut, setShowSignOut] = useState(false);
   const [showRebaseline, setShowRebaseline] = useState(false);
+  const [cacheStats, setCacheStats] = useState<CacheStats | null>(null);
+  const [clearingCache, setClearingCache] = useState(false);
   const [active, setActive] = useState<string>("appearance");
 
   useEffect(() => setDraft(settings), [settings]);
+
+  useEffect(() => {
+    // Cache occupancy is page-local and changes on scan, so it is fetched here
+    // rather than threaded through the app's load pass.
+    api
+      .cacheStats()
+      .then(setCacheStats)
+      .catch(() => setCacheStats(null));
+  }, []);
 
   useEffect(() => {
     void (async () => {
@@ -178,7 +194,22 @@ export default function SettingsView({
     { label: "Size", value: dbInfo ? formatBytes(dbInfo.sizeBytes) || "0 B" : "—" },
     { label: "Counts", value: `${dbInfo?.courseCount ?? 0} courses · ${dbInfo?.resourceCount ?? 0} resources · ${dbInfo?.eventCount ?? 0} events` },
     { label: "Logs folder", value: dbInfo?.logDir ?? "—", copy: dbInfo?.logDir },
+    {
+      label: "File cache",
+      value: cacheStats
+        ? `${formatBytes(cacheStats.totalBytes) || "0 B"} in ${cacheStats.fileCount} ${cacheStats.fileCount === 1 ? "file" : "files"}`
+        : "—",
+    },
   ];
+
+  async function clearCache() {
+    setClearingCache(true);
+    try {
+      setCacheStats(await api.clearFileCache());
+    } finally {
+      setClearingCache(false);
+    }
+  }
 
   return (
     <div className="settings-page">
@@ -391,6 +422,27 @@ export default function SettingsView({
         <section id="data" className="settings-section">
           <h2 className="settings-group-title">Data</h2>
           <PropertyList properties={dbProps} />
+          <SettingRow
+            title="Cached files"
+            description="Downloaded files are kept so previews and search are fast. Oldest are removed first when the limit is reached."
+          >
+            <div className="settings-inline">
+              <Select
+                value={String(draft.cacheLimitBytes)}
+                onValueChange={(v) => set("cacheLimitBytes", Number(v))}
+                options={CACHE_LIMITS}
+                ariaLabel="Cache size limit"
+              />
+              <Button
+                variant="secondary"
+                size="sm"
+                loading={clearingCache}
+                onClick={() => void clearCache()}
+              >
+                Clear cached files
+              </Button>
+            </div>
+          </SettingRow>
           <SettingRow title="Re-baseline" description="Record everything as known. Nothing is reported as new until the next scan.">
             <Button variant="secondary" size="sm" onClick={() => setShowRebaseline(true)}>Re-baseline all courses</Button>
           </SettingRow>

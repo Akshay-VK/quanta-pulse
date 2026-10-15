@@ -87,3 +87,16 @@ Tracking the implementation of `docs/quanta_pulse_design_handoff_spec.md`
 - [x] Accessibility fixes: Calendar grid → proper row group, Switches have accessible names; IconButton/Button forward refs.
 - [x] Full suite green: 21 files / 150 tests passed (TZ=Asia/Kolkata).
 
+
+## Phase 7 — Local file store (spec Part 1)
+
+- [x] `file_cache` table added to `migrations/0001_init.sql` (additive, idempotent).
+- [x] New transport-agnostic `core/` module; `core/files.rs::FileStore` owns the
+      cache at `files/<resource_id>/<sha256>`, LRU eviction, stats and clear.
+- [x] `Settings.cacheLimitBytes` (default 2 GB, clamped 64 MB–64 GB) with a serde
+      default so an existing settings row is not discarded on upgrade.
+- [x] Commands `cache_stats` / `clear_file_cache`; `preview_resource` now stores
+      what it downloads, so the cache has a live producer.
+- [x] Settings > Data: cache usage row, size-limit Select, 'Clear cached files'.
+- [x] Tests: 5 `core::files` unit tests + settings default/clamp and
+      missing-field-compatibility tests. 88 Rust tests, 187 frontend tests pass.

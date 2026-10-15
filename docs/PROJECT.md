@@ -284,8 +284,10 @@ and 620px (rows wrap, title/time full width). Reduced-motion is honoured.
 | Module | Responsibility |
 |---|---|
 | `lib.rs` | `run()`: builds the app, plugins, the authoritative `invoke_handler` command list, setup, window-close → background behavior, exit cleanup |
-| `commands.rs` | Every Tauri command; delegates to focused modules |
-| `state.rs` | `AppState`: shared SQLite connection, settings, HTTP client, sync status, preview lease — all behind locks |
+| `commands.rs` | Every Tauri command; a thin adapter that delegates to `core/` or a focused module |
+| `core/` | Transport-agnostic domain logic — plain functions over a `Connection`, the file store and the client. Tauri commands (and a future HTTP or MCP server) are adapters over this, so logic never lives in a handler |
+| `core/files.rs` | `FileStore`: the on-demand byte cache under `files/<resource_id>/<sha256>`, with LRU eviction and the `file_cache` index |
+| `state.rs` | `AppState`: shared SQLite connection, file store, settings, HTTP client, sync status, preview lease — all behind locks |
 | `auth.rs` | Password login and SSO (SAML2), session restore/refresh/restart, logout |
 | `settings.rs` | Settings model, validation (`sanitize`, `is_valid_hhmm`), quiet hours |
 | `models.rs` | Serde models with `rename_all = "camelCase"` |
@@ -304,6 +306,22 @@ and 620px (rows wrap, title/time full width). Reduced-motion is honoured.
 
 Auth material never persists: cookies stay in memory, and `logging.rs`
 redacts anything matching session/token/password markers before writing.
+
+**File cache.** Pulse fetches a resource's bytes on demand and keeps them in
+`files/<resource_id>/<sha256 of the bytes>` beside the database, indexed by the
+`file_cache` table. The hash is over the bytes — deliberately *not* the metadata
+fingerprint in `resources.content_fingerprint`, which answers "did Moodle say
+this changed?" from metadata alone. Caching never writes a `change_events` row,
+so the baseline rule is untouched. `Settings.cacheLimitBytes` (default 2 GB,
+clamped 64 MB–64 GB) caps the cache; `core::files::FileStore::evict_to` drops
+least-recently-used entries first, and a row whose file has vanished reads as a
+miss so the cache self-heals. Previews are the first producer; the content
+indexer fills it too.
+
+**Adding a feature.** Put the logic in `core/`, then write a thin
+`commands.rs` adapter and wrap it in `src/lib/api.ts`. The `Connection` guard is
+a non-reentrant mutex: read under the lock, drop it for any `.await`, then
+re-acquire to write back.
 
 Scan behavior: `sync/scheduler.rs` ticks (~30s) and dispatches
 `sync/engine.rs::run_scan`. A resource missing `MISS_THRESHOLD = 2` consecutive

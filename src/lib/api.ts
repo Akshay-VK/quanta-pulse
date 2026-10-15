@@ -5,6 +5,7 @@ import type {
   AuthStatus,
   SessionResetResult,
   SessionRefreshResult,
+  CacheStats,
   ChangeEvent,
   Course,
   DbInfo,
@@ -69,5 +70,7 @@ export const api = {
 
   testNotification: () => invoke<void>("test_notification"),
   dbInfo: () => invoke<DbInfo>("db_info"),
+  cacheStats: () => invoke<CacheStats>("cache_stats"),
+  clearFileCache: () => invoke<CacheStats>("clear_file_cache"),
   openExternal: (url: string) => invoke<void>("open_external", { url }),
 };

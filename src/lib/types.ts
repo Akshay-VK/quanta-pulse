@@ -124,6 +124,8 @@ export interface Settings {
   quietHoursEnd: string | null;
   deadlineReminderHours: number;
   timezone: string;
+  /** LRU ceiling for the local file cache, in bytes. */
+  cacheLimitBytes: number;
   maxCourses: number;
   maxResourcesPerCourse: number;
   maxDetailFetches: number;
@@ -162,6 +164,13 @@ export interface DbInfo {
   resourceCount: number;
   eventCount: number;
   logDir: string | null;
+}
+
+/** Occupancy of the local byte cache. */
+export interface CacheStats {
+  fileCount: number;
+  totalBytes: number;
+  limitBytes: number;
 }
 
 export interface ResourceFilter {

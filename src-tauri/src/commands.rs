@@ -9,7 +9,7 @@ use tauri_plugin_opener::OpenerExt;
 use zeroize::Zeroizing;
 
 use crate::db::{self, EventFilter, ResourceFilter};
-use crate::models::{AuthStatus, ChangeEvent, Course, Digest, Resource, ScanOutcome, ScanRun, SessionRefreshResult, SessionResetResult, SyncStatus};
+use crate::models::{AuthStatus, CacheStats, ChangeEvent, Course, Digest, Resource, ScanOutcome, ScanRun, SessionRefreshResult, SessionResetResult, SyncStatus};
 use crate::quanta::client::QuantaError;
 use crate::quanta::parse::extract_readable_text;
 use crate::quanta::preview::{
@@ -429,6 +429,15 @@ pub async fn preview_resource(
                     source_url: fetched.final_url,
                 });
             }
+            // Keep the bytes: the content indexer and the Telegram bot both need
+            // them again, and the preview already paid for this download.
+            // Best-effort — a full or read-only disk must not break the preview.
+            let limit = state.settings().cache_limit_bytes;
+            {
+                let conn = state.conn();
+                let _ = state.files.put(&conn, resource_id, &fetched.bytes);
+                let _ = state.files.evict_to(&conn, limit);
+            }
             Ok(ResourcePreview::Binary {
                 mode: kind.mode().unwrap_or("file").to_string(),
                 mime: fetched
@@ -528,6 +537,24 @@ pub fn db_info(state: State<AppState>) -> DbInfo {
         event_count: db::count_events(&conn),
         log_dir,
     }
+}
+
+/// Occupancy of the local byte cache, for Settings > Data.
+#[tauri::command]
+pub fn cache_stats(state: State<AppState>) -> CacheStats {
+    let limit = state.settings().cache_limit_bytes;
+    let conn = state.conn();
+    state.files.stats(&conn, limit)
+}
+
+/// Empty the local byte cache. Downloaded bytes can always be fetched again, so
+/// this only affects speed, never data the user can't recover.
+#[tauri::command]
+pub fn clear_file_cache(state: State<AppState>) -> CacheStats {
+    let limit = state.settings().cache_limit_bytes;
+    let conn = state.conn();
+    state.files.clear(&conn);
+    state.files.stats(&conn, limit)
 }
 
 /// One-shot startup self-check. Shortly after launch the Rust side evaluates a

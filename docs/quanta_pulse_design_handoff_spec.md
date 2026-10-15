@@ -473,7 +473,7 @@ A DataTable over scan history.
 | Account | Status (dot plus 'Signed in', 'Session expired' or 'Signed out'). Sign-in method (Password or BITS SSO). Session acquired (mono time). Notification permission ('Allowed', 'Blocked' or 'Not asked') with 'Allow notifications' or 'Open system settings' and 'Send test notification'. 'Restart session' appears when expired. 'Sign out' is a danger ghost button that opens the ConfirmDialog |
 | Notifications | Master Switch. Per-category Switches: New files, Updated files, Announcements, Deadlines, Unavailable files (matching the per-category gates in `notify.rs`). Deadline window Select. Quiet hours Switch with two TimeFields. When the master is off, the rest are dimmed, `aria-disabled`, with the helper 'Turn on notifications to change these' |
 | Monitoring | Sync interval Select (options from the `settings.rs` limits). 'Run in background' Switch with 'Keep scanning from the menu bar after the window closes'. 'Launch at login' Switch. Timezone: read-only row with the system timezone and 'Dates are grouped by your local calendar days' |
-| Data | PropertyList: database path (copy button, 'Show in folder'), size, counts for courses, resources and events, logs folder ('Open'). A separated group at the bottom holds 'Re-baseline all courses' (secondary, danger text) with a ConfirmDialog: 'Records everything as known. Nothing is reported as new until the next scan.' |
+| Data | PropertyList: database path (copy button, 'Show in folder'), size, counts for courses, resources and events, logs folder ('Open'), file cache (size and file count). 'Cached files' row pairs a size-limit Select (1–20 GB, default 2 GB) with a 'Clear cached files' button. A separated group at the bottom holds 'Re-baseline all courses' (secondary, danger text) with a ConfirmDialog: 'Records everything as known. Nothing is reported as new until the next scan.' |
 
 ### 7.7 System states
 
@@ -610,6 +610,16 @@ src/
 ```
 
 Renames: `Dashboard.tsx` becomes `TodayView.tsx`. `ResourcesView.tsx` and `CoursesView.tsx` merge into `LibraryView.tsx`. The `NAV` array becomes Today, Calendar, Library, History, Settings, and `ui:navigate` payloads keep working by mapping the old names.
+
+On the Rust side, new domain logic goes in a transport-agnostic module so the
+Tauri commands, and any later HTTP or MCP server, stay thin:
+
+```
+src-tauri/src/
+  core/          mod.rs  files.rs  search.rs  get_file.rs  …   (plain fns over
+                 db / file store / client handles — no Tauri types)
+  commands.rs    thin adapters; the only layer that knows about AppState
+```
 
 ### 12.2 Reference snippets
 

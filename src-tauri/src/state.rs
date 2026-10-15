@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use rusqlite::Connection;
 use tauri::{AppHandle, Manager};
 
+use crate::core::files::FileStore;
 use crate::db;
 use crate::models::SyncStatus;
 use crate::quanta::client::QuantaClient;
@@ -80,6 +81,8 @@ impl Drop for PreviewLease<'_> {
 pub struct AppState {
     pub conn: Mutex<Connection>,
     pub db_path: PathBuf,
+    /// Local cache of downloaded resource bytes, beside the database.
+    pub files: FileStore,
     pub client: Mutex<Option<Arc<QuantaClient>>>,
     pub settings: Mutex<Settings>,
     pub sync: Arc<SyncControl>,
@@ -100,6 +103,7 @@ impl AppState {
         Ok(AppState {
             conn: Mutex::new(conn),
             db_path,
+            files: FileStore::new(&dir),
             client: Mutex::new(None),
             settings: Mutex::new(settings),
             sync: Arc::new(SyncControl::default()),

@@ -32,6 +32,8 @@ vi.mock("../src/lib/api", () => ({
     listResources: vi.fn().mockResolvedValue([]),
     setMonitoring: vi.fn().mockResolvedValue(undefined),
     rebuildBaseline: vi.fn().mockResolvedValue(undefined),
+    cacheStats: vi.fn().mockResolvedValue({ fileCount: 0, totalBytes: 0, limitBytes: 2147483648 }),
+    clearFileCache: vi.fn().mockResolvedValue({ fileCount: 0, totalBytes: 0, limitBytes: 2147483648 }),
   },
 }));
 
@@ -121,6 +123,7 @@ const SETTINGS: Settings = {
   quietHoursEnd: null,
   deadlineReminderHours: 48,
   timezone: "Asia/Kolkata",
+  cacheLimitBytes: 2 * 1024 * 1024 * 1024,
   maxCourses: 20,
   maxResourcesPerCourse: 500,
   maxDetailFetches: 40,

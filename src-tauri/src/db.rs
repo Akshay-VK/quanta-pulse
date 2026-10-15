@@ -1123,6 +1123,124 @@ pub fn digest(conn: &Connection, since: &str, until: &str, date_label: &str) -> 
     })
 }
 
+/// A row of the local byte cache. The filesystem holds the payload; this is the
+/// index that lets eviction and lookup run without walking the directory.
+#[derive(Debug, Clone)]
+pub struct CachedFile {
+    pub resource_id: i64,
+    pub content_hash: String,
+    pub path: String,
+    pub size_bytes: i64,
+    pub last_used_at: String,
+}
+
+fn map_cached_file(row: &rusqlite::Row<'_>) -> rusqlite::Result<CachedFile> {
+    Ok(CachedFile {
+        resource_id: row.get(0)?,
+        content_hash: row.get(1)?,
+        path: row.get(2)?,
+        size_bytes: row.get(3)?,
+        last_used_at: row.get(4)?,
+    })
+}
+
+const CACHED_FILE_SELECT: &str =
+    "SELECT resource_id, content_hash, path, size_bytes, last_used_at FROM file_cache";
+
+pub fn cache_upsert(
+    conn: &Connection,
+    resource_id: i64,
+    content_hash: &str,
+    path: &str,
+    size_bytes: i64,
+    now: &str,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO file_cache(resource_id, content_hash, path, size_bytes, last_used_at)
+         VALUES(?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(resource_id, content_hash)
+         DO UPDATE SET path = excluded.path, size_bytes = excluded.size_bytes, last_used_at = excluded.last_used_at",
+        params![resource_id, content_hash, path, size_bytes, now],
+    )?;
+    Ok(())
+}
+
+pub fn cache_touch(
+    conn: &Connection,
+    resource_id: i64,
+    content_hash: &str,
+    now: &str,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE file_cache SET last_used_at = ?3 WHERE resource_id = ?1 AND content_hash = ?2",
+        params![resource_id, content_hash, now],
+    )?;
+    Ok(())
+}
+
+pub fn cache_get(
+    conn: &Connection,
+    resource_id: i64,
+    content_hash: &str,
+) -> rusqlite::Result<Option<CachedFile>> {
+    let sql = format!("{CACHED_FILE_SELECT} WHERE resource_id = ?1 AND content_hash = ?2");
+    conn.query_row(&sql, params![resource_id, content_hash], map_cached_file)
+        .optional()
+}
+
+/// Every cached variant of one resource, newest use first. A resource can hold
+/// more than one entry when its bytes changed after an update.
+pub fn cache_for_resource(
+    conn: &Connection,
+    resource_id: i64,
+) -> rusqlite::Result<Vec<CachedFile>> {
+    let sql = format!("{CACHED_FILE_SELECT} WHERE resource_id = ?1 ORDER BY last_used_at DESC");
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params![resource_id], map_cached_file)?;
+    rows.collect()
+}
+
+/// Total cached bytes and file count.
+pub fn cache_stats(conn: &Connection) -> rusqlite::Result<(i64, i64)> {
+    conn.query_row(
+        "SELECT COALESCE(SUM(size_bytes), 0), COUNT(*) FROM file_cache",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )
+}
+
+/// Least-recently-used rows, oldest first, capped at `limit`.
+pub fn cache_lru(conn: &Connection, limit: i64) -> rusqlite::Result<Vec<CachedFile>> {
+    let sql = format!("{CACHED_FILE_SELECT} ORDER BY last_used_at ASC LIMIT ?1");
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params![limit], map_cached_file)?;
+    rows.collect()
+}
+
+pub fn cache_delete(
+    conn: &Connection,
+    resource_id: i64,
+    content_hash: &str,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "DELETE FROM file_cache WHERE resource_id = ?1 AND content_hash = ?2",
+        params![resource_id, content_hash],
+    )?;
+    Ok(())
+}
+
+/// Drop the whole index and return the rows that were removed, so the caller can
+/// unlink the files they name.
+pub fn cache_clear(conn: &Connection) -> rusqlite::Result<Vec<CachedFile>> {
+    let rows = {
+        let mut stmt = conn.prepare(CACHED_FILE_SELECT)?;
+        let mapped = stmt.query_map([], map_cached_file)?;
+        mapped.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    conn.execute("DELETE FROM file_cache", [])?;
+    Ok(rows)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -206,3 +206,12 @@ pub struct ScanOutcome {
     pub auth_expired: bool,
     pub cancelled: bool,
 }
+
+/// Local byte-cache occupancy, for Settings > Data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheStats {
+    pub file_count: i64,
+    pub total_bytes: i64,
+    pub limit_bytes: u64,
+}

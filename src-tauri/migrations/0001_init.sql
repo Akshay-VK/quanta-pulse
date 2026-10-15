@@ -77,7 +77,26 @@ CREATE TABLE IF NOT EXISTS scan_runs (
   is_baseline       INTEGER NOT NULL DEFAULT 0
 );
 
+-- Local cache of downloaded resource bytes, indexed on disk under
+-- files/<resource_id>/<content_hash>. Preview used to fetch and discard; the
+-- content indexer and the Telegram bot both need the bytes more than once.
+--
+-- content_hash is the SHA-256 of the file's bytes, deliberately not the
+-- metadata fingerprint in resources.content_fingerprint: that one answers "did
+-- Moodle say this resource changed?" from metadata alone, whereas re-extraction
+-- must be skipped only when the bytes themselves are unchanged. Caching bytes
+-- is not a content change and never creates a change_events row.
+CREATE TABLE IF NOT EXISTS file_cache (
+  resource_id  INTEGER NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
+  content_hash TEXT    NOT NULL,
+  path         TEXT    NOT NULL,
+  size_bytes   INTEGER NOT NULL,
+  last_used_at TEXT    NOT NULL,
+  PRIMARY KEY (resource_id, content_hash)
+);
+
 CREATE INDEX IF NOT EXISTS idx_resources_course   ON resources(course_id);
+CREATE INDEX IF NOT EXISTS idx_file_cache_last_used ON file_cache(last_used_at);
 CREATE INDEX IF NOT EXISTS idx_resources_avail    ON resources(availability_status);
 CREATE INDEX IF NOT EXISTS idx_resources_lastseen ON resources(last_seen_at);
 CREATE INDEX IF NOT EXISTS idx_events_detected    ON change_events(detected_at DESC);
