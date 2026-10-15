@@ -1,0 +1,239 @@
+/* Layout: the app shell from section 5 — sidebar, top bar, content column,
+ * peek panel, sync bar, toast region, and the breakpoints. The sidebar never
+ * scrolls with the content; content scrolls inside <main>. */
+
+@layer layout {
+  .app {
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* --------------------------------------------------------------- sidebar */
+
+  .sidebar {
+    flex: 0 0 auto;
+    width: var(--sidebar-w);
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    background: var(--side);
+    border-right: 1px solid var(--line);
+    transition: width var(--dur-base) var(--ease-inout);
+    z-index: var(--z-sidebar);
+    /* A course name must never introduce a horizontal scrollbar here: it also
+       shifts the header down by the scrollbar height. */
+    overflow-x: hidden;
+  }
+
+  .app.rail .sidebar {
+    width: var(--sidebar-rail);
+  }
+
+  .sidebar-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: var(--sp-3);
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+  }
+
+  .sidebar-footer {
+    flex: 0 0 auto;
+    padding: var(--sp-3);
+    border-top: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+    align-items: stretch;
+  }
+
+  /* ---------------------------------------------------------------- work */
+
+  .work {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .topbar {
+    flex: 0 0 var(--topbar-h);
+    height: var(--topbar-h);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 var(--sp-4);
+    gap: var(--sp-3);
+    min-width: 0;
+    overflow: hidden;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  .topbar-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-1);
+  }
+
+  .banner-region {
+    flex: 0 0 auto;
+    padding: 0 var(--page-pad-x);
+  }
+
+  .app-main {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    position: relative;
+  }
+
+  :target {
+    scroll-margin-top: var(--sp-4);
+  }
+
+  .page {
+    max-width: var(--content-max);
+    margin: 0 auto;
+    width: 100%;
+    min-width: 0;
+    padding: var(--sp-7) var(--page-pad-x) var(--sp-10);
+  }
+
+  .page-narrow {
+    max-width: 720px;
+  }
+
+  /* 2px sync bar at the very top of <main>, only while syncing. */
+  .sync-progress {
+    position: sticky;
+    top: 0;
+    height: 2px;
+    z-index: var(--z-sticky);
+  }
+
+  /* --------------------------------------------------------------- peek */
+
+  .peek {
+    flex: 0 0 auto;
+    width: var(--peek-w);
+    height: 100%;
+    background: var(--raised);
+    position: relative;
+  }
+
+  @media (min-width: 1180px) {
+    .peek {
+      position: relative;
+      border-left: 1px solid var(--line);
+      transform: none !important;
+      opacity: 1 !important;
+    }
+  }
+
+  @media (max-width: 1179px) {
+    .peek {
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      z-index: var(--z-popover);
+      box-shadow: var(--shadow-pop);
+      transform: translateX(100%);
+      transition: transform var(--dur-slow) var(--ease-out);
+    }
+
+    .peek.open {
+      transform: none;
+    }
+
+    @media (max-width: 759px) {
+      .peek {
+        width: 100%;
+      }
+    }
+  }
+
+  /* --------------------------------------------------------------- toast */
+
+  .toast-viewport {
+    position: fixed;
+    bottom: 28px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: var(--z-toast);
+    width: max-content;
+    max-width: min(480px, 90vw);
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    outline: none;
+  }
+
+  /* --------------------------------------------------------------- login */
+
+  .login-wrap {
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--sp-6);
+    background: var(--bg);
+  }
+
+  /* -------------------------------------------------------- breakpoints */
+
+  /* Below 960px the sidebar is always a rail; the expand button opens an
+     overlay drawer instead of squeezing the content column. */
+  @media (max-width: 959px) {
+    .app .sidebar {
+      width: var(--sidebar-rail);
+    }
+
+    .app.drawer-open .sidebar.overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: var(--sidebar-w);
+      box-shadow: var(--shadow-pop);
+      z-index: var(--z-popover);
+    }
+
+    .sidebar-scrim {
+      position: fixed;
+      inset: 0;
+      background: var(--overlay);
+      z-index: var(--z-popover);
+      animation: scrim-in var(--dur-base) var(--ease-out);
+    }
+  }
+
+  @keyframes scrim-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @media (max-width: 759px) {
+    .page,
+    .banner-region {
+      padding-left: 24px;
+      padding-right: 24px;
+    }
+
+    @media (max-width: 619px) {
+      .page,
+      .banner-region {
+        padding-left: 16px;
+        padding-right: 16px;
+      }
+    }
+  }
+}

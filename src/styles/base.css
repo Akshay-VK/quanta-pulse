@@ -1,0 +1,201 @@
+/* Base: reset, typography, focus, selection, reduced motion and forced
+ * colours. Plain CSS, token-only, Safari 15.6-safe (no nesting, no
+ * color-mix, no container queries, no text-wrap: balance). */
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    font-family: var(--type-ui);
+    font-size: 14px;
+    line-height: 20px;
+    color: var(--ink);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2,
+  h3,
+  p,
+  dl,
+  dd {
+    margin: 0;
+  }
+
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+    color: inherit;
+  }
+
+  button {
+    border: 0;
+    padding: 0;
+    background: none;
+    cursor: pointer;
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+  }
+
+  a {
+    color: var(--link);
+  }
+
+  /* 6.1 The one focus rule. Never removed. */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  ::selection {
+    background: var(--selected);
+  }
+
+  ul[role="listbox"],
+  [role="combobox"] ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  /* Themed scrollbars (WebKit/Tauri). Native scrollbars are acceptable
+   * everywhere; these keep panels quiet. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: var(--line-strong);
+    border-radius: var(--radius-pill);
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  /* Skip to content — first focusable element in the app. */
+  .skip-link {
+    position: absolute;
+    left: var(--sp-3);
+    top: var(--sp-3);
+    z-index: var(--z-toast);
+    padding: var(--sp-2) var(--sp-3);
+    background: var(--raised);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-sm);
+    transform: translateY(-300%);
+  }
+
+  .skip-link:focus-visible {
+    transform: none;
+  }
+
+  /* Tabular numerics wherever a count or size is shown. */
+  .mono,
+  .type-mono {
+    font-family: var(--type-mono);
+    font-size: 12px;
+    line-height: 16px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Secondary text inside a control: a separator, or a read-only value. */
+  .muted {
+    color: var(--muted);
+  }
+
+  .icon-sm {
+    width: 12px;
+    height: 12px;
+    flex: 0 0 auto;
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .truncate {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  .row {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+  }
+
+  .growth {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  /* 8 Reduced motion: drop transitions to 0.01 ms and make entrances
+   * instant. Looping animations become static equivalents (defined per
+   * component below). */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  /* 10 Forced colours: tags and pills get a border, the focus ring survives,
+   * dots keep their shape. */
+  @media (forced-colors: active) {
+    .tag,
+    .status-pill,
+    .course-pill {
+      border: 1px solid currentColor;
+    }
+
+    :focus-visible {
+      outline-color: Highlight;
+    }
+
+    .unread-dot,
+    .sync-dot,
+    .course-dot,
+    .file-dot,
+    .tree-row-dot {
+      forced-color-adjust: none;
+    }
+  }
+}

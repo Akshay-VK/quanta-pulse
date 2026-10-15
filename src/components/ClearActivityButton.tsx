@@ -1,4 +1,6 @@
 import { useRef, useState } from "react";
+import ConfirmDialog from "./ConfirmDialog";
+import { Button } from "./ui/Button";
 
 type Scope = "Dashboard" | "History";
 
@@ -13,8 +15,12 @@ function confirmation(scope: Scope): string {
     : "Clear all visible History records? This hides change and scan entries but does not delete Quanta files or resources. Dashboard and Calendar will remain unchanged.";
 }
 
+function getLabel(scope: Scope): string {
+  return scope === "Dashboard" ? "Clear activity" : "Clear history";
+}
+
 export default function ClearActivityButton({ scope, onConfirm }: Props) {
-  const [confirming, setConfirming] = useState(false);
+  const [open, setOpen] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const request = useRef(false);
@@ -26,56 +32,57 @@ export default function ClearActivityButton({ scope, onConfirm }: Props) {
     setError(null);
     try {
       await onConfirm();
-      setConfirming(false);
+      setOpen(false);
     } catch (reason) {
       setError(String(reason));
+      // Re-throw so ConfirmDialog keeps the dialog open and disables dismissal.
+      throw reason;
     } finally {
       request.current = false;
       setClearing(false);
     }
   }
 
+  const label = getLabel(scope);
+
   return (
     <>
-      <button
-        className="btn"
-        type="button"
+      <Button
+        variant="ghost"
+        size="sm"
         onClick={() => {
           setError(null);
-          setConfirming(true);
+          setOpen(true);
         }}
         disabled={clearing}
       >
-        Clear All
-      </button>
-      {confirming && (
-        <div className="confirm-backdrop">
-          <section
-            className="confirm-dialog"
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="clear-activity-title"
-            aria-describedby="clear-activity-message"
-          >
-            <h2 id="clear-activity-title">Clear {scope} activity?</h2>
-            <p id="clear-activity-message">{confirmation(scope)}</p>
-            {error && <div className="alert error" role="alert">{error}</div>}
-            <div className="confirm-actions">
-              <button
-                className="btn"
-                type="button"
-                onClick={() => setConfirming(false)}
-                disabled={clearing}
+        {label}
+      </Button>
+      <ConfirmDialog
+        open={open}
+        onOpenChange={(next) => {
+          if (clearing) return;
+          setOpen(next);
+        }}
+        title={label}
+        body={
+          <div>
+            <p>{confirmation(scope)}</p>
+            {error && (
+              <div
+                role="alert"
+                style={{ color: "var(--t-red-fg)", fontSize: 13, lineHeight: "18px" }}
               >
-                Cancel
-              </button>
-              <button className="btn btn-primary" type="button" onClick={() => void clear()} disabled={clearing}>
-                {clearing ? "Clearing…" : "Clear All"}
-              </button>
-            </div>
-          </section>
-        </div>
-      )}
+                {error}
+              </div>
+            )}
+          </div>
+        }
+        confirmLabel={label}
+        cancelLabel="Cancel"
+        destructive
+        onConfirm={clear}
+      />
     </>
   );
 }

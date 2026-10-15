@@ -79,6 +79,22 @@ export function matchesKind(
   }
 }
 
+/**
+ * A resource that the baseline scan discovered but that has never produced a
+ * change event. Today lists change events only, so these stay out of the feed;
+ * their count is shown once as a muted line instead of hundreds of dead rows.
+ */
+export function isBaselineResource(
+  resource: Resource,
+  eventKinds?: Map<number, Set<string>>,
+  now: Date = new Date(),
+): boolean {
+  if (eventKinds?.has(resource.id)) return false;
+  if (resource.availabilityStatus !== "available") return false;
+  const due = resource.dueAt ? parseTimestamp(resource.dueAt)?.getTime() ?? 0 : 0;
+  return due <= now.getTime();
+}
+
 export function filterResources(resources: Resource[], opts: FilterOptions = {}): Resource[] {
   const { kind = "all", courseId = null, search = "", eventKinds } = opts;
   const needle = search.trim().toLowerCase();

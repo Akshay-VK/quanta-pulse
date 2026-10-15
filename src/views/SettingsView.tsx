@@ -1,23 +1,77 @@
-import { useEffect, useState } from "react";
-import {
-  isPermissionGranted,
-  requestPermission,
-} from "@tauri-apps/plugin-notification";
+import { useEffect, useMemo, useState } from "react";
+import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { api } from "../lib/api";
+import { cx } from "../lib/cx";
 import { formatBytes, formatCompact } from "../lib/format";
-import type { AuthStatus, DbInfo, Settings } from "../lib/types";
+import type { DetailProperty } from "../lib/details";
+import type { AuthStatus, DbInfo, Settings, ThemeMode } from "../lib/types";
 import PageHeader from "../components/PageHeader";
-import ThemeSwitcher from "../components/ThemeSwitcher";
+import SettingRow from "../components/SettingRow";
+import { ToggleGroup } from "../components/ui/ToggleGroup";
+import { Switch } from "../components/ui/Switch";
+import { Select } from "../components/ui/Select";
+import { TimeField } from "../components/ui/TimeField";
+import { Button } from "../components/ui/Button";
+import { Banner } from "../components/ui/Banner";
+import ConfirmDialog from "../components/ConfirmDialog";
+import PropertyList from "../components/PropertyList";
+import { hasValidationErrors, isSettingsDirty, validateSettingsDraft } from "../lib/settingsDraft";
 
 interface Props {
   settings: Settings;
   auth: AuthStatus | null;
   dbInfo: DbInfo | null;
   onSave: (settings: Settings) => Promise<void>;
-  onLogout: () => void;
-  onRefresh: () => void;
-  themeMode: "system" | "light" | "dark";
-  onThemeMode: (mode: "system" | "light" | "dark") => void;
+  onLogout: () => Promise<void> | void;
+  onRefresh: () => void | Promise<void>;
+  themeMode: ThemeMode;
+  onThemeMode: (mode: ThemeMode) => void;
+  onDirtyChange?: (dirty: boolean) => void;
+}
+
+const THEME_OPTIONS = [
+  { value: "system", label: "System" },
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+];
+
+const SYNC_INTERVALS = [
+  { value: "15", label: "15 min" },
+  { value: "30", label: "30 min" },
+  { value: "60", label: "60 min" },
+  { value: "120", label: "2 h" },
+  { value: "240", label: "4 h" },
+  { value: "360", label: "6 h" },
+  { value: "720", label: "12 h" },
+  { value: "1440", label: "24 h" },
+];
+
+const DEADLINE_OPTIONS = [
+  { value: "1", label: "1 hour" },
+  { value: "3", label: "3 hours" },
+  { value: "6", label: "6 hours" },
+  { value: "12", label: "12 hours" },
+  { value: "24", label: "24 hours" },
+  { value: "48", label: "48 hours" },
+  { value: "72", label: "72 hours" },
+  { value: "168", label: "7 days" },
+  { value: "720", label: "30 days" },
+];
+
+const NAV_ITEMS = [
+  { id: "appearance", label: "Appearance" },
+  { id: "account", label: "Account" },
+  { id: "notifications", label: "Notifications" },
+  { id: "monitoring", label: "Monitoring" },
+  { id: "data", label: "Data" },
+];
+
+/** 7.6: the permission row reads Allowed, Blocked or Not asked. */
+function permissionLabel(permission: string): string {
+  if (permission === "granted") return "Allowed";
+  if (permission === "denied") return "Blocked";
+  if (permission === "unavailable") return "Unavailable";
+  return "Not asked";
 }
 
 export default function SettingsView({
@@ -29,23 +83,67 @@ export default function SettingsView({
   onRefresh,
   themeMode,
   onThemeMode,
+  onDirtyChange,
 }: Props) {
   const [draft, setDraft] = useState<Settings>(settings);
-  const [saved, setSaved] = useState(false);
   const [permission, setPermission] = useState<string>("unknown");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [showDiscard, setShowDiscard] = useState(false);
+  const [showSignOut, setShowSignOut] = useState(false);
+  const [showRebaseline, setShowRebaseline] = useState(false);
+  const [active, setActive] = useState<string>("appearance");
 
   useEffect(() => setDraft(settings), [settings]);
 
   useEffect(() => {
     void (async () => {
       try {
-        const granted = await isPermissionGranted();
-        setPermission(granted ? "granted" : "not granted");
+        setPermission((await isPermissionGranted()) ? "granted" : "default");
       } catch {
         setPermission("unavailable");
       }
     })();
   }, []);
+
+  useEffect(() => {
+    // The page scrolls inside .app-main; scroll does not bubble, so listen in
+    // the capture phase to track which section is in view.
+    function onScroll() {
+      let best = NAV_ITEMS[0].id;
+      let topBest = Infinity;
+      for (const item of NAV_ITEMS) {
+        const el = document.getElementById(item.id);
+        if (!el) continue;
+        const top = el.getBoundingClientRect().top;
+        if (top < 120 && Math.abs(top) < topBest) {
+          topBest = Math.abs(top);
+          best = item.id;
+        }
+      }
+      setActive(best);
+    }
+    document.addEventListener("scroll", onScroll, true);
+    return () => document.removeEventListener("scroll", onScroll, true);
+  }, []);
+
+  const errors = useMemo(() => validateSettingsDraft(draft), [draft]);
+  const dirty = useMemo(() => isSettingsDirty(draft, settings), [draft, settings]);
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        void save();
+      }
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [dirty, saving, errors]);
 
   function set<K extends keyof Settings>(key: K, value: Settings[K]) {
     setDraft((d) => ({ ...d, [key]: value }));
@@ -53,8 +151,15 @@ export default function SettingsView({
   }
 
   async function save() {
-    await onSave(draft);
-    setSaved(true);
+    if (saving || !dirty || hasValidationErrors(errors)) return;
+    setSaving(true);
+    try {
+      await onSave(draft);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function askPermission() {
@@ -66,227 +171,289 @@ export default function SettingsView({
     }
   }
 
+  const notificationsDisabled = !draft.notificationsEnabled;
+
+  const dbProps: DetailProperty[] = [
+    { label: "Database path", value: dbInfo?.path ?? "—", copy: dbInfo?.path },
+    { label: "Size", value: dbInfo ? formatBytes(dbInfo.sizeBytes) || "0 B" : "—" },
+    { label: "Counts", value: `${dbInfo?.courseCount ?? 0} courses · ${dbInfo?.resourceCount ?? 0} resources · ${dbInfo?.eventCount ?? 0} events` },
+    { label: "Logs folder", value: dbInfo?.logDir ?? "—", copy: dbInfo?.logDir },
+  ];
+
   return (
-    <div className="panel">
-      <PageHeader title="Settings" subtitle="Appearance, account, notifications and monitoring" />
+    <div className="settings-page">
+      <PageHeader title="Settings" summary="Appearance, account, notifications, monitoring and data." />
+      <div className="settings-layout">
+      <aside className="settings-sticky">
+        <nav aria-label="Settings sections">
+          {NAV_ITEMS.map((item) => (
+            <a
+              key={item.id}
+              href={`#${item.id}`}
+              className="settings-link"
+              aria-current={active === item.id ? "true" : undefined}
+              onClick={(e) => {
+                e.preventDefault();
+                document.getElementById(item.id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}
+            >
+              {item.label}
+            </a>
+          ))}
+        </nav>
+      </aside>
+      <div className="settings-content">
+        <section id="appearance" className="settings-section">
+          <h2 className="settings-group-title">Appearance</h2>
+          <SettingRow title="Theme" description="Choose a theme or follow your system appearance.">
+            <ToggleGroup
+              value={themeMode}
+              onValueChange={(v) => {
+                if (v === "system" || v === "light" || v === "dark") onThemeMode(v);
+              }}
+              options={THEME_OPTIONS as Array<{ value: string; label: string }>}
+              ariaLabel="Color theme"
+            />
+          </SettingRow>
+        </section>
 
-      <h2>Appearance</h2>
-      <div className="setting">
-        <div>
-          Color theme
-          <div className="desc">Choose a theme or follow your Mac appearance.</div>
-        </div>
-        <ThemeSwitcher mode={themeMode} onChange={onThemeMode} />
-      </div>
+        <div className="settings-group-divider" />
 
-      <h2>Account</h2>
-      <div className="kv">
-        <span className="k">Status</span>
-        <span className={auth?.authenticated ? "text-ok" : "text-danger"}>
-          {auth?.authenticated ? "Signed in" : "Signed out"}
-          {auth?.sessionExpired ? " (session expired)" : ""}
-        </span>
-      </div>
-      <div className="kv">
-        <span className="k">Account</span>
-        <span>{auth?.fullName || auth?.email || "—"}</span>
-      </div>
-      <div className="kv">
-        <span className="k">Sign-in method</span>
-        <span>{auth?.method === "sso" ? "BITS Google (SSO)" : auth?.method ?? "—"}</span>
-      </div>
-      <div className="kv">
-        <span className="k">Session acquired</span>
-        <span>{auth?.acquiredAt ? formatCompact(auth.acquiredAt) : "—"}</span>
-      </div>
-      <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
-        <button className="btn" onClick={onLogout}>
-          Sign out
-        </button>
-        <button className="btn" onClick={askPermission}>
-          Notification permission: {permission}
-        </button>
-        <button
-          className="btn"
-          onClick={() => {
-            void api.testNotification();
-          }}
-        >
-          Send test notification
-        </button>
-      </div>
+        <section id="account" className="settings-section">
+          <h2 className="settings-group-title">Account</h2>
+          <SettingRow title="Status">
+            <span className="settings-inline">
+              <span
+                aria-hidden="true"
+                className={cx(
+                  "settings-dot",
+                  auth?.authenticated && !auth.sessionExpired && "ok",
+                )}
+              />
+              {auth?.sessionExpired ? "Session expired" : auth?.authenticated ? "Signed in" : "Signed out"}
+            </span>
+          </SettingRow>
+          <SettingRow title="Sign-in method">
+            <span>{auth?.method === "sso" ? "BITS SSO" : auth?.method === "password" ? "Password" : "—"}</span>
+          </SettingRow>
+          <SettingRow title="Session acquired">
+            <span className="mono">{auth?.acquiredAt ? formatCompact(auth.acquiredAt) : "—"}</span>
+          </SettingRow>
+          <SettingRow title="Notification permission">
+            <div className="settings-inline">
+              <span>{permissionLabel(permission)}</span>
+              {permission !== "granted" && permission !== "denied" && permission !== "unavailable" && (
+                <Button variant="secondary" size="sm" onClick={askPermission}>Allow notifications</Button>
+              )}
+              <Button variant="ghost" size="sm" onClick={() => void api.testNotification()}>Send test notification</Button>
+            </div>
+          </SettingRow>
+          {auth?.sessionExpired && (
+            <SettingRow title="Session expired" description="Sign in again to resume scanning.">
+              <Button variant="secondary" size="sm" onClick={onRefresh}>Restart session</Button>
+            </SettingRow>
+          )}
+          <SettingRow title="Sign out">
+            <Button variant="danger" size="sm" onClick={() => setShowSignOut(true)}>Sign out</Button>
+          </SettingRow>
+        </section>
 
-      <h2>Notifications</h2>
-      <Toggle
-        label="Enable notifications"
-        desc="Requires the app to be running and permission from macOS."
-        checked={draft.notificationsEnabled}
-        onChange={(v) => set("notificationsEnabled", v)}
-      />
-      <Toggle label="New uploads" checked={draft.notifyNew} onChange={(v) => set("notifyNew", v)} />
-      <Toggle
-        label="Announcements"
-        checked={draft.notifyAnnouncements}
-        onChange={(v) => set("notifyAnnouncements", v)}
-      />
-      <Toggle
-        label="Updated resources"
-        checked={draft.notifyUpdated}
-        onChange={(v) => set("notifyUpdated", v)}
-      />
-      <Toggle
-        label="Deadlines"
-        checked={draft.notifyDeadlines}
-        onChange={(v) => set("notifyDeadlines", v)}
-      />
-      <Toggle
-        label="Availability issues"
-        checked={draft.notifyAvailability}
-        onChange={(v) => set("notifyAvailability", v)}
-      />
-      <Toggle
-        label="Authentication reminders"
-        checked={draft.notifyAuth}
-        onChange={(v) => set("notifyAuth", v)}
-      />
+        <div className="settings-group-divider" />
 
-      <div className="setting">
-        <div>
-          Deadline reminder window
-          <div className="desc">Notify about deadlines within this many hours.</div>
-        </div>
-        <input
-          type="number"
-          min={1}
-          max={720}
-          value={draft.deadlineReminderHours}
-          onChange={(e) => set("deadlineReminderHours", Number(e.target.value))}
-        />
-      </div>
-      <div className="setting">
-        <div>
-          Quiet hours
-          <div className="desc">Notifications pause between these local times.</div>
-        </div>
-        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <input
-            type="time"
-            value={draft.quietHoursStart ?? ""}
-            onChange={(e) => set("quietHoursStart", e.target.value || null)}
-          />
-          <span className="faint">to</span>
-          <input
-            type="time"
-            value={draft.quietHoursEnd ?? ""}
-            onChange={(e) => set("quietHoursEnd", e.target.value || null)}
-          />
-        </div>
-      </div>
-
-      <h2>Monitoring</h2>
-      <div className="setting">
-        <div>
-          Sync interval (minutes)
-          <div className="desc">How often Quanta is checked while the app is running.</div>
-        </div>
-        <input
-          type="number"
-          min={15}
-          max={1440}
-          value={draft.syncIntervalMinutes}
-          onChange={(e) => set("syncIntervalMinutes", Number(e.target.value))}
-        />
-      </div>
-      <Toggle
-        label="Keep running when the window is closed"
-        desc="Monitoring continues in the menu bar."
-        checked={draft.runInBackground}
-        onChange={(v) => set("runInBackground", v)}
-      />
-      <Toggle
-        label="Launch at login"
-        checked={draft.launchAtLogin}
-        onChange={(v) => set("launchAtLogin", v)}
-      />
-      <div className="setting">
-        <div>
-          Timezone display
-          <div className="desc">Times are shown in your Mac's local timezone.</div>
-        </div>
-        <span className="muted small">
-          {Intl.DateTimeFormat().resolvedOptions().timeZone}
-        </span>
-      </div>
-
-      <h2>Data</h2>
-      <div className="kv">
-        <span className="k">Database</span>
-        <span className="mono">{dbInfo?.path ?? "—"}</span>
-      </div>
-      <div className="kv">
-        <span className="k">Size</span>
-        <span>{dbInfo ? formatBytes(dbInfo.sizeBytes) || "0 B" : "—"}</span>
-      </div>
-      <div className="kv">
-        <span className="k">Stored</span>
-        <span>
-          {dbInfo?.courseCount ?? 0} courses · {dbInfo?.resourceCount ?? 0} resources ·{" "}
-          {dbInfo?.eventCount ?? 0} events
-        </span>
-      </div>
-      <div className="kv">
-        <span className="k">Logs</span>
-        <span className="mono">{dbInfo?.logDir ?? "—"}</span>
-      </div>
-      <div style={{ marginTop: 10 }}>
-        <button
-          className="btn"
-          onClick={() => {
-            const ok = window.confirm(
-              "Re-baseline all courses? History is kept, but current content becomes the new baseline.",
-            );
-            if (ok) {
-              void api.rebuildBaseline().then(onRefresh);
+        <section id="notifications" className="settings-section">
+          <h2 className="settings-group-title">Notifications</h2>
+          <SettingRow title="Enable notifications" description="Requires permission from your system.">
+            <Switch checked={draft.notificationsEnabled} onCheckedChange={(v) => set("notificationsEnabled", v)} ariaLabel="Enable notifications" />
+          </SettingRow>
+          <SettingRow
+            title="New files"
+            controlClassName={notificationsDisabled ? "dimmed" : undefined}
+            description={
+              notificationsDisabled
+                ? "Turn on notifications to change these"
+                : "Notify when new resources appear."
             }
-          }}
-        >
-          Re-baseline all courses
-        </button>
+          >
+            <Switch
+              checked={draft.notifyNew}
+              onCheckedChange={(v) => set("notifyNew", v)}
+              disabled={notificationsDisabled}
+              ariaLabel="New files"
+            />
+          </SettingRow>
+          <SettingRow
+            title="Updated files"
+            controlClassName={notificationsDisabled ? "dimmed" : undefined}
+            description={notificationsDisabled ? undefined : "Notify when resources change."}
+          >
+            <Switch
+              checked={draft.notifyUpdated}
+              onCheckedChange={(v) => set("notifyUpdated", v)}
+              disabled={notificationsDisabled}
+              ariaLabel="Updated files"
+            />
+          </SettingRow>
+          <SettingRow
+            title="Announcements"
+            controlClassName={notificationsDisabled ? "dimmed" : undefined}
+            description={notificationsDisabled ? undefined : "Notify about announcements."}
+          >
+            <Switch
+              checked={draft.notifyAnnouncements}
+              onCheckedChange={(v) => set("notifyAnnouncements", v)}
+              disabled={notificationsDisabled}
+              ariaLabel="Announcements"
+            />
+          </SettingRow>
+          <SettingRow
+            title="Deadlines"
+            controlClassName={notificationsDisabled ? "dimmed" : undefined}
+            description={notificationsDisabled ? undefined : "Notify about upcoming deadlines."}
+          >
+            <Switch
+              checked={draft.notifyDeadlines}
+              onCheckedChange={(v) => set("notifyDeadlines", v)}
+              disabled={notificationsDisabled}
+              ariaLabel="Deadlines"
+            />
+          </SettingRow>
+          <SettingRow
+            title="Unavailable files"
+            controlClassName={notificationsDisabled ? "dimmed" : undefined}
+            description={notificationsDisabled ? undefined : "Notify when courses become unavailable."}
+          >
+            <Switch
+              checked={draft.notifyAvailability}
+              onCheckedChange={(v) => set("notifyAvailability", v)}
+              disabled={notificationsDisabled}
+              ariaLabel="Unavailable files"
+            />
+          </SettingRow>
+          <SettingRow
+            title="Authentication reminders"
+            controlClassName={notificationsDisabled ? "dimmed" : undefined}
+            description={notificationsDisabled ? undefined : "Remind when session may need refresh."}
+          >
+            <Switch
+              checked={draft.notifyAuth}
+              onCheckedChange={(v) => set("notifyAuth", v)}
+              disabled={notificationsDisabled}
+              ariaLabel="Authentication reminders"
+            />
+          </SettingRow>
+          <SettingRow title="Deadline reminder window" description="Notify about deadlines within this many hours.">
+            <Select
+              value={String(draft.deadlineReminderHours)}
+              onValueChange={(v) => set("deadlineReminderHours", Number(v))}
+              options={DEADLINE_OPTIONS as Array<{ value: string; label: string }>}
+              ariaLabel="Deadline reminder window"
+            />
+          </SettingRow>
+          {errors.deadlineReminderHours && <Banner kind="error">{errors.deadlineReminderHours}</Banner>}
+          <SettingRow title="Quiet hours" description="Notifications pause between these local times.">
+            <div className="settings-inline">
+              <TimeField value={draft.quietHoursStart ?? ""} onChange={(e) => set("quietHoursStart", e.target.value || null)} aria-label="Quiet hours start" />
+              <span className="muted">to</span>
+              <TimeField value={draft.quietHoursEnd ?? ""} onChange={(e) => set("quietHoursEnd", e.target.value || null)} aria-label="Quiet hours end" />
+            </div>
+          </SettingRow>
+          {errors.quietHours && <Banner kind="error">{errors.quietHours}</Banner>}
+          {errors.quietHoursStart && <Banner kind="error">{errors.quietHoursStart}</Banner>}
+          {errors.quietHoursEnd && <Banner kind="error">{errors.quietHoursEnd}</Banner>}
+        </section>
+
+        <div className="settings-group-divider" />
+
+        <section id="monitoring" className="settings-section">
+          <h2 className="settings-group-title">Monitoring</h2>
+          <SettingRow title="Sync interval" description="How often Quanta is checked while the app is running (15–1440 min).">
+            <Select
+              value={String(draft.syncIntervalMinutes)}
+              onValueChange={(v) => set("syncIntervalMinutes", Number(v))}
+              options={SYNC_INTERVALS as Array<{ value: string; label: string }>}
+              ariaLabel="Sync interval"
+            />
+          </SettingRow>
+          {errors.syncIntervalMinutes && <Banner kind="error">{errors.syncIntervalMinutes}</Banner>}
+          <SettingRow title="Run in background" description="Monitoring continues when the window is closed.">
+            <Switch checked={draft.runInBackground} onCheckedChange={(v) => set("runInBackground", v)} ariaLabel="Run in background" />
+          </SettingRow>
+          <SettingRow title="Launch at login">
+            <Switch checked={draft.launchAtLogin} onCheckedChange={(v) => set("launchAtLogin", v)} ariaLabel="Launch at login" />
+          </SettingRow>
+          <SettingRow title="Timezone" description="Dates are grouped by your local calendar days.">
+            <span className="muted">{Intl.DateTimeFormat().resolvedOptions().timeZone}</span>
+          </SettingRow>
+        </section>
+
+        <div className="settings-group-divider" />
+
+        <section id="data" className="settings-section">
+          <h2 className="settings-group-title">Data</h2>
+          <PropertyList properties={dbProps} />
+          <SettingRow title="Re-baseline" description="Record everything as known. Nothing is reported as new until the next scan.">
+            <Button variant="secondary" size="sm" onClick={() => setShowRebaseline(true)}>Re-baseline all courses</Button>
+          </SettingRow>
+          <p className="settings-note">
+            Session cookies stay in memory and are not saved. Times are shown in your local timezone.
+          </p>
+        </section>
+
+        {dirty && (
+          <div className="save-bar" role="status" aria-live="polite">
+            <div className="save-copy">You have unsaved changes</div>
+            <div className="settings-inline">
+              <Button variant="ghost" size="sm" onClick={() => setShowDiscard(true)}>Discard</Button>
+              <Button variant="primary" size="sm" loading={saving} onClick={() => void save()} disabled={hasValidationErrors(errors) || saving}>
+                Save settings
+              </Button>
+            </div>
+          </div>
+        )}
+        {saved && !dirty && (
+          <div className="save-bar" role="status" aria-live="polite">
+            <div className="save-copy">Settings saved</div>
+          </div>
+        )}
       </div>
 
-      <div style={{ marginTop: 22, display: "flex", gap: 10, alignItems: "center" }}>
-        <button className="btn btn-primary" onClick={save}>
-          Save settings
-        </button>
-        {saved && <span className="caught-up">Saved.</span>}
+      <ConfirmDialog
+        open={showDiscard}
+        onOpenChange={setShowDiscard}
+        title="Discard changes?"
+        body="You have unsaved changes. Discard them?"
+        confirmLabel="Discard"
+        cancelLabel="Keep editing"
+        destructive
+        onConfirm={() => {
+          setDraft(settings);
+          setSaved(false);
+        }}
+      />
+      <ConfirmDialog
+        open={showSignOut}
+        onOpenChange={setShowSignOut}
+        title="Sign out?"
+        body="Sign out of Quanta. You can sign in again later."
+        confirmLabel="Sign out"
+        cancelLabel="Cancel"
+        destructive
+        onConfirm={() => void onLogout()}
+      />
+      <ConfirmDialog
+        open={showRebaseline}
+        onOpenChange={setShowRebaseline}
+        title="Re-baseline all courses"
+        body="Re-baseline all courses? History is kept, but current content becomes the new baseline."
+        confirmLabel="Re-baseline"
+        cancelLabel="Cancel"
+        destructive
+        onConfirm={async () => {
+          await api.rebuildBaseline();
+          await onRefresh();
+        }}
+      />
       </div>
-
-      <p className="hint">
-        Session cookies stay in memory and are not saved. Sign in again after restarting the app. Times are
-        converted to your Mac's local timezone for display; original timestamps are preserved.
-      </p>
-    </div>
-  );
-}
-
-function Toggle({
-  label,
-  desc,
-  checked,
-  onChange,
-}: {
-  label: string;
-  desc?: string;
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <div className="setting">
-      <div>
-        {label}
-        {desc && <div className="desc">{desc}</div>}
-      </div>
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
     </div>
   );
 }

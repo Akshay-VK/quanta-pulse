@@ -1,0 +1,596 @@
+/* Screen-specific layout from section 7: Today, Calendar, Library, History,
+ * Settings and Login. */
+
+@layer components {
+  /* ---------------------------------------------------------------- Today */
+
+  .filter-bar .search-field {
+    max-width: 220px;
+  }
+
+  @media (max-width: 959px) {
+    .filter-bar .search-field {
+      max-width: 180px;
+    }
+  }
+
+  /* ------------------------------------------------------------- Calendar */
+
+  .cal-layout {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--sp-6);
+  }
+
+  .cal-main {
+    flex: 0 1 auto;
+    min-width: 520px;
+  }
+
+  .cal-header {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-1);
+    margin-bottom: var(--sp-4);
+  }
+
+  .cal-month-title {
+    font: 400 28px/34px var(--type-display);
+    margin-right: var(--sp-1);
+  }
+
+  .cal-header-spacer {
+    flex: 1 1 auto;
+  }
+
+  .cal-weekdays {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: var(--sp-1);
+    margin-bottom: var(--sp-1);
+  }
+
+  .cal-weekday {
+    padding: 0 var(--sp-2) var(--sp-1);
+    font: 500 12px/16px var(--type-caption);
+    color: var(--muted);
+  }
+
+  .cal-grid {
+    display: grid;
+    grid-template-rows: repeat(6, 1fr);
+    gap: var(--sp-1);
+  }
+
+  /* One ARIA row per week, so the grid role keeps its required children. */
+  .cal-row {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: var(--sp-1);
+  }
+
+  .cal-day {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    align-items: flex-start;
+    height: 84px;
+    padding: var(--sp-1) var(--sp-2);
+    border-radius: var(--radius-sm);
+    font: 400 14px/20px var(--type-ui);
+    text-align: left;
+    transition: background-color var(--dur-fast) var(--ease-inout);
+  }
+
+  .cal-day:hover {
+    background: var(--hover);
+  }
+
+  .cal-day.outside {
+    color: var(--muted);
+  }
+
+  .cal-day.selected {
+    background: var(--selected);
+    box-shadow: 0 0 0 1px var(--line-strong);
+  }
+
+  .cal-day-today .cal-num {
+    width: 22px;
+    height: 22px;
+    border-radius: var(--radius-pill);
+    background: var(--ink);
+    color: var(--bg);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .cal-num {
+    font-family: var(--type-mono);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .cal-dots {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    flex-wrap: wrap;
+    min-height: 12px;
+  }
+
+  .cal-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: var(--radius-pill);
+    animation: dot-in var(--dur-base) var(--ease-inout);
+  }
+
+  @keyframes dot-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  .ev-new { background: var(--t-new-fg); }
+  .ev-announcement { background: var(--t-note-fg); }
+  .ev-updated { background: var(--t-upd-fg); }
+  .ev-deadline { background: var(--t-red-fg); }
+  .ev-unavailable { background: var(--t-gone-fg); }
+  .ev-restored { background: var(--t-ok-fg); }
+
+  .cal-more {
+    font-family: var(--type-mono);
+    font-size: 11px;
+    line-height: 12px;
+    color: var(--muted);
+  }
+
+  .cal-legend {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-4);
+    flex-wrap: wrap;
+    padding-top: var(--sp-3);
+    font: 12px/16px var(--type-caption);
+    color: var(--muted);
+  }
+
+  .cal-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .cal-panel {
+    flex: 0 0 360px;
+    background: var(--raised);
+    border-left: 1px solid var(--line);
+    padding: var(--sp-5);
+    min-width: 0;
+  }
+
+  .cal-panel-title {
+    font: 400 24px/29px var(--type-title);
+    margin-bottom: var(--sp-4);
+  }
+
+  .cal-panel .stat-grid {
+    margin-bottom: var(--sp-4);
+  }
+
+  .cal-sync-line {
+    margin: var(--sp-4) 0;
+    font: 13px/18px var(--type-small);
+    color: var(--muted);
+  }
+
+  @media (max-width: 959px) {
+    .cal-layout {
+      flex-direction: column;
+    }
+
+    .cal-main {
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+
+    .cal-panel {
+      flex: 1 1 auto;
+      width: 100%;
+      border-left: 0;
+      border-top: 1px solid var(--line);
+    }
+  }
+
+  @media (max-width: 759px) {
+    .cal-grid,
+    .cal-row {
+      gap: 2px;
+    }
+
+    .cal-day {
+      height: 72px;
+      padding: var(--sp-1);
+    }
+
+    .cal-dots {
+      gap: 2px;
+    }
+  }
+
+  /* --------------------------------------------------------------- Library */
+
+  .library-head-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-3);
+    margin-bottom: var(--sp-4);
+    flex-wrap: wrap;
+  }
+
+  /* Course row: the whole row is one button, with the overflow menu beside it. */
+  .course-row {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    width: 100%;
+    min-height: calc(var(--row-h) + var(--sp-4));
+    padding: var(--sp-2) 0;
+    text-align: left;
+    transition: background-color var(--dur-fast) var(--ease-inout);
+  }
+
+  .course-row-main {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-4);
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: var(--sp-2) var(--sp-3);
+    border-radius: var(--radius-sm);
+  }
+
+  .course-row-main:hover {
+    background: var(--hover);
+  }
+
+  .course-row-copy {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  .course-row-name {
+    font: 500 14px/20px var(--type-ui-strong);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Only rendered when the raw name differs from the display name. */
+  .course-row-code {
+    font-family: var(--type-mono);
+    font-size: 12px;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .course-row-stat,
+  .course-row-last,
+  .course-row-new {
+    flex: 0 0 auto;
+    font-family: var(--type-mono);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+
+  .course-row-last {
+    font-family: var(--type-ui);
+    font-size: 13px;
+    line-height: 18px;
+  }
+
+  .course-row-new {
+    color: var(--t-new-fg);
+  }
+
+  .course-row-actions {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  /* Navigation affordance only; the row itself is the button. */
+  .course-row-chevron {
+    flex: 0 0 auto;
+    color: var(--faint);
+  }
+
+  @media (max-width: 759px) {
+    .course-row-main {
+      flex-wrap: wrap;
+      gap: var(--sp-2);
+    }
+
+    .course-row-last {
+      display: none;
+    }
+  }
+
+  /* Course page: title row, stat strip and toolbar. */
+  .course-title {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--sp-3);
+    min-width: 0;
+  }
+
+  .course-title-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .stat-strip {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+    margin: calc(-1 * var(--sp-4)) 0 var(--sp-5);
+    font: 13px/18px var(--type-small);
+    color: var(--muted);
+  }
+
+  .stat-strip-sep {
+    color: var(--faint);
+  }
+
+  .course-page-toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    flex-wrap: wrap;
+    margin-bottom: var(--sp-3);
+  }
+
+  .course-page-toolbar .search-field {
+    width: 240px;
+  }
+
+  .course-page-expand {
+    margin-left: auto;
+  }
+
+  .course-page-topper {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    margin-bottom: var(--sp-4);
+    flex-wrap: wrap;
+  }
+
+  /* ---------------------------------------------------------------- History */
+
+  .history-tabs {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-3);
+    margin-bottom: var(--sp-4);
+    border-bottom: 1px solid var(--line);
+  }
+
+  /* --------------------------------------------------------------- Settings */
+
+  /* 7.6: a 720px content column beside a 160px sticky section list. */
+  .settings-page {
+    max-width: calc(720px + 160px + var(--sp-8));
+  }
+
+  .settings-layout {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--sp-8);
+  }
+
+  .settings-sticky {
+    flex: 0 0 160px;
+    position: sticky;
+    top: var(--sp-6);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .settings-link {
+    width: 100%;
+    height: 32px;
+    padding: 0 var(--sp-2);
+    border-radius: var(--radius-sm);
+    text-align: left;
+    font: 14px/20px var(--type-ui);
+    color: var(--muted);
+  }
+
+  .settings-link:hover {
+    background: var(--hover);
+    color: var(--ink);
+  }
+
+  .settings-link[aria-current="true"] {
+    background: var(--selected);
+    color: var(--ink);
+    font-weight: 600;
+  }
+
+  .settings-content {
+    /* The 720px column: the section list sits beside it, never on it. */
+    flex: 0 1 720px;
+    min-width: 0;
+    width: 720px;
+    max-width: 720px;
+  }
+
+  .settings-group-title {
+    padding: var(--sp-5) 0 var(--sp-2);
+    font: 500 12px/16px var(--type-caption);
+    color: var(--faint);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .settings-group-title:first-child {
+    padding-top: 0;
+  }
+
+  .settings-group-divider {
+    height: 1px;
+    background: var(--line);
+    margin: var(--sp-4) 0;
+  }
+
+  /* Small inline arrangements inside a settings control: status dot plus its
+     label, quiet-hour fields, and the muted explanatory note. */
+  .settings-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-2);
+  }
+
+  .settings-dot {
+    flex: 0 0 auto;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--dot-danger);
+  }
+
+  .settings-dot.ok {
+    background: var(--dot-ok);
+  }
+
+  .settings-note {
+    margin-top: var(--sp-4);
+    max-width: 60ch;
+    font: 13px/18px var(--type-small);
+    color: var(--muted);
+  }
+
+  .save-bar {
+    position: sticky;
+    bottom: var(--sp-3);
+    margin-top: var(--sp-6);
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    justify-content: flex-end;
+    background: var(--raised);
+    box-shadow: var(--shadow-pop);
+    border-radius: var(--radius-md);
+    padding: var(--sp-3);
+    animation: savebar-in var(--dur-base) var(--ease-out);
+  }
+
+  .save-bar .save-copy {
+    margin-right: auto;
+    font: 13px/18px var(--type-small);
+    color: var(--muted);
+  }
+
+  @keyframes savebar-in {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  @media (max-width: 959px) {
+    .settings-content {
+      width: auto;
+      max-width: none;
+    }
+
+    .settings-layout {
+      flex-direction: column;
+      gap: var(--sp-3);
+    }
+
+    .settings-sticky {
+      position: static;
+      flex-direction: row;
+      overflow-x: auto;
+      gap: var(--sp-1);
+      width: 100%;
+      flex: 0 0 auto;
+    }
+
+    .settings-link {
+      flex: 0 0 auto;
+      width: auto;
+    }
+  }
+
+  /* ------------------------------------------------------------------ Login */
+
+  .login-card {
+    width: 360px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-4);
+  }
+
+  .login-brand {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+  }
+
+  .login-title {
+    font: 400 24px/29px var(--type-title);
+  }
+
+  .login-copy {
+    font: 13px/18px var(--type-small);
+    color: var(--muted);
+    max-width: 36ch;
+  }
+
+  .login-fields {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+  }
+
+  .login-sep {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    font: 12px/16px var(--type-caption);
+    color: var(--faint);
+  }
+
+  .login-sep::before,
+  .login-sep::after {
+    content: "";
+    flex: 1 1 auto;
+    height: 1px;
+    background: var(--line);
+  }
+}

@@ -1,5 +1,9 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { api } from "../lib/api";
+import { Banner } from "./ui/Banner";
+import { Button } from "./ui/Button";
+import { TextField } from "./ui/TextField";
+import { PasswordField } from "./ui/PasswordField";
 import type { AuthStatus } from "../lib/types";
 
 interface Props {
@@ -9,16 +13,19 @@ interface Props {
 
 type Phase = "idle" | "loading" | "sso" | "success" | "error";
 
-const QUANTA_LOGIN_URL = "https://quanta.bits-pilani.ac.in/login/index.php?loginredirect=1";
-
 export default function LoginScreen({ onAuthenticated, onCancel }: Props) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [show, setShow] = useState(false);
   const [phase, setPhase] = useState<Phase>("idle");
   const [message, setMessage] = useState<string | null>(null);
+  const usernameRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    usernameRef.current?.focus();
+  }, []);
 
   const busy = phase === "loading" || phase === "sso";
+  const ssoPending = phase === "sso";
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -26,10 +33,8 @@ export default function LoginScreen({ onAuthenticated, onCancel }: Props) {
     setMessage(null);
     try {
       const status = await api.login(email, password);
-      // Clear the password from component state immediately after the attempt.
       setPassword("");
       setPhase("success");
-      setMessage("Signed in. Discovering your courses…");
       onAuthenticated(status);
     } catch (err) {
       setPassword("");
@@ -44,7 +49,6 @@ export default function LoginScreen({ onAuthenticated, onCancel }: Props) {
     try {
       const status = await api.startSsoLogin();
       setPhase("success");
-      setMessage("Signed in. Discovering your courses…");
       onAuthenticated(status);
     } catch (err) {
       setPhase("error");
@@ -55,86 +59,71 @@ export default function LoginScreen({ onAuthenticated, onCancel }: Props) {
   return (
     <div className="login-wrap">
       <div className="login-card">
-        <h1>Quanta Pulse</h1>
-        <p className="sub">Sign in to track new material on BITS Quanta.</p>
-        {onCancel && <button className="btn-link" type="button" onClick={onCancel}>Back to Quanta Pulse</button>}
+        <div className="login-brand" aria-hidden="true">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="currentColor">
+            <circle cx="12" cy="12" r="9" opacity="0.2" />
+            <path d="M12 3a9 9 0 100 18 9 9 0 000-18zm0 2a7 7 0 110 14 7 7 0 010-14zm-1 3v6l5-3-5-3z" />
+          </svg>
+        </div>
+        <h1 className="login-title">Sign in to Quanta</h1>
+        <p className="login-copy">Sign in to track new material on BITS Quanta.</p>
 
-        {message && (
-          <div
-            className={
-              phase === "error" ? "alert error" : phase === "success" ? "alert ok" : "alert info"
-            }
-          >
-            {message}
-          </div>
+        {phase === "error" && message && (
+          <Banner kind="error">
+            <strong>Sign in failed</strong>
+            <div>{message}</div>
+          </Banner>
+        )}
+        {phase === "success" && (
+          <Banner kind="ok">Signed in. Discovering your courses…</Banner>
         )}
 
-        <form onSubmit={submit}>
-          <div className="field">
-            <label htmlFor="email">BITS email</label>
-            <div className="control">
-              <input
-                id="email"
-                type="email"
-                autoComplete="username"
-                placeholder="f20230000@goa.bits-pilani.ac.in"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                disabled={busy}
-                required
-              />
-            </div>
-          </div>
-
-          <div className="field">
-            <label htmlFor="password">Password</label>
-            <div className="control">
-              <input
-                id="password"
-                type={show ? "text" : "password"}
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                disabled={busy}
-              />
-              <button
-                type="button"
-                className="reveal"
-                onClick={() => setShow((s) => !s)}
-                aria-label={show ? "Hide password" : "Show password"}
-              >
-                {show ? "Hide" : "Show"}
-              </button>
-            </div>
-          </div>
-
-          <div className="login-actions">
-            <button className="btn btn-primary" type="submit" disabled={busy}>
-              {phase === "loading" ? "Signing in…" : "Sign in"}
-            </button>
-          </div>
+        <form onSubmit={submit} className="login-fields">
+          <TextField
+            label="Username"
+            lg
+            inputRef={usernameRef}
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            autoComplete="username"
+            disabled={busy}
+            required
+          />
+          <PasswordField
+            label="Password"
+            lg
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
+            disabled={busy}
+          />
+          <Button type="submit" variant="primary" size="lg" loading={phase === "loading"} disabled={busy} style={{ width: "100%" }}>
+            {phase === "loading" ? "Signing in" : "Sign in"}
+          </Button>
         </form>
 
-        <div className="divider-or">or</div>
+        <div className="login-sep">or</div>
 
-        <button className="btn" style={{ width: "100%" }} onClick={sso} disabled={busy}>
-          {phase === "sso" ? "Waiting for sign-in…" : "Sign in with BITS Google"}
-        </button>
+        {ssoPending ? (
+          <Button size="lg" variant="secondary" loading disabled style={{ width: "100%" }}>
+            Waiting for BITS SSO
+          </Button>
+        ) : (
+          <Button size="lg" variant="secondary" onClick={sso} disabled={busy} style={{ width: "100%" }}>
+            Continue with BITS SSO
+          </Button>
+        )}
 
-        <p className="hint">
-          Quanta Pulse signs in directly with Quanta over HTTPS. Your password is never stored.
-          It is cleared from memory as soon as sign-in completes. If your account requires BITS
-          Google, use the button above and complete MFA in the window that opens.{" "}
-          <a
-            href={QUANTA_LOGIN_URL}
-            onClick={(e) => {
-              e.preventDefault();
-              void api.openExternal(QUANTA_LOGIN_URL);
-            }}
-          >
-            Open Quanta
-          </a>
-          .
+        <div style={{ marginTop: 12, display: "flex", justifyContent: "center" }}>
+          {onCancel && (
+            <button type="button" className="settings-link" onClick={onCancel}>
+              Cancel
+            </button>
+          )}
+        </div>
+
+        <p className="login-copy" style={{ marginTop: 16 }}>
+          Quanta Pulse signs in directly with Quanta over HTTPS. Your password is never stored. It is cleared from memory as soon as sign-in completes.
         </p>
       </div>
     </div>

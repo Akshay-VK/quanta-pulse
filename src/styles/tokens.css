@@ -1,0 +1,179 @@
+/* Design tokens (Calm). Every measurement and colour in the app comes from
+ * here; component CSS never hardcodes a colour or a raw px. Theme tint tokens
+ * are explicit hex values on purpose — the minimum webview is equivalent to
+ * Safari 15.6, so CSS `color-mix()` is off the table. */
+
+@layer tokens, base, layout, components;
+
+@layer tokens {
+  :root,
+  :root[data-theme="light"] {
+    /* 4.1 Colour */
+    --bg: #faf9f6;
+    --side: #f3f1eb;
+    --raised: #ffffff;
+    --hover: rgba(55, 53, 47, 0.06);
+    --selected: rgba(55, 53, 47, 0.09);
+    --ink: #2b2a27;
+    --muted: #6b685f;
+    --faint: #9a978e;
+    --line: rgba(55, 53, 47, 0.12);
+    --line-strong: rgba(55, 53, 47, 0.22);
+    --accent: #2383e2;
+    --link: #0f63b8;
+    --overlay: rgba(25, 24, 22, 0.4);
+    --dot-ok: #3fa46a;
+    --dot-warn: #d99628;
+    --dot-danger: #d9473b;
+
+    /* 6.1 Extra tokens */
+    --ink-hover: #413f3a;
+    --danger-solid: #c23a2f;
+    --on-danger: #ffffff;
+    --on-accent: #ffffff;
+    --control-knob: #ffffff;
+
+    /* Status tags */
+    --t-new-bg: #ddebf1;
+    --t-new-fg: #183347;
+    --t-upd-bg: #fbecb4;
+    --t-upd-fg: #402c1b;
+    --t-red-bg: #ffe2dd;
+    --t-red-fg: #5d1715;
+    --t-note-bg: #e8deee;
+    --t-note-fg: #412454;
+    --t-gone-bg: #e8e6e1;
+    --t-gone-fg: #4a4740;
+    --t-ok-bg: #dbeded;
+    --t-ok-fg: #1c3829;
+
+    /* Course dots: twelve fixed hues, assigned by order of first sight so no
+     * two of the first twelve courses share one (lib/courseName.ts). */
+    --course-dot-0: #9065b0;
+    --course-dot-1: #2b9a8c;
+    --course-dot-2: #c77b30;
+    --course-dot-3: #cd4a7a;
+    --course-dot-4: #4f7df3;
+    --course-dot-5: #7a8f2b;
+    --course-dot-6: #b5533c;
+    --course-dot-7: #5b6c8f;
+    --course-dot-8: #1f8fb8;
+    --course-dot-9: #a8562a;
+    --course-dot-10: #6b4fa8;
+    --course-dot-11: #3d8f4f;
+
+    /* 4.2 Typography */
+    --type-display: "Newsreader Variable", Georgia, serif;
+    --type-title: "Newsreader Variable", Georgia, serif;
+    --type-dialog: "Newsreader Variable", Georgia, serif;
+    --type-lead: "Geist Variable", system-ui, sans-serif;
+    --type-ui: "Geist Variable", system-ui, sans-serif;
+    --type-ui-strong: "Geist Variable", system-ui, sans-serif;
+    --type-small: "Geist Variable", system-ui, sans-serif;
+    --type-caption: "Geist Variable", system-ui, sans-serif;
+    --type-mono: "Geist Mono Variable", ui-monospace, monospace;
+
+    /* 4.3 Spacing and layout */
+    --sp-1: 4px;
+    --sp-2: 8px;
+    --sp-3: 12px;
+    --sp-4: 16px;
+    --sp-5: 20px;
+    --sp-6: 24px;
+    --sp-7: 28px;
+    --sp-8: 32px;
+    --sp-10: 40px;
+    --sp-12: 48px;
+    --sp-16: 64px;
+    --sidebar-w: 248px;
+    --sidebar-rail: 56px;
+    --topbar-h: 48px;
+    --row-h: 40px;
+    --peek-w: 340px;
+    --content-max: 900px;
+    --page-pad-x: 48px;
+    --control-h-sm: 28px;
+    --control-h: 32px;
+    --control-h-lg: 36px;
+
+    /* 4.4 Shape, elevation, motion, z-index */
+    --radius-xs: 4px;
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --radius-pill: 999px;
+    --shadow-pop: 0 4px 16px rgba(0, 0, 0, 0.08), 0 0 0 1px var(--line);
+    --shadow-dialog: 0 16px 48px rgba(0, 0, 0, 0.16), 0 0 0 1px var(--line);
+    --dur-fast: 120ms;
+    --dur-base: 160ms;
+    --dur-slow: 220ms;
+    --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+    --ease-inout: cubic-bezier(0.4, 0, 0.2, 1);
+    --z-sticky: 10;
+    --z-sidebar: 20;
+    --z-popover: 50;
+    --z-dialog: 60;
+    --z-toast: 70;
+
+    /* Legacy aliases, one release, then removed */
+    --surface: var(--raised);
+    --surface-2: var(--side);
+    --text: var(--ink);
+    --cyan: var(--accent);
+    --cyan-soft: var(--t-new-bg);
+    --cyan-border: var(--t-new-fg);
+    --green: var(--t-ok-fg);
+    --amber: var(--t-upd-fg);
+    --red: var(--t-red-fg);
+    --violet: var(--t-note-fg);
+    --radius: var(--radius-sm);
+    --fs-ui: 14px;
+    --fs-meta: 13px;
+    --fs-label: 13px;
+    --ok: var(--dot-ok);
+    --warn: var(--dot-warn);
+    --danger: var(--dot-danger);
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #262624;
+    --side: #1f1e1d;
+    --raised: #2e2d2b;
+    --hover: rgba(255, 255, 255, 0.06);
+    --selected: rgba(255, 255, 255, 0.09);
+    --ink: #eceae4;
+    --muted: #a19e95;
+    --faint: #6f6d66;
+    --line: rgba(255, 255, 255, 0.1);
+    --line-strong: rgba(255, 255, 255, 0.18);
+    --accent: #5aa2f0;
+    --link: #7db4f5;
+    --overlay: rgba(0, 0, 0, 0.55);
+    --dot-ok: #4fbe7e;
+    --dot-warn: #e3a63c;
+    --dot-danger: #f0705f;
+
+    --ink-hover: #ffffff;
+    --danger-solid: #f0705f;
+    --on-danger: #1a0f0e;
+    /* The accent is a light blue in the dark theme, so its glyph goes dark. */
+    --on-accent: #16222e;
+    --control-knob: #ffffff;
+
+    --t-new-bg: #1d3a52;
+    --t-new-fg: #9cc4e8;
+    --t-upd-bg: #4a3a12;
+    --t-upd-fg: #e8c872;
+    --t-red-bg: #4d2420;
+    --t-red-fg: #f0a89e;
+    --t-note-bg: #3a2a52;
+    --t-note-fg: #c9b0e8;
+    --t-gone-bg: #383733;
+    --t-gone-fg: #a5a39c;
+    --t-ok-bg: #1f3d2b;
+    --t-ok-fg: #8fd1a5;
+
+    --shadow-pop: 0 4px 16px rgba(0, 0, 0, 0.4), 0 0 0 1px var(--line);
+    --shadow-dialog: 0 16px 48px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--line);
+  }
+}
