@@ -3,7 +3,7 @@ import tseslint from "typescript-eslint";
 import globals from "globals";
 
 export default tseslint.config(
-  { ignores: ["dist", "src-tauri", "node_modules", "coverage"] },
+  { ignores: ["dist", "src-tauri", "node_modules", "coverage", "src/**/*.js"] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
@@ -17,7 +17,7 @@ export default tseslint.config(
     files: ["**/*.{ts,tsx}"],
     languageOptions: {
       ecmaVersion: 2022,
-      globals: { ...globals.browser, ...globals.node },
+      globals: { ...globals.browser, ...globals.node, ...globals.vitest },
     },
     rules: {
       "@typescript-eslint/no-unused-vars": [
