@@ -167,11 +167,12 @@
   }
 
   .cal-panel {
-    flex: 0 0 360px;
+    flex: 0 1 360px;
+    min-width: 320px;
+    max-width: 420px;
     background: var(--raised);
     border-left: 1px solid var(--line);
     padding: var(--sp-5);
-    min-width: 0;
   }
 
   .cal-panel-title {
@@ -202,6 +203,8 @@
     .cal-panel {
       flex: 1 1 auto;
       width: 100%;
+      min-width: 0;
+      max-width: none;
       border-left: 0;
       border-top: 1px solid var(--line);
     }
@@ -397,17 +400,19 @@
 
   /* 7.6: a 720px content column beside a 160px sticky section list. */
   .settings-page {
-    max-width: calc(720px + 160px + var(--sp-8));
+    /* Header plus the 160px nav, a 48px gap, and the 720px column, centred. */
+    max-width: calc(160px + var(--sp-12) + 720px);
+    margin-inline: auto;
   }
 
   .settings-layout {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--sp-8);
+    display: grid;
+    grid-template-columns: 160px minmax(0, 720px);
+    gap: var(--sp-12);
+    align-items: start;
   }
 
   .settings-sticky {
-    flex: 0 0 160px;
     position: sticky;
     top: var(--sp-6);
     display: flex;
@@ -416,11 +421,14 @@
   }
 
   .settings-link {
+    display: flex;
+    align-items: center;
     width: 100%;
     height: 32px;
     padding: 0 var(--sp-2);
     border-radius: var(--radius-sm);
     text-align: left;
+    text-decoration: none;
     font: 14px/20px var(--type-ui);
     color: var(--muted);
   }
@@ -438,28 +446,25 @@
 
   .settings-content {
     /* The 720px column: the section list sits beside it, never on it. */
-    flex: 0 1 720px;
     min-width: 0;
-    width: 720px;
-    max-width: 720px;
   }
 
   .settings-group-title {
-    padding: var(--sp-5) 0 var(--sp-2);
-    font: 500 12px/16px var(--type-caption);
-    color: var(--faint);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    padding: var(--sp-10) 0 var(--sp-2);
+    font: 400 20px/26px var(--type-dialog);
+    color: var(--ink);
   }
 
-  .settings-group-title:first-child {
+  /* Only the first section loses the 40px lead-in. The old rule matched every
+     heading, because each <h2> is the first child of its own <section>. */
+  .settings-section:first-child .settings-group-title {
     padding-top: 0;
   }
 
-  .settings-group-divider {
-    height: 1px;
-    background: var(--line);
-    margin: var(--sp-4) 0;
+  /* Separators come from the rows alone, so no line is ever doubled and the
+     last row in a section ends without one. */
+  .settings-section .setting-row:last-child {
+    border-bottom: 0;
   }
 
   /* Small inline arrangements inside a settings control: status dot plus its
@@ -522,23 +527,23 @@
   }
 
   @media (max-width: 959px) {
-    .settings-content {
-      width: auto;
+    .settings-page {
       max-width: none;
     }
 
     .settings-layout {
-      flex-direction: column;
+      grid-template-columns: minmax(0, 1fr);
       gap: var(--sp-3);
     }
 
+    /* The section list becomes a horizontally scrolling Tabs row above the
+       content. */
     .settings-sticky {
       position: static;
       flex-direction: row;
       overflow-x: auto;
       gap: var(--sp-1);
       width: 100%;
-      flex: 0 0 auto;
     }
 
     .settings-link {

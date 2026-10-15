@@ -225,7 +225,11 @@ export default function SettingsView({
               aria-current={active === item.id ? "true" : undefined}
               onClick={(e) => {
                 e.preventDefault();
-                document.getElementById(item.id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+                // Instant under reduced motion, smooth otherwise.
+                const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+                document
+                  .getElementById(item.id)
+                  ?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
               }}
             >
               {item.label}
@@ -247,8 +251,6 @@ export default function SettingsView({
             />
           </SettingRow>
         </section>
-
-        <div className="settings-group-divider" />
 
         <section id="account" className="settings-section">
           <h2 className="settings-group-title">Account</h2>
@@ -272,11 +274,23 @@ export default function SettingsView({
           </SettingRow>
           <SettingRow title="Notification permission">
             <div className="settings-inline">
-              <span>{permissionLabel(permission)}</span>
-              {permission !== "granted" && permission !== "denied" && permission !== "unavailable" && (
-                <Button variant="secondary" size="sm" onClick={askPermission}>Allow notifications</Button>
+              <span className="muted">{permissionLabel(permission)}</span>
+              {permission === "denied" ? (
+                <Button variant="secondary" size="sm" onClick={() => void api.openNotificationSettings()}>
+                  Open system settings
+                </Button>
+              ) : (
+                <>
+                  {permission === "default" && (
+                    <Button variant="secondary" size="sm" onClick={askPermission}>
+                      Allow notifications
+                    </Button>
+                  )}
+                  <Button variant="secondary" size="sm" onClick={() => void api.testNotification()}>
+                    Send test notification
+                  </Button>
+                </>
               )}
-              <Button variant="ghost" size="sm" onClick={() => void api.testNotification()}>Send test notification</Button>
             </div>
           </SettingRow>
           {auth?.sessionExpired && (
@@ -284,12 +298,12 @@ export default function SettingsView({
               <Button variant="secondary" size="sm" onClick={onRefresh}>Restart session</Button>
             </SettingRow>
           )}
-          <SettingRow title="Sign out">
-            <Button variant="danger" size="sm" onClick={() => setShowSignOut(true)}>Sign out</Button>
+          <SettingRow title="Sign out" description="Ends your Quanta session on this computer.">
+            <Button variant="danger-ghost" size="sm" onClick={() => setShowSignOut(true)}>
+              Sign out…
+            </Button>
           </SettingRow>
         </section>
-
-        <div className="settings-group-divider" />
 
         <section id="notifications" className="settings-section">
           <h2 className="settings-group-title">Notifications</h2>
@@ -393,8 +407,6 @@ export default function SettingsView({
           {errors.quietHoursEnd && <Banner kind="error">{errors.quietHoursEnd}</Banner>}
         </section>
 
-        <div className="settings-group-divider" />
-
         <section id="monitoring" className="settings-section">
           <h2 className="settings-group-title">Monitoring</h2>
           <SettingRow title="Sync interval" description="How often Quanta is checked while the app is running (15–1440 min).">
@@ -416,8 +428,6 @@ export default function SettingsView({
             <span className="muted">{Intl.DateTimeFormat().resolvedOptions().timeZone}</span>
           </SettingRow>
         </section>
-
-        <div className="settings-group-divider" />
 
         <section id="data" className="settings-section">
           <h2 className="settings-group-title">Data</h2>

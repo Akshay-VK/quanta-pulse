@@ -60,6 +60,7 @@ pub fn run() {
             commands::cache_stats,
             commands::clear_file_cache,
             commands::open_external,
+            commands::open_notification_settings,
             commands::set_monitoring,
             commands::preview_resource,
             commands::show_main_window,

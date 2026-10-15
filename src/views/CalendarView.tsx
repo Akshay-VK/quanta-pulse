@@ -408,6 +408,7 @@ export default function CalendarView({ courses, onOpen, onOpenScan, onOpenCourse
                       }
                       openLabel={openLabel(e.changeType)}
                       showOpen={Boolean(primary)}
+                      density="compact"
                       onSelect={noop}
                       onOpen={primary ? () => onOpen(primary) : undefined}
                       menu={[

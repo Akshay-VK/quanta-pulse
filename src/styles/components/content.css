@@ -5,9 +5,14 @@
   /* ----------------------------------------------------------- ResourceRow */
 
   .resource-row {
-    display: flex;
+    display: grid;
+    /* selectable region | course pill + status | time | actions. Every track
+       that holds text can shrink, so a long title ellipsises instead of pushing
+       the other columns into each other. */
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
     align-items: center;
-    gap: var(--sp-3);
+    column-gap: var(--sp-3);
+    min-width: 0;
     min-height: var(--row-h);
     padding: 0 var(--sp-2);
     border-radius: var(--radius-sm);
@@ -22,16 +27,25 @@
     background: var(--selected);
   }
 
+  /* The whole selectable region: unread dot 7px, file icon 16px, title. Its
+     tracks repeat the row's own so the columns line up across every row without
+     subgrid, which our minimum webview does not support. */
   .row-select {
-    display: flex;
+    grid-column: 1;
+    display: grid;
+    grid-template-columns: 7px 16px minmax(0, 1fr);
     align-items: center;
-    gap: var(--sp-3);
-    flex: 1 1 auto;
+    column-gap: var(--sp-3);
     min-width: 0;
     text-align: left;
   }
 
+  .row-title-wrap {
+    min-width: 0;
+  }
+
   .row-title {
+    display: block;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -49,6 +63,7 @@
   }
 
   .row-time {
+    grid-column: 3;
     flex: 0 0 auto;
     font: 13px/18px var(--type-small);
     color: var(--muted);
@@ -56,6 +71,7 @@
   }
 
   .row-actions {
+    grid-column: 4;
     flex: 0 0 auto;
     display: flex;
     align-items: center;
@@ -70,32 +86,55 @@
   }
 
   .row-meta {
+    grid-column: 2;
     flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
     gap: var(--sp-2);
+    min-width: 0;
+    overflow: hidden;
   }
 
-  .row-tags {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--sp-1);
+  /* The pill and tag never shrink; the pill's text ellipsises at 16ch instead. */
+  .row-meta .course-pill,
+  .row-meta .tag {
     flex: 0 0 auto;
+  }
+
+  /* Two lines for narrow containers (the Calendar day panel and any row
+     measured under 560px): title on line 1, pill, tag and time on line 2,
+     aligned under the title. */
+  .resource-row.row-compact {
+    grid-template-columns: 7px 16px minmax(0, 1fr) auto;
+    row-gap: var(--sp-1);
+    padding-top: var(--sp-2);
+    padding-bottom: var(--sp-2);
+  }
+
+  .row-compact .row-select {
+    grid-column: 1 / 4;
+    grid-row: 1;
+  }
+
+  .row-compact .row-actions {
+    grid-column: 4;
+    grid-row: 1;
+  }
+
+  .row-compact .row-meta {
+    grid-column: 3;
+    grid-row: 2;
+    min-width: 0;
+  }
+
+  .row-compact .row-time {
+    grid-column: 4;
+    grid-row: 2;
+    justify-self: end;
   }
 
   .row-course-pill {
     flex: 0 0 auto;
-  }
-
-  @media (max-width: 759px) {
-    .resource-row {
-      flex-wrap: wrap;
-      padding-block: var(--sp-2);
-    }
-
-    .row-title-wrap {
-      flex-basis: 100%;
-    }
   }
 
   /* Removable filter chip under Today's filter bar. */

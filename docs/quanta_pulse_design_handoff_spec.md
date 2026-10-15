@@ -251,8 +251,10 @@ In-page content never has a shadow. Separation comes from `--line`.
 
 | Part | Spec |
 | --- | --- |
-| Structure | `[select button: UnreadDot, FileTypeIcon, title, CoursePill, StatusTag] [time] [open IconButton] [overflow IconButton]` |
+| Structure | CSS grid: `[select button: UnreadDot 7px, FileTypeIcon 16px, title minmax(0, 1fr)] [CoursePill + StatusTag auto] [time auto] [actions auto]`. The pill and tag are siblings of the select button, never inside it |
 | Size and shape | Min height `--row-h`, `--radius-sm`, horizontal padding `--sp-2`, gap `--sp-3` |
+| Density | `density='comfortable'` (Today, History, All files): title, pill and tag on one line. `density='compact'` (Calendar day panel): two lines, the title on line 1 and the CoursePill, StatusTag and time on line 2, aligned under the title. A row measured under 560px switches to compact by itself, because container queries are unavailable on the minimum webview |
+| Overflow | Every track that holds text has `min-width: 0`, so only the title ellipsises. CoursePill is `flex: none` with `max-width: 16ch` and an ellipsised label; StatusTag is `flex: none`. Nothing overlaps at any window width |
 | States | Hover `--hover`. Selected `--selected`. Focus ring on the select button. Unread: title weight 500. Unavailable: title struck through and `--muted` |
 | Title | One line, ellipsis. Full text in the `title` attribute and in the peek panel |
 | Time | Caption `--muted`, no wrap, from `lib/format.ts`. Missing date reads 'Upload date unavailable', never a substitute |
@@ -449,7 +451,7 @@ A DataTable over scan history.
 
 ### 7.6 Settings
 
-**Purpose.** Configure appearance, account, notifications, monitoring and data. Narrower column than other screens (max 720) beside a 160px sticky section list.
+**Purpose.** Configure appearance, account, notifications, monitoring and data. Header left-aligned, then a centred `160px minmax(0, 720px)` grid with a 48px gap: a sticky 160px section list beside the 720px content column.
 
 ```
  Settings
@@ -463,7 +465,8 @@ A DataTable over scan history.
   You have unsaved changes              [Discard]  [Save settings]
 ```
 
-- **Section list.** Anchor links with a scroll-spy active state (`--selected`). Under 960px it becomes a horizontally scrolling Tabs row above the content.
+- **Section list.** A sticky `nav` (top 24px) of 32px-high anchor rows, `--radius-sm`, no text-decoration, sentence-case labels. The scroll-spy active row is `--selected` with weight 600; clicking scrolls smoothly, instantly under reduced motion. Under 960px it becomes a horizontally scrolling Tabs row above the content.
+- **Sections.** Sentence-case titles in `--type-dialog`, 40px above each except the first. Only SettingRows carry a hairline bottom border, and the last row in a section has none, so no line is ever doubled.
 - **Draft model (unchanged).** Edits go to a local `draft`. A save bar slides up from the bottom of the content (160 ms) when the draft differs: 'You have unsaved changes', ghost 'Discard', primary 'Save settings'. Ctrl/Cmd+S saves. Save succeeds with the toast 'Settings saved'. Leaving the screen while dirty opens a ConfirmDialog, 'Discard changes?'. The one exception is Theme: it applies instantly and is not part of the draft.
 - **Validation.** Follows `settings.rs` (`sanitize`, `is_valid_hhmm`). Invalid fields show the inline error, and 'Save settings' is disabled while any is invalid.
 

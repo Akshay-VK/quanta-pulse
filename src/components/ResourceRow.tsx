@@ -1,4 +1,5 @@
 import { ExternalLink, Eye, MoreHorizontal } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { cx } from "../lib/cx";
 import { CoursePill } from "./ui/CoursePill";
 import { FileTypeIcon } from "./ui/FileTypeIcon";
@@ -7,9 +8,45 @@ import { Menu, type MenuItemSpec } from "./ui/Menu";
 import { StatusTag, type StatusKind } from "./ui/StatusTag";
 import { UnreadDot } from "./ui/UnreadDot";
 
+export type RowDensity = "comfortable" | "compact";
+
+/** Below this width the row flips to its two-line compact layout. Container
+ *  queries are unavailable on our minimum webview, so it is measured instead. */
+const COMPACT_MAX_WIDTH = 560;
+
+/**
+ * Watches the row's own box and reports whether it is narrower than the compact
+ * breakpoint. Measuring the row means every list gets the behaviour without each
+ * view having to wire up a container ref, and the row's width is the container's
+ * width, so one measurement serves the whole row.
+ */
+function useAutoCompact() {
+  const ref = useRef<HTMLDivElement>(null);
+  const [narrow, setNarrow] = useState(false);
+
+  useEffect(() => {
+    const el = ref.current;
+    // jsdom has no ResizeObserver; the explicit `density` prop still applies.
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? el.clientWidth;
+      setNarrow(width < COMPACT_MAX_WIDTH);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  return { ref, narrow };
+}
+
 /**
  * One row in the Today feed, History changes and Calendar day lists. Selecting
  * (for the peek panel) and opening are deliberately separate controls.
+ *
+ * The row is a grid so a long title can never push the course pill, status tag
+ * or time out of their own columns. `compact` stacks it onto two lines for
+ * narrow containers (the Calendar day panel); it also engages on its own once
+ * the row is measured below `COMPACT_MAX_WIDTH`.
  */
 export default function ResourceRow({
   title,
@@ -25,6 +62,7 @@ export default function ResourceRow({
   openLabel,
   showOpen = true,
   previewAvailable = false,
+  density = "comfortable",
   onSelect,
   onOpen,
   onPreview,
@@ -44,6 +82,7 @@ export default function ResourceRow({
   openLabel: string;
   showOpen?: boolean;
   previewAvailable?: boolean;
+  density?: RowDensity;
   onSelect: () => void;
   onOpen?: () => void;
   onPreview?: () => void;
@@ -51,10 +90,15 @@ export default function ResourceRow({
   onCourse?: () => void;
   menu: MenuItemSpec[];
 }) {
+  const { ref, narrow } = useAutoCompact();
+  const compact = density === "compact" || narrow;
+
   return (
     <div
+      ref={ref}
       className={cx(
         "resource-row",
+        compact && "row-compact",
         selected && "selected",
         unread && "row-unread",
         unavailable && "row-unavailable",

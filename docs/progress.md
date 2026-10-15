@@ -100,3 +100,23 @@ Tracking the implementation of `docs/quanta_pulse_design_handoff_spec.md`
 - [x] Settings > Data: cache usage row, size-limit Select, 'Clear cached files'.
 - [x] Tests: 5 `core::files` unit tests + settings default/clamp and
       missing-field-compatibility tests. 88 Rust tests, 187 frontend tests pass.
+
+## Phase 8 — Visual fixes (spec Part A)
+
+- [x] A1 ResourceRow is a CSS grid (`main | pill+tag | time | actions`) so a long
+      title can no longer overlap the course pill, status tag or time; the pill
+      is capped at 16ch and ellipsised, the tag never shrinks, and every text
+      track has `min-width: 0`. New `density` prop; `compact` is a two-line
+      layout used by the Calendar day panel explicitly and by any row measured
+      under 560px through a ResizeObserver (no container queries on our minimum
+      webview). Calendar day panel width is 360px, clamped 320–420.
+- [x] A2 Settings: centred `160px minmax(0, 720px)` grid with a 48px gap;
+      section list is plain 32px rows with no underline; sentence-case
+      `--type-dialog` section titles; group dividers removed so hairlines come
+      from SettingRows alone (last in a section has none); Account shows the
+      notification permission as muted text beside its action, and Sign out is a
+      new `danger-ghost` Button opening the ConfirmDialog.
+- [x] New command `open_notification_settings` (Settings > Account, the Blocked
+      case). `vitest.config.ts` gained `css: true` so tests can read the real
+      stylesheets as text; jsdom does not lay out CSS, so the grid/min-width
+      contract is asserted against the source.

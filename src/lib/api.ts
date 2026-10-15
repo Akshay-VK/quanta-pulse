@@ -73,4 +73,5 @@ export const api = {
   cacheStats: () => invoke<CacheStats>("cache_stats"),
   clearFileCache: () => invoke<CacheStats>("clear_file_cache"),
   openExternal: (url: string) => invoke<void>("open_external", { url }),
+  openNotificationSettings: () => invoke<void>("open_notification_settings"),
 };

@@ -566,6 +566,25 @@ pub fn ui_ready(summary: String) {
     tracing::info!("ui ready: {summary}");
 }
 
+/// Opens the OS notification settings pane. Used by Settings > Account when the
+/// notification permission is Blocked and the app cannot ask again.
+///
+/// The target is a compile-time constant, so unlike `open_external` it needs no
+/// scheme allowlist; the opener plugin's scope rules only gate JS callers.
+#[tauri::command]
+pub fn open_notification_settings(app: AppHandle) -> Result<(), String> {
+    let target = if cfg!(target_os = "windows") {
+        "ms-settings:notifications"
+    } else if cfg!(target_os = "macos") {
+        "x-apple.systempreferences:com.apple.preference.notifications"
+    } else {
+        return Err("Open your system notification settings from the desktop.".to_string());
+    };
+    app.opener()
+        .open_url(target, None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn open_external(app: AppHandle, url: String) -> Result<(), String> {
     let parsed = url::Url::parse(&url).map_err(|_| "Invalid URL.".to_string())?;
