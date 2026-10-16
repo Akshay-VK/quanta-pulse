@@ -32,6 +32,7 @@ jobs:
           fetch-depth: 0
 
       - name: Verify the tag is on main
+        shell: bash
         run: |
           git fetch origin main --quiet
           if ! git merge-base --is-ancestor ${{ github.sha }} origin/main; then
