@@ -58,12 +58,14 @@ export default function SyncStatus({
         .join("\n")
     : "";
 
-  // Second line while downloading.
+  // Second line while the mirror has work. A finished scan does not stop the
+  // queue, so this reads the queue state and not `sync.running`.
   const stats = mirror?.stats;
-  const downloading = sync?.running && stats;
-  const downloadLine = downloading
-    ? `Downloading ${stats.downloading} of ${stats.queued + stats.downloading} · ${formatBytes(stats.bytesTotal - stats.bytesDone)} remaining`
-    : null;
+  const active = stats ? stats.queued + stats.downloading : 0;
+  const downloadLine =
+    stats && active > 0
+      ? `Downloading ${stats.downloading} of ${active} · ${formatBytes(Math.max(0, stats.bytesTotal - stats.bytesDone))} remaining`
+      : null;
 
   const body = (
     <div
