@@ -6,10 +6,12 @@ laid out, how the UI behaves, and the design system behind it.
 ## 1. What it is
 
 A native desktop tracker for the BITS Pilani **Quanta** (Moodle) LMS. It signs
-in as the user, discovers their courses and resources, then checks for new
-uploads / updates and surfaces them. Everything is local: SQLite on disk, no
-server, no account, no analytics, no telemetry. Session cookies live in
-process memory only.
+in as the user, discovers their courses and resources, checks for new uploads
+and updates, keeps a permanent local copy of everything it finds, and can
+forward new material to the user's own Telegram bot. Everything is local:
+SQLite on disk, no server, no account, no analytics, no telemetry. Session
+cookies live in process memory only. It contacts exactly two hosts, and the
+second only when the user configures it: Quanta, then `api.telegram.org`.
 
 Product principles that show up repeatedly in code and copy:
 
@@ -129,7 +131,7 @@ if a new model crosses the boundary).
 | Dashboard | `views/Dashboard.tsx` | Recent activity feed with filters and summary |
 | Resources | `views/ResourcesView.tsx` | Flat, filterable table of all resources |
 | Courses | `views/CoursesView.tsx` | Course hub → expandable in-app resource library |
-| Settings | `views/SettingsView.tsx` | Appearance, account, notifications, monitoring, data |
+| Settings | `views/SettingsView.tsx` | Appearance, account, notifications, Telegram, monitoring, files, data |
 
 ### Calendar
 
@@ -202,10 +204,13 @@ action (`lib/preview.ts`).
 
 Sections: **Appearance** (theme switcher), **Account** (status, sign-in method,
 session acquired, sign out, notification permission, test notification),
-**Notifications** (master toggle + per-category toggles + deadline window +
-quiet hours), **Monitoring** (sync interval, run in background, launch at
-login, timezone display), **Data** (DB path/size/counts, logs dir, re-baseline
-all). Edits go to a local `draft`, committed by "Save settings".
+**Notifications** (master toggle + the six per-category toggles + deadline window
++ quiet hours), **Telegram** (forwarding switch, bot token, chat id, live
+connection check, send test message), **Monitoring** (sync interval, run in
+background, launch at login, timezone display), **Files** (mirror folder, the
+download queue and its limits, retry/verify), **Data** (DB path/size/counts, logs
+dir, preview cache, delete local copies, re-baseline all). Edits go to a local
+`draft`, committed by "Save settings".
 
 ## 6. Components
 
@@ -289,7 +294,10 @@ and 620px (rows wrap, title/time full width). Reduced-motion is honoured.
 | `core/files.rs` | `FileStore`: the on-demand byte cache under `files/<resource_id>/<sha256>`, with LRU eviction and the `file_cache` index. Evictable by design |
 | `core/mirror.rs` | The permanent mirror: `local_files` / `local_file_versions` / `download_queue`, the download pipeline, `.history` versioning, `ensure_local`. Never evicts, never deletes. Text pages become Markdown snapshots |
 | `core/text.rs` | `local_text`: a resource's text read from its local copy through `Mirror::local_file` — no network, no lease. The preview, the content index and the Telegram bot share this path |
+| `core/search.rs` | One search over title and course name, with the resource id and a `local` flag per hit. The Library, the bot and a later MCP server share it |
+| `core/telegram.rs` | The Bot API client, the `/command` surface, the event/reply text. Holds no Tauri types; `api.telegram.org` is the only host it contacts |
 | `mirror_worker.rs` | The mirror's loop: drains the queue a few items at a time, then waits; forwards `mirror:progress` / `mirror:file` to the webview |
+| `telegram_worker.rs` | The bot's long poll and forwarding: timing and wiring only, no logic of its own |
 | `state.rs` | `AppState`: shared SQLite connection, file store, mirror, settings, HTTP client, sync status, preview lease — all behind locks |
 | `auth.rs` | Password login and SSO (SAML2), session restore/refresh/restart, logout |
 | `settings.rs` | Settings model, validation (`sanitize`, `is_valid_hhmm`), quiet hours |
@@ -329,6 +337,21 @@ path before anything else and only then takes the preview lease and fetches, so
 a preview of a mirrored page pauses no scan and works offline. A binary copy is
 served straight from disk under the same size limit a download would be.
 
+**Telegram.** The user creates their own bot with @BotFather and pastes the
+token and a chat id into Settings. `telegram_worker.rs` long-polls
+`api.telegram.org`, drops whatever queued up while the app was closed (a restart
+must not replay yesterday's commands), and answers only the configured chat.
+`/search` uses `core::search`; `/get <id>` waits on `Mirror::ensure_local` and
+uploads that file, so bytes come from this computer and Quanta is never fetched
+twice; `/status` reports the mirror. Forwarding is per category and reuses the
+*six* Settings switches through `notify::category_enabled` — the bot has no
+second, hidden filter set — and `notify::dispatch` forwards alongside the native
+banner, marking an event notified once either transport takes it. The token is
+the only secret: it is redacted from logs (`api.telegram.org`,
+`telegram_bot_token`), and every `reqwest` error goes through `without_url()`
+because the request URL embeds it. A token or chat id that does not parse is
+dropped by `Settings::sanitize` rather than stored.
+
 **Adding a feature.** Put the logic in `core/`, then write a thin
 `commands.rs` adapter and wrap it in `src/lib/api.ts`. The `Connection` guard is
 a non-reentrant mutex: read under the lock, drop it for any `.await`, then
@@ -350,7 +373,9 @@ component behavior:
 
 `dashboard-consistency` and `courses` guard the "one canonical source"
 invariant across views. `logging.rs` also carries inline `#[cfg(test)]` tests
-for redaction.
+for redaction, and the `core/` modules carry their own unit tests
+(`core::telegram` on parsing, formatting and the category gate; `core::search`
+on matching and ranking; `core::text` on reading a local copy).
 
 ## 10. Build & packaging
 

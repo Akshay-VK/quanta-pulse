@@ -316,6 +316,8 @@ Moodle answers an expired session with HTTP 200 and its login page. `stream_to` 
 
 Nothing in the mirror writes a `change_events` row and the baseline-scan rule is untouched: mirroring is not a content change.
 
+The mirror is also what Telegram serves. `/get <id>` waits on `ensure_local` (60 s) and uploads the local copy, so the bot never makes Quanta fetch a file twice, and it works with the network down. `core/text.rs::local_text` likewise reads the copy, which is how a preview of an already-mirrored page renders offline.
+
 ## 7. Screens
 
 Every screen sits in the shell from section 5. Navigation order is Today, Calendar, Library, History, Settings. This merges the current six views into five: Dashboard becomes Today, and Resources plus Courses become Library. All screens read the same `change_events` rows through `lib/events.ts`, so counts, colours and rows cannot drift between them.
@@ -480,16 +482,17 @@ A DataTable over scan history.
 
 ### 7.6 Settings
 
-**Purpose.** Configure appearance, account, notifications, monitoring and data. Header left-aligned, then a centred `160px minmax(0, 720px)` grid with a 48px gap: a sticky 160px section list beside the 720px content column.
+**Purpose.** Configure appearance, account, notifications, Telegram, monitoring, files and data. Header left-aligned, then a centred `160px minmax(0, 720px)` grid with a 48px gap: a sticky 160px section list beside the 720px content column.
 
 ```
  Settings
  [Appearance]    Appearance
   Account        Theme                          [System | Light | Dark]
   Notifications  ---------------------------------------------------
-  Monitoring     Account
-  Data           Status                         (o) Signed in
-                 ...
+  Telegram       Account
+  Monitoring     Status                         (o) Signed in
+  Files          ...
+  Data
  ----------------------------------------------------------------------
   You have unsaved changes              [Discard]  [Save settings]
 ```
@@ -503,7 +506,8 @@ A DataTable over scan history.
 | --- | --- |
 | Appearance | Theme: ToggleGroup System, Light, Dark |
 | Account | Status (dot plus 'Signed in', 'Session expired' or 'Signed out'). Sign-in method (Password or BITS SSO). Session acquired (mono time). Notification permission ('Allowed', 'Blocked' or 'Not asked') with 'Allow notifications' or 'Open system settings' and 'Send test notification'. 'Restart session' appears when expired. 'Sign out' is a danger ghost button that opens the ConfirmDialog |
-| Notifications | Master Switch. Per-category Switches: New files, Updated files, Announcements, Deadlines, Unavailable files, Authentication reminders (the six shipped categories, matching the per-category gates in `notify.rs`). Deadline window Select. Quiet hours Switch with two TimeFields. When the master is off, the rest are dimmed, `aria-disabled`, with the helper 'Turn on notifications to change these' |
+| Notifications | Master Switch. Per-category Switches: New files, Updated files, Announcements, Deadlines, Unavailable files, Authentication reminders (the six shipped categories, matching the per-category gates in `notify.rs`). These six are the *only* category filters in the app: Telegram forwarding reads the same switches through `notify::category_enabled`. Deadline window Select. Quiet hours Switch with two TimeFields. When the master is off, the rest are dimmed, `aria-disabled`, with the helper 'Turn on notifications to change these' |
+| Telegram | 'Forward to Telegram' Switch. 'Bot token': a password field (never shown in clear text, never logged) with the hint 'From @BotFather. Stored on this computer and sent to no host but Telegram'. 'Chat id': numeric id or `@channel`. 'Connection': the live `getMe` result as muted text ('Connected as @…', 'Off', 'Add a bot token and a chat id', or the API's error) beside a secondary 'Send test message' Button, disabled until a token and chat id are stored. The six categories live in Notifications; the section adds no second set |
 | Monitoring | Sync interval Select (options from the `settings.rs` limits). 'Run in background' Switch with 'Keep scanning from the menu bar after the window closes'. 'Launch at login' Switch. Timezone: read-only row with the system timezone and 'Dates are grouped by your local calendar days' |
 | Files | Mirror folder (mono path, 'Change…', 'Open folder'). Changing it offers 'Move existing files' (copy, verify, delete) or 'Start fresh here'. 'Download new files automatically' Switch. 'Download existing files' row with the queue line ('Saved 47 of 47 · 312 MB', 'Downloading in the background…' or 'Paused') and 'Pause'/'Resume' plus 'Download all'. 'Skip files larger than' (No limit–1 GB), 'Keep free space' (2/5/10 GB) and 'Previous versions to keep' (None–5) Selects. 'Failures' with 'Retry all' only when something failed. 'Verify files' with 'Verify now'. The danger group 'Delete all local copies' lives in Data |
 | Data | PropertyList: database path (copy button, 'Show in folder'), size, counts for courses, resources and events, logs folder ('Open'), preview cache (size and file count). 'Preview cache' row pairs a size-limit Select (1–20 GB, default 2 GB) with a 'Clear cached files' button. A separated group at the bottom holds 'Re-baseline all courses' (secondary, danger text) with a ConfirmDialog: 'Records everything as known. Nothing is reported as new until the next scan.' |
@@ -649,9 +653,12 @@ Tauri commands, and any later HTTP or MCP server, stay thin:
 
 ```
 src-tauri/src/
-  core/          mod.rs  files.rs  mirror/  search.rs  get_file.rs  …  (plain
-                 fns over db / file store / client handles — no Tauri types)
-  mirror_worker.rs  the mirror's loop; owns no logic, only timing and events
+  core/          mod.rs  files.rs  mirror/  search.rs  telegram.rs  text.rs
+                 (plain fns over db / file store / client handles — no Tauri
+                 types; a Telegram bot, an HTTP server and an MCP server are
+                 all adapters over the same functions)
+  mirror_worker.rs    the mirror's loop; owns no logic, only timing and events
+  telegram_worker.rs  the bot's long poll and forwarding; also timing only
   commands.rs    thin adapters; the only layer that knows about AppState
 ```
 
