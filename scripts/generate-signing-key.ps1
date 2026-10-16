@@ -41,7 +41,7 @@ if ($LASTEXITCODE -ne 0) {
 
 $pubkey = (Get-Content $pubPath -Raw).Trim()
 Write-Host ""
-Write-Host "Public key written to $pubPath:"
+Write-Host "Public key written to $pubPath :"
 Write-Host $pubkey
 Write-Host ""
 Write-Host "Install it into the app config with:"
