@@ -1,9 +1,9 @@
 {
   "name": "quanta-pulse",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
-  "description": "Minimal native macOS tracker for BITS Pilani Quanta LMS.",
+  "description": "Minimal native desktop tracker for BITS Pilani Quanta LMS.",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -13,8 +13,16 @@
     "lint": "eslint . --max-warnings 0",
     "app:dev": "tauri dev",
     "app:build": "tauri build --bundles app && bash scripts/make-dmg.sh",
-    "app:build:dmg": "bash scripts/make-dmg.sh",
-    "icon": "tauri icon"
+    "app:build:mac": "tauri build --bundles app && bash scripts/make-dmg.sh",
+    "app:build:mac:dmg": "bash scripts/make-dmg.sh",
+    "app:build:win": "tauri build --bundles nsis",
+    "icon": "tauri icon",
+    "version:check": "node scripts/version-check.mjs",
+    "version:sync": "node scripts/sync-version.mjs",
+    "release": "node scripts/release.mjs",
+    "release:config:check": "node scripts/check-release-config.mjs",
+    "preversion": "node scripts/version-check.mjs",
+    "version": "node scripts/sync-version.mjs"
   },
   "dependencies": {
     "@fontsource-variable/geist": "5.3.0",
@@ -45,6 +53,7 @@
   "devDependencies": {
     "@eslint/js": "^9.17.0",
     "@tauri-apps/cli": "^2",
+    "@types/node": "^22.20.5",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
