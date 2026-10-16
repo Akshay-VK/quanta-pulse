@@ -6,13 +6,31 @@ export type SettingsDraftValidation = {
   quietHoursStart?: string;
   quietHoursEnd?: string;
   quietHours?: string;
+  telegramBotToken?: string;
+  telegramChatId?: string;
 };
 
 const HHMM_RE = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
+/** `123456789:` then the secret @BotFather issued. */
+const BOT_TOKEN_RE = /^\d+:[A-Za-z0-9_-]{30,}$/;
+/** A numeric chat id (negative for groups), or an @channel. */
+const CHAT_ID_RE = /^(-?\d+|@[A-Za-z0-9_]+)$/;
 
 export function isValidHHMM(s: string | null | undefined): boolean {
   if (!s) return true;
   return HHMM_RE.test(s);
+}
+
+export function isValidBotToken(s: string | null | undefined): boolean {
+  const value = s?.trim();
+  if (!value) return true;
+  return BOT_TOKEN_RE.test(value);
+}
+
+export function isValidChatId(s: string | null | undefined): boolean {
+  const value = s?.trim();
+  if (!value) return true;
+  return CHAT_ID_RE.test(value);
 }
 
 export function validateSettingsDraft(draft: Settings): SettingsDraftValidation {
@@ -35,6 +53,12 @@ export function validateSettingsDraft(draft: Settings): SettingsDraftValidation 
     if (draft.quietHoursStart === draft.quietHoursEnd) {
       errors.quietHours = "Quiet hours start and end cannot be the same.";
     }
+  }
+  if (!isValidBotToken(draft.telegramBotToken)) {
+    errors.telegramBotToken = "That does not look like a bot token (123456789:AA…).";
+  }
+  if (!isValidChatId(draft.telegramChatId)) {
+    errors.telegramChatId = "Use a numeric chat id or an @channel.";
   }
   return errors;
 }

@@ -42,6 +42,14 @@ vi.mock("../src/lib/api", () => ({
     pickMirrorRoot: vi.fn().mockResolvedValue(null),
     mirrorMoveFiles: vi.fn().mockResolvedValue(undefined),
     openAppFolder: vi.fn().mockResolvedValue(undefined),
+    telegramStatus: vi.fn().mockResolvedValue({
+      enabled: false,
+      configured: false,
+      chatId: null,
+      botUsername: null,
+      error: null,
+    }),
+    telegramTest: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
@@ -153,11 +161,12 @@ describe("Settings structure", () => {
       "Appearance",
       "Account",
       "Notifications",
+      "Telegram",
       "Monitoring",
       "Files",
       "Data",
     ]);
-    expect(container.querySelectorAll(".settings-section")).toHaveLength(6);
+    expect(container.querySelectorAll(".settings-section")).toHaveLength(7);
     // The first section is the one highlighted on load.
     expect(container.querySelector(".settings-link[aria-current='true']")?.textContent).toBe(
       "Appearance",
@@ -197,6 +206,39 @@ describe("Settings structure", () => {
 
     await act(async () => button!.click());
     expect(document.body.textContent).toContain("Sign out?");
+  });
+});
+
+describe("Settings > Telegram", () => {
+  it("holds the bot fields and no second set of category switches", async () => {
+    await render();
+    const section = container.querySelector("#telegram");
+    expect(section).toBeTruthy();
+    const titles = [...section!.querySelectorAll(".setting-title")].map((el) => el.textContent);
+    expect(titles).toEqual(["Forward to Telegram", "Bot token", "Chat id", "Connection"]);
+    // The six categories stay in Notifications: Telegram has one switch only.
+    expect(section!.querySelectorAll("[role='switch']")).toHaveLength(1);
+  });
+
+  it("never prints the bot token in clear text", async () => {
+    await render();
+    const token = container.querySelector<HTMLInputElement>(
+      "#telegram input[aria-label='Bot token']",
+    );
+    expect(token?.type).toBe("password");
+    expect(token?.autocomplete).toBe("off");
+  });
+
+  it("says what is missing and blocks the test message until it is configured", async () => {
+    await render();
+    const row = [...container.querySelectorAll(".setting-row")].find((el) =>
+      el.querySelector(".setting-title")?.textContent?.includes("Connection"),
+    );
+    expect(row?.querySelector(".muted")?.textContent).toBe("Off");
+    const button = [...row!.querySelectorAll<HTMLButtonElement>("button")].find((el) =>
+      el.textContent?.includes("Send test message"),
+    );
+    expect(button?.disabled).toBe(true);
   });
 });
 

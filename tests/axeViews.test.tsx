@@ -62,6 +62,14 @@ vi.mock("../src/lib/api", () => ({
     openAppFolder: vi.fn().mockResolvedValue(undefined),
     mirrorMoveFiles: vi.fn().mockResolvedValue({}),
     mirrorLocalFile: vi.fn().mockResolvedValue(null),
+    telegramStatus: vi.fn().mockResolvedValue({
+      enabled: false,
+      configured: false,
+      chatId: null,
+      botUsername: null,
+      error: null,
+    }),
+    telegramTest: vi.fn().mockResolvedValue(undefined),
   },
 }));
 import TodayView from "../src/views/TodayView";

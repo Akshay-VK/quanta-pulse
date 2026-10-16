@@ -4,12 +4,13 @@ import { api } from "../lib/api";
 import { cx } from "../lib/cx";
 import { formatBytes, formatCompact } from "../lib/format";
 import type { DetailProperty } from "../lib/details";
-import type { AuthStatus, CacheStats, DbInfo, Settings, ThemeMode, MirrorStats } from "../lib/types";
+import type { AuthStatus, CacheStats, DbInfo, Settings, ThemeMode, MirrorStats, TelegramStatus } from "../lib/types";
 import PageHeader from "../components/PageHeader";
 import SettingRow from "../components/SettingRow";
 import { ToggleGroup } from "../components/ui/ToggleGroup";
 import { Switch } from "../components/ui/Switch";
 import { Select } from "../components/ui/Select";
+import { TextField } from "../components/ui/TextField";
 import { TimeField } from "../components/ui/TimeField";
 import { Button } from "../components/ui/Button";
 import { Banner } from "../components/ui/Banner";
@@ -62,6 +63,7 @@ const NAV_ITEMS = [
   { id: "appearance", label: "Appearance" },
   { id: "account", label: "Account" },
   { id: "notifications", label: "Notifications" },
+  { id: "telegram", label: "Telegram" },
   { id: "monitoring", label: "Monitoring" },
   { id: "files", label: "Files" },
   { id: "data", label: "Data" },
@@ -78,6 +80,15 @@ function permissionLabel(permission: string): string {
   if (permission === "denied") return "Blocked";
   if (permission === "unavailable") return "Unavailable";
   return "Not asked";
+}
+
+/** The Telegram row: what the live `getMe` said, or what is still missing. */
+function telegramLabel(status: TelegramStatus | null, enabled: boolean): string {
+  if (!status) return "Not checked";
+  if (status.error) return status.error;
+  if (!enabled) return "Off";
+  if (!status.configured) return "Add a bot token and a chat id";
+  return status.botUsername ? `Connected as ${status.botUsername}` : "Connected";
 }
 
 export default function SettingsView({
@@ -105,6 +116,9 @@ export default function SettingsView({
   const [mirrorStats, setMirrorStats] = useState<MirrorStats | null>(null);
   const [changingMirrorRoot, setChangingMirrorRoot] = useState(false);
   const [movingFiles, setMovingFiles] = useState(false);
+  const [telegram, setTelegram] = useState<TelegramStatus | null>(null);
+  const [testingTelegram, setTestingTelegram] = useState(false);
+  const [telegramTest, setTelegramTest] = useState<string | null>(null);
 
   useEffect(() => setDraft(settings), [settings]);
 
@@ -119,6 +133,12 @@ export default function SettingsView({
 
   useEffect(() => {
     api.mirrorStats().then(setMirrorStats).catch(() => setMirrorStats(null));
+  }, []);
+
+  useEffect(() => {
+    // Only a live `getMe` proves the token works, so this is fetched once when
+    // the page opens, not from the settings row.
+    api.telegramStatus().then(setTelegram).catch(() => setTelegram(null));
   }, []);
 
   useEffect(() => {
@@ -296,9 +316,25 @@ export default function SettingsView({
     }
   }
 
+  /** Send one message so a wrong token or chat id is caught here, not at the
+   *  next scan. The token only works after a save, hence the hint on the row. */
+  async function testTelegram() {
+    setTestingTelegram(true);
+    setTelegramTest(null);
+    try {
+      await api.telegramTest();
+      setTelegramTest("Sent. Check your Telegram chat.");
+    } catch (error) {
+      setTelegramTest(String(error));
+    } finally {
+      setTestingTelegram(false);
+      await api.telegramStatus().then(setTelegram).catch(() => setTelegram(null));
+    }
+  }
+
   return (
     <div className="settings-page">
-      <PageHeader title="Settings" summary="Appearance, account, notifications, monitoring and data." />
+      <PageHeader title="Settings" summary="Appearance, account, notifications, Telegram, monitoring, files and data." />
       <div className="settings-layout">
       <aside className="settings-sticky">
         <nav aria-label="Settings sections">
@@ -492,9 +528,63 @@ export default function SettingsView({
           {errors.quietHoursEnd && <Banner kind="error">{errors.quietHoursEnd}</Banner>}
         </section>
 
+        <section id="telegram" className="settings-section">
+          <h2 className="settings-group-title">Telegram</h2>
+          <SettingRow
+            title="Forward to Telegram"
+            description="Send new material to your own bot chat. The categories below Notifications decide which events go out."
+          >
+            <Switch
+              checked={draft.telegramEnabled}
+              onCheckedChange={(v) => set("telegramEnabled", v)}
+              ariaLabel="Forward to Telegram"
+            />
+          </SettingRow>
+          <SettingRow
+            title="Bot token"
+            description="From @BotFather. Stored on this computer and sent to no host but Telegram."
+          >
+            <TextField
+              type="password"
+              value={draft.telegramBotToken ?? ""}
+              onChange={(e) => set("telegramBotToken", e.target.value || null)}
+              placeholder="123456789:AA…"
+              aria-label="Bot token"
+              autoComplete="off"
+            />
+          </SettingRow>
+          {errors.telegramBotToken && <Banner kind="error">{errors.telegramBotToken}</Banner>}
+          <SettingRow title="Chat id" description="Your numeric chat id, or an @channel the bot can post to.">
+            <TextField
+              value={draft.telegramChatId ?? ""}
+              onChange={(e) => set("telegramChatId", e.target.value || null)}
+              placeholder="123456789 or @my_channel"
+              aria-label="Chat id"
+              autoComplete="off"
+            />
+          </SettingRow>
+          {errors.telegramChatId && <Banner kind="error">{errors.telegramChatId}</Banner>}
+          <SettingRow title="Connection" description="Save your changes first, then send a test message.">
+            <div className="settings-inline">
+              <span className="muted">{telegramLabel(telegram, draft.telegramEnabled)}</span>
+              <Button
+                variant="secondary"
+                size="sm"
+                loading={testingTelegram}
+                disabled={!telegram?.configured}
+                onClick={testTelegram}
+              >
+                Send test message
+              </Button>
+            </div>
+          </SettingRow>
+          {telegramTest && (
+            <Banner kind={telegramTest.startsWith("Sent") ? "info" : "error"}>{telegramTest}</Banner>
+          )}
+        </section>
+
         <section id="monitoring" className="settings-section">
-          <h2 className="settings-group-title">Monitoring</h2>
-          <SettingRow title="Sync interval" description="How often Quanta is checked while the app is running (15–1440 min).">
+          <h2 className="settings-group-title">Monitoring</h2>          <SettingRow title="Sync interval" description="How often Quanta is checked while the app is running (15–1440 min).">
             <Select
               value={String(draft.syncIntervalMinutes)}
               onValueChange={(v) => set("syncIntervalMinutes", Number(v))}

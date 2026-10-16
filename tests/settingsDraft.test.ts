@@ -56,4 +56,20 @@ describe("settingsDraft", () => {
     expect(errs.syncIntervalMinutes).toBeDefined();
     expect(errs.deadlineReminderHours).toBeDefined();
   });
+
+  it("validates the Telegram bot token and chat id", () => {
+    const token = "123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw";
+    expect(validateSettingsDraft({ ...base, telegramBotToken: token }).telegramBotToken).toBeUndefined();
+    expect(validateSettingsDraft({ ...base, telegramBotToken: null }).telegramBotToken).toBeUndefined();
+    for (const bad of ["nope", "123456789:short", "abc:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"]) {
+      expect(validateSettingsDraft({ ...base, telegramBotToken: bad }).telegramBotToken).toBeDefined();
+    }
+
+    for (const good of ["123456789", "-1001234567890", "@quanta_pulse"]) {
+      expect(validateSettingsDraft({ ...base, telegramChatId: good }).telegramChatId).toBeUndefined();
+    }
+    for (const bad of ["room name", "@", "abc"]) {
+      expect(validateSettingsDraft({ ...base, telegramChatId: bad }).telegramChatId).toBeDefined();
+    }
+  });
 });
