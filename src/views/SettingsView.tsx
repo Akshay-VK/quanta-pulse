@@ -67,6 +67,7 @@ const NAV_ITEMS = [
   { id: "monitoring", label: "Monitoring" },
   { id: "files", label: "Files" },
   { id: "data", label: "Data" },
+  { id: "about", label: "About" },
 ];
 
 const GIB = 1024 * 1024 * 1024;
@@ -120,6 +121,16 @@ export default function SettingsView({
   const [testingTelegram, setTestingTelegram] = useState(false);
   const [telegramTest, setTelegramTest] = useState<string | null>(null);
 
+  // About / updates
+  const [aboutVersion, setAboutVersion] = useState<string>("");
+  const [updateStatus, setUpdateStatus] = useState<"idle" | "checking" | "upToDate" | "available" | "installing" | "error">("idle");
+  const [updateVersion, setUpdateVersion] = useState<string | null>(null);
+  const [updateNotes, setUpdateNotes] = useState<string | null>(null);
+  const [updateError, setUpdateError] = useState<string | null>(null);
+  const [lastUpdateCheck, setLastUpdateCheck] = useState<string | null>(() => {
+    try { return localStorage.getItem("quanta-pulse-update-last-checked"); } catch { return null; }
+  });
+
   useEffect(() => setDraft(settings), [settings]);
 
   useEffect(() => {
@@ -139,6 +150,16 @@ export default function SettingsView({
     // Only a live `getMe` proves the token works, so this is fetched once when
     // the page opens, not from the settings row.
     api.telegramStatus().then(setTelegram).catch(() => setTelegram(null));
+  }, []);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        setAboutVersion(await api.appVersion());
+      } catch {
+        setAboutVersion("unknown");
+      }
+    })();
   }, []);
 
   useEffect(() => {
@@ -193,6 +214,46 @@ export default function SettingsView({
   function set<K extends keyof Settings>(key: K, value: Settings[K]) {
     setDraft((d) => ({ ...d, [key]: value }));
     setSaved(false);
+  }
+
+  async function checkForUpdate() {
+    setUpdateStatus("checking");
+    setUpdateError(null);
+    try {
+      const u = await api.checkUpdate();
+      const now = new Date().toISOString();
+      setLastUpdateCheck(now);
+      try { localStorage.setItem("quanta-pulse-update-last-checked", now); } catch {}
+      if (u && u.version && u.version !== aboutVersion) {
+        setUpdateVersion(u.version);
+        setUpdateNotes(u.body ?? null);
+        setUpdateStatus("available");
+      } else {
+        setUpdateStatus("upToDate");
+      }
+    } catch (err) {
+      setUpdateStatus("error");
+      setUpdateError(String(err));
+    }
+  }
+
+  async function installUpdate() {
+    setUpdateStatus("installing");
+    setUpdateError(null);
+    try {
+      const u = await api.checkUpdate();
+      if (!u) { setUpdateStatus("idle"); return; }
+      await api.prepareForUpdate();
+      await api.downloadAndInstallUpdate(u, (event) => {
+        // Plugin reports progress through here; status stays "installing"
+        void event;
+      });
+      // Reaches here only if the installer did not exit immediately.
+      setUpdateStatus("upToDate");
+    } catch (err) {
+      setUpdateStatus("error");
+      setUpdateError(String(err));
+    }
   }
 
   async function save() {
@@ -756,6 +817,73 @@ export default function SettingsView({
           >
             <Button variant="secondary" size="sm" onClick={verifyFiles}>
               Verify now
+            </Button>
+          </SettingRow>
+        </section>
+
+        <section id="about" className="settings-section">
+          <h2 className="settings-group-title">About</h2>
+          <SettingRow title="Version">
+            <span className="mono">{aboutVersion || "—"}</span>
+          </SettingRow>
+          <SettingRow
+            title="Check for updates"
+            description={lastUpdateCheck ? `Last checked ${formatCompact(lastUpdateCheck)}` : "Never checked."}
+          >
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={updateStatus === "checking"}
+              onClick={() => void checkForUpdate()}
+            >
+              {updateStatus === "checking" ? "Checking..." : "Check now"}
+            </Button>
+          </SettingRow>
+          <SettingRow
+            title="Status"
+            description={updateError ?? undefined}
+          >
+            <span className={cx("settings-inline", updateStatus === "error" && "danger")}>
+              {updateStatus === "idle" && "Idle"}
+              {updateStatus === "checking" && "Looking..."}
+              {updateStatus === "upToDate" && "Up to date"}
+              {updateStatus === "available" && `Update ${updateVersion} available`}
+              {updateStatus === "installing" && "Installing..."}
+              {updateStatus === "error" && "Check failed"}
+            </span>
+          </SettingRow>
+          {updateStatus === "available" && updateVersion && (
+            <div className="settings-banner">
+              <span>Quanta Pulse {updateVersion} is available.</span>
+              <div className="settings-inline">
+                <Button variant="primary" size="sm" onClick={() => void installUpdate()}>
+                  Restart to update
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => window.open(updateNotes ?? "https://github.com/Akshay-VK/quanta-pulse/releases", "_blank")}>
+                  Release notes
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => { setUpdateStatus("idle"); }}>
+                  Later
+                </Button>
+              </div>
+            </div>
+          )}
+          <SettingRow
+            title="Check for updates automatically"
+            description="Checks about 30 seconds after launch, then every 6 hours."
+          >
+            <Switch
+              checked={draft.updateAutoCheck ?? settings.updateAutoCheck ?? true}
+              onCheckedChange={(v) => {
+                setDraft((d) => ({ ...d, updateAutoCheck: v }));
+                void onSave({ ...settings, updateAutoCheck: v });
+              }}
+              ariaLabel="Check for updates automatically"
+            />
+          </SettingRow>
+          <SettingRow title="Open backups folder">
+            <Button variant="ghost" size="sm" onClick={() => void api.openAppFolder("backups")}>
+              Open folder
             </Button>
           </SettingRow>
         </section>

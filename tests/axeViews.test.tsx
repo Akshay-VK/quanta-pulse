@@ -147,6 +147,7 @@ const SETTINGS: Settings = {
   syncIntervalMinutes: 30,
   launchAtLogin: false,
   runInBackground: true,
+  updateAutoCheck: true,
   notificationsEnabled: true,
   notifyNew: true,
   notifyUpdated: true,

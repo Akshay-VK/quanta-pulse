@@ -6,6 +6,7 @@ const base: Settings = {
   syncIntervalMinutes: 60,
   launchAtLogin: false,
   runInBackground: true,
+  updateAutoCheck: true,
   notificationsEnabled: true,
   notifyNew: true,
   notifyUpdated: true,

@@ -113,6 +113,8 @@ export interface Settings {
   syncIntervalMinutes: number;
   launchAtLogin: boolean;
   runInBackground: boolean;
+  /** Check for updates in the background. Default on. */
+  updateAutoCheck: boolean;
   notificationsEnabled: boolean;
   notifyNew: boolean;
   notifyUpdated: boolean;

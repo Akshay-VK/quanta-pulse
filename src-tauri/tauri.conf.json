@@ -29,7 +29,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app"],
+    "targets": [
+      "app"
+    ],
     "category": "Education",
     "shortDescription": "Minimal tracker for BITS Pilani Quanta LMS",
     "longDescription": "Quanta Pulse discovers your Quanta courses and resources, checks for new uploads every hour, and shows accurate upload timestamps in a minimal local-first dashboard.",
@@ -43,6 +45,23 @@
     ],
     "macOS": {
       "minimumSystemVersion": "10.15"
+    },
+    "createUpdaterArtifacts": true,
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "PASTE_THE_MINISIGN_PUBLIC_KEY_HERE",
+      "endpoints": [
+        "https://github.com/Akshay-VK/quanta-pulse/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

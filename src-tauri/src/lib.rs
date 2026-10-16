@@ -18,6 +18,7 @@ pub mod state;
 pub mod sync;
 pub mod telegram_worker;
 pub mod tray;
+pub mod updater;
 
 use tauri::Manager;
 
@@ -30,6 +31,15 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            // A second launch focuses the already running window.
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             commands::login,
             commands::auth_status,
@@ -79,6 +89,8 @@ pub fn run() {
             commands::open_local_file,
             commands::reveal_local_file,
             commands::open_app_folder,
+            commands::app_version,
+            commands::prepare_for_update,
             commands::telegram_status,
             commands::telegram_test,
             commands::set_monitoring,
@@ -112,7 +124,8 @@ pub fn run() {
                 tracing::info!(enqueued, "mirror backfill queued");
             }
             mirror_worker::start(handle.clone());
-            telegram_worker::start(handle);
+            telegram_worker::start(handle.clone());
+            updater::start(handle);
             Ok(())
         })
         .on_window_event(|window, event| {

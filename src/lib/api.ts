@@ -23,6 +23,8 @@ import type {
   TelegramStatus,
 } from "./types";
 
+import type { DownloadEvent, Update } from "@tauri-apps/plugin-updater";
+
 export const api = {
   login: (email: string, password: string) =>
     invoke<AuthStatus>("login", { email, password }),
@@ -79,6 +81,25 @@ export const api = {
   openExternal: (url: string) => invoke<void>("open_external", { url }),
   openNotificationSettings: () => invoke<void>("open_notification_settings"),
 
+  /** Installed app version (read from the binary, never hard-coded). */
+  appVersion: () => invoke<string>("app_version"),
+  /** Wait for in-flight work to finish before installing an update. */
+  prepareForUpdate: () => invoke<void>("prepare_for_update"),
+
+  /** GitHub-releases update check (manual). Reuse the plugin's signed check. */
+  checkUpdate: async (): Promise<Update | null> => {
+    const { check } = await import("@tauri-apps/plugin-updater");
+    return check();
+  },
+  /** Download, verify and install the given update, then exit. Progress is reported via the callback. */
+  downloadAndInstallUpdate: (update: Update, onEvent: (event: DownloadEvent) => void) =>
+    update.downloadAndInstall(onEvent),
+  /** Relaunch the app after an update installs. */
+  relaunchApp: async () => {
+    const { relaunch } = await import("@tauri-apps/plugin-process");
+    await relaunch();
+  },
+
   /** The permanent mirror: occupancy and queue state. */
   mirrorStats: () => invoke<MirrorStats>("mirror_status"),
   /** One status per indexed resource, for row icons. */
@@ -106,7 +127,7 @@ export const api = {
   ensureLocal: (resourceId: number) => invoke<LocalFile>("ensure_local", { resourceId }),
 
   /** 'Open' / 'Show in folder' for the database, logs and mirror folders. */
-  openAppFolder: (kind: "database" | "logs" | "mirror", reveal = false) =>
+  openAppFolder: (kind: "database" | "logs" | "mirror" | "backups", reveal = false) =>
     invoke<void>("open_app_folder", { kind, reveal }),
 
   /** Telegram forwarding: whether the bot is on and reachable. */

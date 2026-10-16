@@ -137,6 +137,23 @@ impl AppState {
         }
     }
 
+    /// Whether a scan, download or preview is in progress. The updater never
+    /// installs into a busy app without an explicit user click.
+    pub fn is_busy(&self) -> bool {
+        if self.sync.is_running() {
+            return true;
+        }
+        if self.sync.active_previews.load(Ordering::SeqCst) > 0 {
+            return true;
+        }
+        let conn = self.conn();
+        let stats = self.mirror.stats(&conn);
+        if stats.queued > 0 || stats.downloading > 0 {
+            return true;
+        }
+        false
+    }
+
     pub fn settings(&self) -> Settings {
         self.settings.lock().unwrap().clone()
     }

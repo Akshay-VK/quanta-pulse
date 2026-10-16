@@ -151,10 +151,13 @@ export default function App() {
     registerCourseLabels(courses);
   }, [courses]);
 
-  const notify = useCallback((message: string, error = false) => {
-    const id = ++toastId.current;
-    setToasts((current) => [...current, { id, message, error }]);
-  }, []);
+  const notify = useCallback(
+    (message: string, error = false, action?: ToastItem["action"]) => {
+      const id = ++toastId.current;
+      setToasts((current) => [...current, { id, message, error, action }]);
+    },
+    [],
+  );
 
   const dismissToast = useCallback((id: number) => {
     setToasts((current) => current.filter((toast) => toast.id !== id));
@@ -224,6 +227,24 @@ export default function App() {
     };
 
     void (async () => {
+      await add<{ version: string; notes?: string }>("updater:available", (payload) => {
+        notify(`Quanta Pulse ${payload.version} is available.`, false, {
+          label: "Restart to update",
+          onClick: () => {
+            void (async () => {
+              try {
+                const u = await api.checkUpdate();
+                if (!u) return;
+                await api.prepareForUpdate();
+                await api.downloadAndInstallUpdate(u, () => {});
+              } catch (err) {
+                notify(String(err), true);
+              }
+            })();
+          },
+        });
+      });
+
       await add<SyncStatus>("sync:status", (payload) => setSync(payload));
       await add<{ phase: string }>("sync:progress", (payload) =>
         setSync((prev) => (prev ? { ...prev, phase: payload.phase, running: true } : prev)),

@@ -960,6 +960,18 @@ pub fn open_app_folder(
             let root = state.mirror.root();
             (root.clone(), root.display().to_string())
         }
+        "backups" => {
+            let dir = state
+                .db_path
+                .parent()
+                .ok_or_else(|| "the database path has no parent".to_string())?
+                .join("backups");
+            if !dir.exists() {
+                std::fs::create_dir_all(&dir)
+                    .map_err(|e| format!("cannot create backups directory: {e}"))?;
+            }
+            (dir.clone(), dir.display().to_string())
+        }
         other => return Err(format!("unknown folder: {other}")),
     };
 
@@ -1035,6 +1047,37 @@ pub async fn telegram_test(state: State<'_, AppState>) -> Result<(), String> {
             "Quanta Pulse is connected. New material will arrive here.",
         )
         .await
+}
+
+/// Version baked into the binary at compile time.
+#[tauri::command]
+pub fn app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// Stop background work and wait for in-flight scans, downloads and previews
+/// to finish before an update installs and the app relaunches.
+#[tauri::command]
+pub fn prepare_for_update(_app: AppHandle, state: State<AppState>) -> Result<(), String> {
+    state
+        .sync
+        .cancel
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    state
+        .sync
+        .shutdown
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        if !state.is_busy() {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err("timed out waiting for background work to finish".into());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    Ok(())
 }
 
 

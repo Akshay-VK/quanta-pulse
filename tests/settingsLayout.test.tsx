@@ -83,6 +83,7 @@ const SETTINGS: Settings = {
   syncIntervalMinutes: 30,
   launchAtLogin: false,
   runInBackground: true,
+  updateAutoCheck: true,
   notificationsEnabled: true,
   notifyNew: true,
   notifyUpdated: true,
@@ -165,8 +166,9 @@ describe("Settings structure", () => {
       "Monitoring",
       "Files",
       "Data",
+      "About",
     ]);
-    expect(container.querySelectorAll(".settings-section")).toHaveLength(7);
+    expect(container.querySelectorAll(".settings-section")).toHaveLength(8);
     // The first section is the one highlighted on load.
     expect(container.querySelector(".settings-link[aria-current='true']")?.textContent).toBe(
       "Appearance",

@@ -10,6 +10,11 @@ pub struct Settings {
     pub launch_at_login: bool,
     pub run_in_background: bool,
 
+    // Updater
+    /// Check for new releases automatically (about 30s after launch, then every 6 hours).
+    #[serde(default = "default_true")]
+    pub update_auto_check: bool,
+
     // Notifications
     pub notifications_enabled: bool,
     pub notify_new: bool,
@@ -76,6 +81,7 @@ impl Default for Settings {
             sync_interval_minutes: 60,
             launch_at_login: false,
             run_in_background: true,
+            update_auto_check: true,
             notifications_enabled: true,
             notify_new: true,
             notify_updated: true,
