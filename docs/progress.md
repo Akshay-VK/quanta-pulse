@@ -195,3 +195,36 @@ or file previews offline and never pauses a scan.
       `None`, over-limit `None`, missing file, vanished file, MIME-over-extension,
       extension fallback) plus `local_bytes` limits. 131 Rust tests pass;
       `cargo clippy` adds no warning to the new code.
+
+## Phase 11 — Telegram (spec Part 3)
+
+The user's own bot forwards change events and serves files from the local
+mirror. Nothing contacts a host other than `api.telegram.org`.
+
+- [x] `Settings`: `telegramEnabled` (off by default), `telegramBotToken`,
+      `telegramChatId`, all with serde defaults. `sanitize` drops a blank or
+      malformed token/chat id rather than storing junk; the token is validated
+      as `123456789:AA…`.
+- [x] `core/search.rs`: one search over title and course name, newest first,
+      with the resource id and a `local` flag per hit. Shared by the app, the
+      bot and a later MCP server.
+- [x] `core/telegram.rs`: `TelegramClient` (long poll, `sendMessage`,
+      `sendDocument`, `getMe`), `/command` parsing with the `@botname` suffix
+      stripped, the help/search/status replies, and the event message. Every
+      `reqwest` error goes through `without_url()`, because the URL embeds the
+      token.
+- [x] Six-category forwarding reuses the Settings switches through
+      `notify::category_enabled` — one set of filters, no hidden second set.
+      `notify::dispatch` forwards alongside the native banner and still marks
+      the event notified once; `notify_auth_expired` forwards the auth reminder.
+- [x] `telegram_worker.rs`: long poll with backoff, backlog dropped at start-up
+      so a restart never replays old commands, answers only the configured
+      chat, and `/get` waits on `Mirror::ensure_local` (60 s) before uploading —
+      files never come from the network.
+- [x] Commands `telegram_status` (live `getMe`, never the token) and
+      `telegram_test`; `src/lib/api.ts` + `types.ts` wrappers.
+- [x] `logging.rs` redacts any line naming `api.telegram.org` or
+      `telegram_bot_token`.
+- [x] Tests: 10 `core::telegram`, 4 `core::search`, 4 `Settings` (defaults,
+      malformed token/chat, missing-field tolerance) and 1 redaction. 150 Rust
+      tests pass; `reqwest` gained the `multipart` feature (no new crate).

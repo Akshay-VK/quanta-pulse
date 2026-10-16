@@ -12,4 +12,6 @@
 
 pub mod files;
 pub mod mirror;
+pub mod search;
+pub mod telegram;
 pub mod text;

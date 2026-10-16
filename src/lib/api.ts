@@ -20,6 +20,7 @@ import type {
   ScanRun,
   Settings,
   SyncStatus,
+  TelegramStatus,
 } from "./types";
 
 export const api = {
@@ -107,4 +108,9 @@ export const api = {
   /** 'Open' / 'Show in folder' for the database, logs and mirror folders. */
   openAppFolder: (kind: "database" | "logs" | "mirror", reveal = false) =>
     invoke<void>("open_app_folder", { kind, reveal }),
+
+  /** Telegram forwarding: whether the bot is on and reachable. */
+  telegramStatus: () => invoke<TelegramStatus>("telegram_status"),
+  /** Send one message to the configured chat. */
+  telegramTest: () => invoke<void>("telegram_test"),
 };

@@ -16,6 +16,7 @@ pub mod quanta;
 pub mod settings;
 pub mod state;
 pub mod sync;
+pub mod telegram_worker;
 pub mod tray;
 
 use tauri::Manager;
@@ -78,6 +79,8 @@ pub fn run() {
             commands::open_local_file,
             commands::reveal_local_file,
             commands::open_app_folder,
+            commands::telegram_status,
+            commands::telegram_test,
             commands::set_monitoring,
             commands::preview_resource,
             commands::show_main_window,
@@ -108,7 +111,8 @@ pub fn run() {
             if enqueued > 0 {
                 tracing::info!(enqueued, "mirror backfill queued");
             }
-            mirror_worker::start(handle);
+            mirror_worker::start(handle.clone());
+            telegram_worker::start(handle);
             Ok(())
         })
         .on_window_event(|window, event| {

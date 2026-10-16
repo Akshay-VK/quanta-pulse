@@ -975,4 +975,66 @@ pub fn open_app_folder(
     }
 }
 
+/* ---------------------------------------------------------------- telegram */
+
+/// What Settings > Telegram shows. `error` is only set when the bot is on and
+/// the API was reached and refused, so the token can be checked against the
+/// message. The token itself is never returned.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TelegramStatus {
+    pub enabled: bool,
+    /// A token and a chat id are both stored.
+    pub configured: bool,
+    pub chat_id: Option<String>,
+    /// The bot's `@name`, fetched live when the bot is on.
+    pub bot_username: Option<String>,
+    pub error: Option<String>,
+}
+
+#[tauri::command]
+pub async fn telegram_status(state: State<'_, AppState>) -> Result<TelegramStatus, String> {
+    let settings = state.settings();
+    let enabled = settings.telegram_enabled;
+    let configured = crate::core::telegram::is_configured(&settings);
+
+    let (bot_username, error) = match (enabled, settings.telegram_bot_token.clone()) {
+        (true, Some(token)) => match crate::core::telegram::TelegramClient::new(&token) {
+            Ok(client) => match client.bot_username().await {
+                Ok(name) => (Some(name), None),
+                Err(error) => (None, Some(error)),
+            },
+            Err(error) => (None, Some(error)),
+        },
+        _ => (None, None),
+    };
+
+    Ok(TelegramStatus {
+        enabled,
+        configured,
+        chat_id: settings.telegram_chat_id,
+        bot_username,
+        error,
+    })
+}
+/// Send one message to the configured chat, so a wrong token or chat id shows
+/// up immediately rather than at the next scan.
+#[tauri::command]
+pub async fn telegram_test(state: State<'_, AppState>) -> Result<(), String> {
+    let settings = state.settings();
+    let Some(token) = settings.telegram_bot_token.clone() else {
+        return Err("Add your bot token first.".to_string());
+    };
+    let Some(chat) = settings.telegram_chat_id.clone() else {
+        return Err("Add the chat id first.".to_string());
+    };
+    let client = crate::core::telegram::TelegramClient::new(&token)?;
+    client
+        .send_message(
+            &chat,
+            "Quanta Pulse is connected. New material will arrive here.",
+        )
+        .await
+}
+
 

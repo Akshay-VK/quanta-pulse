@@ -19,6 +19,10 @@ const SENSITIVE_MARKERS: &[&str] = &[
     "password",
     "authorization:",
     "sid=",
+    // A Telegram bot token travels inside the request URL, and a Bot API error
+    // quotes that URL back.
+    "api.telegram.org",
+    "telegram_bot_token",
 ];
 
 /// Redact any line that could contain credentials or session material.
@@ -89,6 +93,16 @@ mod tests {
         assert!(redact("Set-Cookie: MoodleSession=abc123; path=/").contains("redacted"));
         assert!(redact("sending sesskey=deadbeef to server").contains("redacted"));
         assert!(redact("password=hunter2").contains("redacted"));
+    }
+
+    #[test]
+    fn redacts_the_telegram_token_url() {
+        // A Bot API error quotes the request URL, and the URL carries the token.
+        assert!(redact(
+            "telegram poll failed: error sending request for url (https://api.telegram.org/bot123:AAHdqTcvCH1vGWJxfSeof/getUpdates)"
+        )
+        .contains("redacted"));
+        assert!(redact("telegram_bot_token=123:AAH").contains("redacted"));
     }
 
     #[test]

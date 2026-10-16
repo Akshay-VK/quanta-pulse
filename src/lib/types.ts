@@ -137,11 +137,27 @@ export interface Settings {
   mirrorMinFreeBytes: number;
   /** Superseded copies kept per resource under `.history`. */
   mirrorKeepVersions: number;
+  // Telegram forwarding through the user's own bot.
+  /** Forward change events to the configured chat. */
+  telegramEnabled: boolean;
+  /** Bot token from @BotFather. Sent only to api.telegram.org. */
+  telegramBotToken: string | null;
+  /** Numeric chat id, or @channel. */
+  telegramChatId: string | null;
   maxCourses: number;
   maxResourcesPerCourse: number;
   maxDetailFetches: number;
   requestTimeoutSecs: number;
   concurrency: number;
+}
+
+/** What Settings > Telegram shows. Never carries the token. */
+export interface TelegramStatus {
+  enabled: boolean;
+  configured: boolean;
+  chatId: string | null;
+  botUsername: string | null;
+  error: string | null;
 }
 
 export interface Digest {

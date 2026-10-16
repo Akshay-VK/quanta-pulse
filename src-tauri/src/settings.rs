@@ -50,6 +50,18 @@ pub struct Settings {
     #[serde(default = "default_mirror_keep_versions")]
     pub mirror_keep_versions: usize,
 
+    // Telegram forwarding (a personal bot created with @BotFather)
+    /// Forward change events to the user's Telegram chat.
+    #[serde(default)]
+    pub telegram_enabled: bool,
+    /// Bot token from @BotFather. A secret: redacted from logs and sent to no
+    /// host other than `api.telegram.org`.
+    #[serde(default)]
+    pub telegram_bot_token: Option<String>,
+    /// Where forwarded messages go: a numeric chat id, or `@channel`.
+    #[serde(default)]
+    pub telegram_chat_id: Option<String>,
+
     // Crawl limits (safety rails; conservative defaults)
     pub max_courses: usize,
     pub max_resources_per_course: usize,
@@ -81,6 +93,9 @@ impl Default for Settings {
             mirror_max_bytes: default_mirror_max_bytes(),
             mirror_min_free_bytes: default_mirror_min_free_bytes(),
             mirror_keep_versions: default_mirror_keep_versions(),
+            telegram_enabled: false,
+            telegram_bot_token: None,
+            telegram_chat_id: None,
 
             max_courses: 60,
             max_resources_per_course: 400,
@@ -129,6 +144,11 @@ impl Settings {
                 }
             }
         }
+
+        // Telegram. A blank or malformed field becomes "not configured" rather
+        // than a token the bot would send somewhere unexpected.
+        self.telegram_bot_token = normalize_opt(self.telegram_bot_token.take(), is_bot_token);
+        self.telegram_chat_id = normalize_opt(self.telegram_chat_id.take(), is_chat_id);
     }
 
     /// True if the given local time falls inside the configured quiet hours.
@@ -179,6 +199,37 @@ pub fn is_valid_hhmm(s: &str) -> bool {
     let hh: u32 = s[0..2].parse().unwrap_or(99);
     let mm: u32 = s[3..5].parse().unwrap_or(99);
     hh <= 23 && mm <= 59
+}
+
+/// Trim, then keep only what the validator accepts. `None` means "not set".
+fn normalize_opt(value: Option<String>, valid: fn(&str) -> bool) -> Option<String> {
+    value
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty() && valid(v))
+}
+
+/// A bot token looks like `123456789:AAE...`: a numeric bot id, a colon, then
+/// the secret @BotFather issued.
+fn is_bot_token(s: &str) -> bool {
+    let Some((id, secret)) = s.split_once(':') else {
+        return false;
+    };
+    !id.is_empty()
+        && id.chars().all(|c| c.is_ascii_digit())
+        && secret.len() >= 30
+        && secret
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// A chat id is a numeric id (negative for groups) or an `@channel` handle.
+fn is_chat_id(s: &str) -> bool {
+    if let Some(handle) = s.strip_prefix('@') {
+        return !handle.is_empty()
+            && handle.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    }
+    let digits = s.strip_prefix('-').unwrap_or(s);
+    !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
 }
 
 #[cfg(test)]
@@ -281,5 +332,77 @@ mod tests {
         assert!(!is_valid_hhmm("24:00"));
         assert!(!is_valid_hhmm("7:00"));
         assert!(!is_valid_hhmm("nope"));
+    }
+
+    #[test]
+    fn telegram_defaults_off_and_unset() {
+        let s = Settings::default();
+        assert!(!s.telegram_enabled);
+        assert_eq!(s.telegram_bot_token, None);
+        assert_eq!(s.telegram_chat_id, None);
+    }
+
+    #[test]
+    fn a_malformed_bot_token_is_dropped_not_stored() {
+        let good = "123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw";
+        for bad in [
+            "",
+            "   ",
+            "not-a-token",
+            "123456789:short",
+            "abc:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw",
+            "123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw!!",
+        ] {
+            let mut s = Settings {
+                telegram_bot_token: Some(bad.to_string()),
+                ..Settings::default()
+            };
+            s.sanitize();
+            assert_eq!(s.telegram_bot_token, None, "{bad} should be dropped");
+        }
+
+        let mut s = Settings {
+            telegram_bot_token: Some(format!("  {good}  ")),
+            ..Settings::default()
+        };
+        s.sanitize();
+        assert_eq!(s.telegram_bot_token.as_deref(), Some(good));
+    }
+
+    #[test]
+    fn a_malformed_chat_id_is_dropped_not_stored() {
+        for bad in ["", "@", "room name", "abc", "-"] {
+            let mut s = Settings {
+                telegram_chat_id: Some(bad.to_string()),
+                ..Settings::default()
+            };
+            s.sanitize();
+            assert_eq!(s.telegram_chat_id, None, "{bad} should be dropped");
+        }
+
+        for good in ["123456789", "-1001234567890", "@quanta_pulse"] {
+            let mut s = Settings {
+                telegram_chat_id: Some(good.to_string()),
+                ..Settings::default()
+            };
+            s.sanitize();
+            assert_eq!(s.telegram_chat_id.as_deref(), Some(good));
+        }
+    }
+
+    #[test]
+    fn missing_telegram_fields_do_not_discard_the_settings_row() {
+        // A settings row written before Telegram existed: the token must not
+        // vanish the whole row, and the rest must survive.
+        let mut json = serde_json::to_value(Settings::default()).unwrap();
+        let obj = json.as_object_mut().unwrap();
+        for key in ["telegramEnabled", "telegramBotToken", "telegramChatId"] {
+            obj.remove(key);
+        }
+        let parsed: Settings = serde_json::from_value(json).unwrap();
+        assert!(!parsed.telegram_enabled);
+        assert_eq!(parsed.telegram_bot_token, None);
+        assert_eq!(parsed.telegram_chat_id, None);
+        assert!(parsed.mirror_enabled);
     }
 }
