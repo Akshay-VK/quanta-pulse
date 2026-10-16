@@ -14,6 +14,7 @@ vi.mock("../src/lib/api", () => ({
 import { api } from "../src/lib/api";
 import PreviewDialog from "../src/components/PreviewDialog";
 import { TooltipProvider } from "../src/components/ui/Tooltip";
+import indexHtmlRaw from "../index.html?raw";
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;
@@ -134,6 +135,25 @@ describe("PreviewDialog", () => {
     const frame = dialog().querySelector("iframe.preview-frame") as HTMLIFrameElement;
     expect(frame).toBeTruthy();
     expect(frame.getAttribute("src")).toBe("blob:mock");
+  });
+
+  // jsdom does not enforce a CSP, so the policy is read as text. Each directive
+  // falls back to `default-src 'self'`, which blocks `blob:` — a directive that
+  // forgets it blanks the preview that needs it, with only a console line.
+  it("allows the object URLs every preview kind creates", () => {
+    const policy =
+      indexHtmlRaw.match(/Content-Security-Policy[\s\S]*?content="([^"]*)"/)?.[1] ?? "";
+    expect(policy).toContain("default-src 'self'");
+    for (const directive of ["img-src", "media-src", "frame-src"]) {
+      const value = policy
+        .split(";")
+        .map((part) => part.trim())
+        .find((part) => part.startsWith(directive));
+      expect(value, `${directive} must exist`).toBeTruthy();
+      expect(value, `${directive} must allow blob:`).toContain("blob:");
+      // A preview never comes from a remote origin, only from local bytes.
+      expect(value, `${directive} must stay local`).not.toContain("http");
+    }
   });
 
   it("explains an unsupported type instead of pretending to preview it", async () => {

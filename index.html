@@ -3,9 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      The preview renders local bytes as one object URL: a PDF in an iframe, an
+      image, or a media element. Each of those needs `blob:` in its own
+      directive, because every one of them falls back to `default-src 'self'`.
+      No remote origin is allowed anywhere; previews always come from bytes this
+      app already holds. Keep `connect-src` last: the dev-only Vite plugin
+      appends the HMR origins to it.
+    -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost"
+      content="default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; frame-src 'self' blob:; style-src 'self' 'unsafe-inline'; connect-src ipc: http://ipc.localhost"
     />
     <title>Quanta Pulse</title>
   </head>
