@@ -14,6 +14,7 @@ import { eventLinks, primaryUrl } from "../lib/open";
 import type { DetailProperty } from "../lib/details";
 import PageHeader from "../components/PageHeader";
 import ResourceRow from "../components/ResourceRow";
+import { useMirror } from "../hooks/useMirror";
 import GroupHeader from "../components/GroupHeader";
 import DataTable, { type DataColumn } from "../components/DataTable";
 import PeekPanel, { type PeekDetails } from "../components/PeekPanel";
@@ -33,6 +34,7 @@ export interface HistoryViewProps {
   events: ChangeEvent[];
   scans: ScanRun[];
   onOpen: (url: string) => void;
+  onOpenLocal?: (resourceId: number) => void;
   onMarkAllRead: () => Promise<void>;
   onClearAll: () => Promise<void>;
   onSyncNow: () => void;
@@ -140,11 +142,13 @@ export default function HistoryView({
   events,
   scans,
   onOpen,
+  onOpenLocal,
   onMarkAllRead,
   onClearAll,
   onSyncNow,
   onOpenCourse,
 }: HistoryViewProps) {
+  const mirror = useMirror();
   const [tab, setTab] = useState("changes");
   const [typeFilter, setTypeFilter] = useState("all");
   const [courseFilter, setCourseFilter] = useState("all");
@@ -392,6 +396,16 @@ export default function HistoryView({
                             : "Open file"
                       }
                       showOpen={Boolean(primary)}
+                      local={
+                        e.resourceId == null
+                          ? undefined
+                          : mirror?.statusOf(e.resourceId)
+                      }
+                      onOpenLocal={
+                        e.resourceId != null && onOpenLocal
+                          ? () => onOpenLocal(e.resourceId as number)
+                          : undefined
+                      }
                       onSelect={noop}
                       onOpen={primary ? () => onOpen(primary) : undefined}
                       menu={[

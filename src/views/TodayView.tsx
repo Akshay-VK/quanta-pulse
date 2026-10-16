@@ -24,6 +24,7 @@ import {
   type FeedKind,
 } from "../lib/filter";
 import { canPreview } from "../lib/preview";
+import { useMirror } from "../hooks/useMirror";
 import { courseTitle } from "../lib/courseName";
 import { primaryUrl, resourceLinks } from "../lib/open";
 import { parseTimestamp, formatDate, formatTimeOfDay, todayLabel } from "../lib/format";
@@ -102,6 +103,7 @@ export default function TodayView({
   onSelect,
   onOpen,
   onPreview,
+  onOpenLocal,
   onToggleRead,
   onMarkAllRead,
   onClearActivity,
@@ -120,6 +122,7 @@ export default function TodayView({
   selectedId: number | null;
   onSelect: (resource: Resource) => void;
   onOpen: (url: string) => void;
+  onOpenLocal: (resourceId: number) => void;
   onPreview: (resource: Resource) => void;
   onToggleRead: (resource: Resource) => void;
   onMarkAllRead: () => void;
@@ -128,6 +131,8 @@ export default function TodayView({
   /** Opens a course page from a row's course pill. */
   onOpenCourse: (courseId: number) => void;
 }) {
+  const mirror = useMirror();
+
   const [kind, setKind] = useState<FeedKind>("all");
   const [search, setSearch] = useState("");
   const [courseFilter, setCourseFilter] = useState("all");
@@ -320,12 +325,14 @@ export default function TodayView({
                 timeLabel={rowTime(resource)}
                 openLabel={openLabel(resource, eventKinds)}
                 previewAvailable={canPreview(resource.resourceType, resource.url)}
+                local={resource.isExternal ? undefined : mirror?.statusOf(resource.id)}
                 onSelect={() => onSelect(resource)}
                 onCourse={
                   resource.courseId != null
                     ? () => onOpenCourse(resource.courseId as number)
                     : undefined
                 }
+                onOpenLocal={() => onOpenLocal(resource.id)}
                 onOpen={() => onOpen(primaryUrl(resourceLinks(resource)) ?? resource.url)}
                 onPreview={() => onPreview(resource)}
                 menu={[

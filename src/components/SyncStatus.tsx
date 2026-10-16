@@ -3,6 +3,9 @@ import { formatCompact, relativeLabel } from "../lib/format";
 import { cx } from "../lib/cx";
 import { Tooltip } from "./ui/Tooltip";
 import type { SyncStatus as SyncStatusModel } from "../lib/types";
+import { useMirror } from "../hooks/useMirror";
+import DownloadsPopover from "./DownloadsPopover";
+import { formatBytes } from "../lib/format";
 
 /**
  * The sidebar sync line: a coloured dot plus a short status. `onOpenScans` is
@@ -16,6 +19,7 @@ export default function SyncStatus({
   onOpenScans?: () => void;
 }) {
   const [, setTick] = useState(0);
+  const mirror = useMirror();
 
   // Keep the relative time honest without a re-fetch.
   useEffect(() => {
@@ -54,6 +58,13 @@ export default function SyncStatus({
         .join("\n")
     : "";
 
+  // Second line while downloading.
+  const stats = mirror?.stats;
+  const downloading = sync?.running && stats;
+  const downloadLine = downloading
+    ? `Downloading ${stats.downloading} of ${stats.queued + stats.downloading} · ${formatBytes(stats.bytesTotal - stats.bytesDone)} remaining`
+    : null;
+
   const body = (
     <div
       className="sync-status"
@@ -62,6 +73,14 @@ export default function SyncStatus({
     >
       <span className={cx("sync-dot", dot, sync?.running && "pulsing")} aria-hidden="true" />
       <span className="sync-copy">{copy}</span>
+      {downloadLine && (
+        <>
+          <span className="sync-copy sync-downloading" aria-live="polite">
+            {downloadLine}
+          </span>
+          <DownloadsPopover />
+        </>
+      )}
     </div>
   );
 

@@ -10,6 +10,8 @@ export interface DetailProperty {
   value: string;
   /** When set, the value row offers a copy button for this text. */
   copy?: string | null;
+  /** Render the value in a monospace font. */
+  mono?: boolean;
 }
 
 export function resourceDetails(resource: Resource): DetailProperty[] {

@@ -651,3 +651,257 @@ fn local_midnight_to_utc(date: chrono::NaiveDate) -> Result<String, String> {
         .map(|dt| dt.with_timezone(&chrono::Utc).to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
         .ok_or_else(|| "Could not resolve local timezone.".to_string())
 }
+
+/* ------------------------------------------------------------- local mirror */
+
+/// Occupancy and queue state of the permanent local mirror.
+#[tauri::command]
+pub fn mirror_status(state: State<AppState>) -> crate::models::MirrorStats {
+    let conn = state.conn();
+    state.mirror.stats(&conn)
+}
+
+/// One status per indexed resource, so rows can show their own mirror state
+/// without one command per row.
+#[tauri::command]
+pub fn mirror_local_files(
+    state: State<'_, AppState>,
+) -> Vec<crate::models::LocalFileStatus> {
+    let conn = state.conn();
+    state
+        .mirror
+        .statuses(&conn)
+        .into_iter()
+        .map(|(resource_id, status, error)| crate::models::LocalFileStatus {
+            resource_id,
+            status,
+            error,
+        })
+        .collect()
+}
+
+/// The resolved local copy of one resource, for the peek panel. `null` when
+/// there is nothing usable yet — the caller offers a download instead.
+#[tauri::command]
+pub fn mirror_local_file(
+    state: State<'_, AppState>,
+    resource_id: i64,
+) -> Option<crate::models::LocalFile> {
+    let conn = state.conn();
+    state.mirror.local_file(&conn, resource_id)
+}
+
+/// Re-hash every local copy and requeue what is missing or corrupt.
+#[tauri::command]
+pub fn mirror_verify_files(state: State<'_, AppState>) -> crate::models::MirrorStats {
+    let requeued = {
+        let conn = state.conn();
+        state.mirror.verify(&conn)
+    };
+    tracing::info!(requeued, "mirror verification queued for re-download");
+    let conn = state.conn();
+    state.mirror.stats(&conn)
+}
+
+/// Remove every local copy. Manual action only, behind a ConfirmDialog.
+#[tauri::command]
+pub fn mirror_delete_all(state: State<'_, AppState>) -> crate::models::MirrorStats {
+    let removed = {
+        let conn = state.conn();
+        state.mirror.delete_all(&conn)
+    };
+    tracing::info!(removed, "all local mirror copies deleted");
+    let conn = state.conn();
+    state.mirror.stats(&conn)
+}
+
+/// Let the user pick the mirror folder. Existing files stay where they are: the
+/// caller decides between moving them and starting fresh here.
+#[tauri::command]
+pub async fn pick_mirror_root(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<crate::models::MirrorStats, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let picked = app
+        .dialog()
+        .file()
+        .set_title("Choose where files are saved")
+        .blocking_pick_folder();
+    let Some(folder) = picked else {
+        let conn = state.conn();
+        return Ok(state.mirror.stats(&conn));
+    };
+
+    let root = folder.into_path().map_err(|e| e.to_string())?;
+    {
+        let mut settings = state.settings();
+        settings.mirror_root = Some(root.to_string_lossy().into_owned());
+        state.set_settings(settings)?;
+    }
+    state.mirror.set_root(root);
+
+    let conn = state.conn();
+    Ok(state.mirror.stats(&conn))
+}
+
+/// Move existing mirror files to the newly selected root. Verifies each file's
+/// SHA-256, copies to the new location, then deletes the old copy. Resumable
+/// on failure.
+#[tauri::command]
+pub async fn mirror_move_files(
+    state: State<'_, AppState>,
+) -> Result<crate::models::MirrorStats, String> {
+    let moved = {
+        let conn = state.conn();
+        state.mirror.move_to_new_root(&conn).map_err(|e| e.to_string())?
+    };
+    tracing::info!(moved, "mirror files moved to new root");
+    let conn = state.conn();
+    Ok(state.mirror.stats(&conn))
+}
+
+/// Queue every resource that has no local copy, and re-check anything whose
+/// metadata changed. Starts the worker's attention immediately.
+#[tauri::command]
+pub fn mirror_start_backfill(state: State<AppState>) -> crate::models::MirrorStats {
+    let enqueued = {
+        let conn = state.conn();
+        state.mirror.enqueue_all(&conn)
+    };
+    tracing::info!(enqueued, "mirror backfill requested");
+    let conn = state.conn();
+    state.mirror.stats(&conn)
+}
+
+#[tauri::command]
+pub fn mirror_pause(state: State<AppState>) -> crate::models::MirrorStats {
+    state.mirror.pause();
+    let conn = state.conn();
+    state.mirror.stats(&conn)
+}
+
+#[tauri::command]
+pub fn mirror_resume(state: State<AppState>) -> crate::models::MirrorStats {
+    state.mirror.resume();
+    let conn = state.conn();
+    state.mirror.stats(&conn)
+}
+
+/// Put every failed or skipped resource back in the queue, clearing the attempt
+/// count so the backoff starts over.
+#[tauri::command]
+pub fn mirror_retry_failed(state: State<AppState>) -> crate::models::MirrorStats {
+    let retried = {
+        let conn = state.conn();
+        state.mirror.retry_failed(&conn)
+    };
+    tracing::info!(retried, "mirror failures queued for retry");
+    let conn = state.conn();
+    state.mirror.stats(&conn)
+}
+
+/// Wait for a resource to be local, downloading it at the front of the queue.
+/// This is what 'Open' calls: it never returns a path that does not exist.
+#[tauri::command]
+pub async fn ensure_local(
+    state: State<'_, AppState>,
+    resource_id: i64,
+) -> Result<crate::models::LocalFile, String> {
+    state
+        .mirror
+        .ensure_local(
+            &state.mirror_ctx(),
+            resource_id,
+            crate::core::mirror::ENSURE_TIMEOUT,
+        )
+        .await
+        .map_err(|e| {
+            tracing::warn!(resource_id, error = %e, "ensure_local failed");
+            e
+        })
+        .inspect(|file| tracing::debug!(resource_id, path = %file.path, "ensure_local"))
+}
+
+/// Open a resource's local copy with the system default handler, downloading
+/// it first if it is not on disk yet.
+#[tauri::command]
+pub async fn open_local_file(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    resource_id: i64,
+) -> Result<(), String> {
+    let file = ensure_local(state, resource_id).await?;
+    open_path(&app, &file.path, &file.rel_path)
+}
+
+/// Reveal a resource's local copy in the file manager.
+#[tauri::command]
+pub async fn reveal_local_file(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    resource_id: i64,
+) -> Result<(), String> {
+    let file = ensure_local(state, resource_id).await?;
+    app.opener()
+        .reveal_item_in_dir(&file.path)
+        .map_err(|e| format!("could not reveal {}: {e}", file.rel_path))
+}
+
+fn open_path(app: &AppHandle, path: &str, label: &str) -> Result<(), String> {
+    app.opener()
+        .open_path(path.to_string(), None::<&str>)
+        .map_err(|e| format!("could not open {label}: {e}"))
+}
+
+/// 'Open' / 'Show in folder' for the places Pulse owns: the database, the log
+/// directory and the mirror root.
+///
+/// `kind` picks which one; no path is ever taken from the caller. 'Show in
+/// folder' on the database selects the file itself, which is what a reader
+/// expects; on the folders it opens the folder.
+#[tauri::command]
+pub fn open_app_folder(
+    app: AppHandle,
+    state: State<AppState>,
+    kind: String,
+    reveal: bool,
+) -> Result<(), String> {
+    let (target, label) = match kind.to_ascii_lowercase().as_str() {
+        "database" => {
+            let parent = state
+                .db_path
+                .parent()
+                .ok_or_else(|| "the database path has no parent".to_string())?;
+            if reveal {
+                (state.db_path.clone(), state.db_path.display().to_string())
+            } else {
+                (parent.to_path_buf(), parent.display().to_string())
+            }
+        }
+        "logs" => {
+            let dir = crate::logging::log_dir()
+                .ok_or_else(|| "the log directory is not available".to_string())?;
+            (dir.clone(), dir.display().to_string())
+        }
+        "mirror" => {
+            let root = state.mirror.root();
+            (root.clone(), root.display().to_string())
+        }
+        other => return Err(format!("unknown folder: {other}")),
+    };
+
+    if !target.exists() {
+        return Err(format!("{label} does not exist yet."));
+    }
+    if reveal {
+        app.opener()
+            .reveal_item_in_dir(&target)
+            .map_err(|e| format!("could not reveal {label}: {e}"))
+    } else {
+        open_path(&app, &target.display().to_string(), &label)
+    }
+}
+
+

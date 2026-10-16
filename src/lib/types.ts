@@ -126,6 +126,17 @@ export interface Settings {
   timezone: string;
   /** LRU ceiling for the local file cache, in bytes. */
   cacheLimitBytes: number;
+  // The permanent local mirror. It never evicts and never deletes.
+  /** Download new and updated resources as each scan finds them. */
+  mirrorEnabled: boolean;
+  /** Explicit mirror root, or null for the default under Documents. */
+  mirrorRoot: string | null;
+  /** Files larger than this are skipped. 0 means no limit. */
+  mirrorMaxBytes: number;
+  /** Pause rather than fill the disk below this free-space floor. */
+  mirrorMinFreeBytes: number;
+  /** Superseded copies kept per resource under `.history`. */
+  mirrorKeepVersions: number;
   maxCourses: number;
   maxResourcesPerCourse: number;
   maxDetailFetches: number;
@@ -171,6 +182,46 @@ export interface CacheStats {
   fileCount: number;
   totalBytes: number;
   limitBytes: number;
+}
+
+/** One resource's mirror state, without a path. */
+export interface LocalFileStatus {
+  resourceId: number;
+  /** queued | downloading | ok | failed | skipped | kept */
+  status: string;
+  error: string | null;
+}
+
+/** One resource's permanent local copy, resolved to an absolute path. */
+export interface LocalFile {
+  resourceId: number;
+  /** Path relative to the mirror root, exactly as stored. */
+  relPath: string;
+  path: string;
+  sizeBytes: number;
+  mime: string | null;
+  sha256: string | null;
+  /** queued | downloading | ok | failed | skipped | kept */
+  status: string;
+  error: string | null;
+}
+
+/** Mirror occupancy and queue state, for Settings > Files and the sidebar. */
+export interface MirrorStats {
+  queued: number;
+  downloading: number;
+  done: number;
+  failed: number;
+  skipped: number;
+  /** Local copies Quanta no longer serves. Never deleted automatically. */
+  kept: number;
+  totalResources: number;
+  bytesDone: number;
+  bytesTotal: number;
+  /** idle | running | paused | low_disk | waiting_for_sign_in */
+  state: string;
+  root: string;
+  freeBytes: number;
 }
 
 export interface ResourceFilter {

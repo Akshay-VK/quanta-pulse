@@ -1241,6 +1241,289 @@ pub fn cache_clear(conn: &Connection) -> rusqlite::Result<Vec<CachedFile>> {
     Ok(rows)
 }
 
+/* ------------------------------------------------------------- local mirror */
+
+/// One row of `local_files`: the mirror's index. The payload lives on disk at
+/// `<root>/<rel_path>`, which is what the UI opens.
+#[derive(Debug, Clone)]
+pub struct MirrorRow {
+    pub resource_id: i64,
+    pub rel_path: String,
+    pub sha256: Option<String>,
+    pub size_bytes: i64,
+    pub mime: Option<String>,
+    pub status: String,
+    pub error: Option<String>,
+    pub attempts: i64,
+    pub source_etag: Option<String>,
+    pub source_modified: Option<String>,
+    pub downloaded_at: Option<String>,
+    pub last_checked: Option<String>,
+}
+
+fn map_mirror_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MirrorRow> {
+    Ok(MirrorRow {
+        resource_id: row.get(0)?,
+        rel_path: row.get(1)?,
+        sha256: row.get(2)?,
+        size_bytes: row.get(3)?,
+        mime: row.get(4)?,
+        status: row.get(5)?,
+        error: row.get(6)?,
+        attempts: row.get(7)?,
+        source_etag: row.get(8)?,
+        source_modified: row.get(9)?,
+        downloaded_at: row.get(10)?,
+        last_checked: row.get(11)?,
+    })
+}
+
+const MIRROR_SELECT: &str = "SELECT resource_id, rel_path, sha256, size_bytes, mime, status, \
+     error, attempts, source_etag, source_modified, downloaded_at, last_checked FROM local_files";
+
+pub fn mirror_get(conn: &Connection, resource_id: i64) -> rusqlite::Result<Option<MirrorRow>> {
+    let sql = format!("{MIRROR_SELECT} WHERE resource_id = ?1");
+    conn.query_row(&sql, params![resource_id], map_mirror_row)
+        .optional()
+}
+
+/// Insert or replace one resource's mirror index row.
+pub fn mirror_upsert(conn: &Connection, row: &MirrorRow) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO local_files(resource_id, rel_path, sha256, size_bytes, mime, status, error,
+             attempts, source_etag, source_modified, downloaded_at, last_checked)
+         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+         ON CONFLICT(resource_id) DO UPDATE SET
+             rel_path = excluded.rel_path, sha256 = excluded.sha256,
+             size_bytes = excluded.size_bytes, mime = excluded.mime,
+             status = excluded.status, error = excluded.error,
+             attempts = excluded.attempts, source_etag = excluded.source_etag,
+             source_modified = excluded.source_modified,
+             downloaded_at = excluded.downloaded_at, last_checked = excluded.last_checked",
+        params![
+            row.resource_id,
+            row.rel_path,
+            row.sha256,
+            row.size_bytes,
+            row.mime,
+            row.status,
+            row.error,
+            row.attempts,
+            row.source_etag,
+            row.source_modified,
+            row.downloaded_at,
+            row.last_checked,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Record an attempt's outcome without touching the rest of the row.
+pub fn mirror_set_status(
+    conn: &Connection,
+    resource_id: i64,
+    status: &str,
+    error: Option<&str>,
+    now: &str,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE local_files SET status = ?2, error = ?3, last_checked = ?4 WHERE resource_id = ?1",
+        params![resource_id, status, error, now],
+    )?;
+    Ok(())
+}
+
+pub fn mirror_list_status(conn: &Connection, status: &str) -> rusqlite::Result<Vec<MirrorRow>> {
+    let sql = format!("{MIRROR_SELECT} WHERE status = ?1 ORDER BY resource_id");
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params![status], map_mirror_row)?;
+    rows.collect()
+}
+
+/// Counts per status, so the caller can tally without one query per status.
+pub fn mirror_counts(conn: &Connection) -> rusqlite::Result<Vec<(String, i64)>> {
+    let mut stmt = conn.prepare("SELECT status, COUNT(*) FROM local_files GROUP BY status")?;
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+    rows.collect()
+}
+
+/// (bytes on disk, indexed files) for the copies that are actually usable.
+pub fn mirror_bytes(conn: &Connection) -> rusqlite::Result<(i64, i64)> {
+    conn.query_row(
+        "SELECT COALESCE(SUM(size_bytes), 0), COUNT(*) FROM local_files \
+         WHERE status IN ('ok', 'kept')",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )
+}
+
+/// Every resource that could have a local copy: advertised bytes and count.
+pub fn mirror_totals(conn: &Connection) -> rusqlite::Result<(i64, i64)> {
+    conn.query_row(
+        "SELECT COALESCE(SUM(size_bytes), 0), COUNT(*) FROM resources WHERE is_external = 0",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )
+}
+
+pub fn mirror_delete(conn: &Connection, resource_id: i64) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM local_files WHERE resource_id = ?1", params![resource_id])?;
+    Ok(())
+}
+
+/// Every indexed local copy, for the UI's per-resource status map.
+pub fn mirror_all(conn: &Connection) -> rusqlite::Result<Vec<MirrorRow>> {
+    let sql = format!("{MIRROR_SELECT} ORDER BY resource_id");
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map([], map_mirror_row)?;
+    rows.collect()
+}
+
+/// 'Delete all local copies': only reached from an explicit user action.
+pub fn mirror_clear_all(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM local_files", [])?;
+    conn.execute("DELETE FROM local_file_versions", [])?;
+    conn.execute("DELETE FROM download_queue", [])?;
+    Ok(())
+}
+
+/// One superseded copy, moved under `<root>/.history`.
+#[derive(Debug, Clone)]
+pub struct MirrorVersion {
+    pub resource_id: i64,
+    pub rel_path: String,
+    pub sha256: Option<String>,
+    pub size_bytes: i64,
+    pub replaced_at: String,
+}
+
+pub fn version_insert(conn: &Connection, v: &MirrorVersion) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO local_file_versions(resource_id, rel_path, sha256, size_bytes, replaced_at)
+         VALUES(?1, ?2, ?3, ?4, ?5)",
+        params![v.resource_id, v.rel_path, v.sha256, v.size_bytes, v.replaced_at],
+    )?;
+    Ok(())
+}
+
+/// Newest first.
+pub fn version_list(conn: &Connection, resource_id: i64) -> rusqlite::Result<Vec<MirrorVersion>> {
+    let mut stmt = conn.prepare(
+        "SELECT resource_id, rel_path, sha256, size_bytes, replaced_at
+           FROM local_file_versions WHERE resource_id = ?1 ORDER BY replaced_at DESC, rowid DESC",
+    )?;
+    let rows = stmt.query_map(params![resource_id], |row| {
+        Ok(MirrorVersion {
+            resource_id: row.get(0)?,
+            rel_path: row.get(1)?,
+            sha256: row.get(2)?,
+            size_bytes: row.get(3)?,
+            replaced_at: row.get(4)?,
+        })
+    })?;
+    rows.collect()
+}
+
+/// Keep the newest `keep` versions and return the rows that fell off the end,
+/// so the caller can delete their files.
+pub fn version_prune(
+    conn: &Connection,
+    resource_id: i64,
+    keep: usize,
+) -> rusqlite::Result<Vec<MirrorVersion>> {
+    let all = version_list(conn, resource_id)?;
+    let dropped = all.into_iter().skip(keep).collect::<Vec<_>>();
+    for v in &dropped {
+        conn.execute(
+            "DELETE FROM local_file_versions WHERE resource_id = ?1 AND rel_path = ?2 AND replaced_at = ?3",
+            params![v.resource_id, v.rel_path, v.replaced_at],
+        )?;
+    }
+    Ok(dropped)
+}
+
+/// One pending download. Priority 0 is an on-demand request, 1 a new or updated
+/// resource from the latest scan, 2 backfill of everything else.
+#[derive(Debug, Clone)]
+pub struct QueueItem {
+    pub resource_id: i64,
+    pub priority: i64,
+    pub enqueued_at: String,
+}
+
+pub fn queue_enqueue(
+    conn: &Connection,
+    resource_id: i64,
+    priority: i64,
+    now: &str,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO download_queue(resource_id, priority, enqueued_at) VALUES(?1, ?2, ?3)
+         ON CONFLICT(resource_id) DO UPDATE SET priority = MIN(download_queue.priority, excluded.priority)",
+        params![resource_id, priority, now],
+    )?;
+    Ok(())
+}
+
+/// The next items to work on, most urgent first and, within a tier, newest
+/// upload first so a fresh semester is usable before last year's archive.
+pub fn queue_next(conn: &Connection, limit: i64) -> rusqlite::Result<Vec<QueueItem>> {
+    let mut stmt = conn.prepare(
+        "SELECT q.resource_id, q.priority, q.enqueued_at
+           FROM download_queue q LEFT JOIN resources r ON r.id = q.resource_id
+          ORDER BY q.priority ASC,
+                   COALESCE(r.uploaded_at, r.first_seen_at) DESC,
+                   q.enqueued_at ASC
+          LIMIT ?1",
+    )?;
+    let rows = stmt.query_map(params![limit], |row| {
+        Ok(QueueItem {
+            resource_id: row.get(0)?,
+            priority: row.get(1)?,
+            enqueued_at: row.get(2)?,
+        })
+    })?;
+    rows.collect()
+}
+
+pub fn queue_remove(conn: &Connection, resource_id: i64) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM download_queue WHERE resource_id = ?1", params![resource_id])?;
+    Ok(())
+}
+
+pub fn queue_len(conn: &Connection) -> i64 {
+    conn.query_row("SELECT COUNT(*) FROM download_queue", [], |r| r.get(0))
+        .unwrap_or(0)
+}
+
+/// Backfill every resource that has no mirror row yet.
+pub fn queue_backfill(conn: &Connection, now: &str) -> rusqlite::Result<usize> {
+    conn.execute(
+        "INSERT INTO download_queue(resource_id, priority, enqueued_at)
+         SELECT r.id, 2, ?1
+           FROM resources r LEFT JOIN local_files lf ON lf.resource_id = r.id
+          WHERE r.is_external = 0 AND lf.resource_id IS NULL
+          ON CONFLICT(resource_id) DO NOTHING",
+        params![now],
+    )
+}
+
+/// Re-check a resource that is already mirrored when its metadata says it was
+/// modified after our last look, plus anything we have never checked.
+pub fn queue_recheck_modified(conn: &Connection, now: &str) -> rusqlite::Result<usize> {
+    conn.execute(
+        "INSERT INTO download_queue(resource_id, priority, enqueued_at)
+         SELECT r.id, 1, ?1
+           FROM resources r JOIN local_files lf ON lf.resource_id = r.id
+          WHERE r.is_external = 0
+            AND lf.status IN ('ok', 'kept')
+            AND r.modified_at IS NOT NULL
+            AND (lf.last_checked IS NULL OR r.modified_at > lf.last_checked)
+          ON CONFLICT(resource_id) DO UPDATE SET priority = MIN(download_queue.priority, 1)",
+        params![now],
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1917,5 +2200,275 @@ mod tests {
             resource.content_fingerprint.as_deref(),
             Some(expected.as_str())
         );
+    }
+
+    /* --------------------------------------------------------- local mirror */
+
+    /// Mirror priorities. Re-exported from `core::mirror` so the test and the
+    /// worker cannot disagree about which tier means what.
+    const P_BACKFILL: i64 = 2;
+    const P_CHANGED: i64 = 1;
+    const P_ON_DEMAND: i64 = 0;
+
+    fn seed_resource(
+        conn: &Connection,
+        course_id: i64,
+        external_id: &str,
+        title: &str,
+        uploaded_at: Option<&str>,
+        size_bytes: Option<i64>,
+    ) -> i64 {
+        upsert_resource(
+            conn,
+            &ResourceWrite {
+                external_id,
+                course_id: Some(course_id),
+                title,
+                url: "https://quanta/mod/resource/view.php",
+                source_page_url: None,
+                resource_type: "pdf",
+                uploaded_at,
+                published_at: None,
+                modified_at: None,
+                due_at: None,
+                fingerprint: "fp",
+                size_bytes,
+                section: None,
+                section_path: None,
+                is_external: false,
+                availability: "available",
+            },
+            &now_rfc3339(),
+        )
+        .unwrap()
+    }
+
+    fn seeded_course(conn: &Connection) -> i64 {
+        upsert_course(conn, "10", "CS F222", None, "https://x/10", "t0").unwrap()
+    }
+
+    #[test]
+    fn mirror_rows_round_trip_and_report_bytes() {
+        let conn = mem();
+        let course = seeded_course(&conn);
+        let rid = seed_resource(&conn, course, "mod:resource:1", "Lecture 1", None, Some(100));
+
+        let row = MirrorRow {
+            resource_id: rid,
+            rel_path: "CS F222/Unit 1/Lecture 1.pdf".into(),
+            sha256: Some("abc".into()),
+            size_bytes: 100,
+            mime: Some("application/pdf".into()),
+            status: "ok".into(),
+            error: None,
+            attempts: 2,
+            source_etag: Some("\"v1\"".into()),
+            source_modified: None,
+            downloaded_at: Some("t1".into()),
+            last_checked: Some("t2".into()),
+        };
+        mirror_upsert(&conn, &row).unwrap();
+
+        let stored = mirror_get(&conn, rid).unwrap().expect("row exists");
+        assert_eq!(stored.rel_path, "CS F222/Unit 1/Lecture 1.pdf");
+        assert_eq!(stored.sha256.as_deref(), Some("abc"));
+        assert_eq!(stored.attempts, 2);
+        assert_eq!(stored.source_etag.as_deref(), Some("\"v1\""));
+        assert_eq!(stored.status, "ok");
+        assert_eq!(
+            mirror_bytes(&conn).unwrap(),
+            (100, 1),
+            "the indexed bytes are the ones actually written"
+        );
+        assert!(mirror_get(&conn, rid + 999).unwrap().is_none());
+    }
+
+    #[test]
+    fn the_queue_runs_newest_uploads_first_within_a_priority_tier() {
+        let conn = mem();
+        let course = seeded_course(&conn);
+        let older = seed_resource(&conn, course, "mod:resource:1", "Lecture 1", Some("2026-01-01T00:00:00Z"), None);
+        let newer = seed_resource(&conn, course, "mod:resource:2", "Lecture 2", Some("2026-01-09T00:00:00Z"), None);
+        let backfill = seed_resource(&conn, course, "mod:resource:3", "Lecture 3", Some("2026-01-05T00:00:00Z"), None);
+
+        queue_enqueue(&conn, older, P_CHANGED, "t0").unwrap();
+        queue_enqueue(&conn, newer, P_CHANGED, "t0").unwrap();
+        queue_enqueue(&conn, backfill, P_BACKFILL, "t0").unwrap();
+
+        let order: Vec<i64> = queue_next(&conn, 10)
+            .unwrap()
+            .iter()
+            .map(|q| q.resource_id)
+            .collect();
+        assert_eq!(order, vec![newer, older, backfill]);
+
+        // An on-demand request jumps the queue.
+        queue_enqueue(&conn, backfill, P_ON_DEMAND, "t1").unwrap();
+        let order: Vec<i64> = queue_next(&conn, 10)
+            .unwrap()
+            .iter()
+            .map(|q| q.resource_id)
+            .collect();
+        assert_eq!(order, vec![backfill, newer, older]);
+
+        // Re-enqueuing can only lower a priority, never raise it.
+        queue_enqueue(&conn, backfill, P_BACKFILL, "t2").unwrap();
+        let priority: i64 = conn
+            .query_row(
+                "SELECT priority FROM download_queue WHERE resource_id = ?1",
+                params![backfill],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(priority, P_ON_DEMAND);
+    }
+
+    #[test]
+    fn backfill_queues_only_what_has_no_local_copy_and_survives_reopening() {
+        let conn = mem();
+        let course = seeded_course(&conn);
+        let first = seed_resource(&conn, course, "mod:resource:1", "Lecture 1", None, None);
+        let second = seed_resource(&conn, course, "mod:resource:2", "Lecture 2", None, None);
+
+        assert_eq!(queue_backfill(&conn, "t0").unwrap(), 2);
+        assert_eq!(queue_backfill(&conn, "t1").unwrap(), 0, "already queued");
+
+        // Downloading one removes it from the work list but not the record.
+        queue_remove(&conn, first).unwrap();
+        mirror_upsert(
+            &conn,
+            &MirrorRow {
+                resource_id: second,
+                rel_path: "CS F222/Lecture 2.pdf".into(),
+                sha256: Some("h".into()),
+                size_bytes: 10,
+                mime: None,
+                status: "ok".into(),
+                error: None,
+                attempts: 1,
+                source_etag: None,
+                source_modified: None,
+                downloaded_at: Some("t2".into()),
+                last_checked: Some("t2".into()),
+            },
+        )
+        .unwrap();
+
+        // Only the still-missing resource is queued again.
+        let result = queue_backfill(&conn, "t3").unwrap();
+        assert_eq!(result, 1, "resource 1 should be queued again");
+        // Resource 2 is still in the queue from the initial backfill (we never remove
+        // queued items when they get a local file). queue_next returns the newest
+        // upload first, so resource 2 comes before resource 1.
+        let next = queue_next(&conn, 10).unwrap();
+        assert_eq!(next.len(), 2);
+        assert_eq!(next[0].resource_id, second);
+        assert_eq!(next[1].resource_id, first);
+    }
+
+    #[test]
+    fn an_unavailable_resource_keeps_its_local_copy_and_is_relabelled() {
+        let conn = mem();
+        let course = seeded_course(&conn);
+        let rid = seed_resource(&conn, course, "mod:resource:1", "Lecture 1", None, Some(64));
+        mirror_upsert(
+            &conn,
+            &MirrorRow {
+                resource_id: rid,
+                rel_path: "CS F222/Lecture 1.pdf".into(),
+                sha256: Some("h".into()),
+                size_bytes: 64,
+                mime: Some("application/pdf".into()),
+                status: "ok".into(),
+                error: None,
+                attempts: 1,
+                source_etag: None,
+                source_modified: None,
+                downloaded_at: Some("t1".into()),
+                last_checked: Some("t1".into()),
+            },
+        )
+        .unwrap();
+
+        // Two misses later the resource reads as unavailable.
+        set_availability(&conn, rid, "unavailable").unwrap();
+        let changed = conn
+            .execute(
+                "UPDATE local_files SET status = 'kept'
+                  WHERE status IN ('ok', 'failed', 'skipped')
+                    AND resource_id IN (SELECT id FROM resources WHERE availability_status = 'unavailable')",
+                [],
+            )
+            .unwrap();
+
+        assert_eq!(changed, 1);
+        let stored = mirror_get(&conn, rid).unwrap().unwrap();
+        assert_eq!(stored.status, "kept");
+        assert_eq!(stored.rel_path, "CS F222/Lecture 1.pdf", "the path survives");
+        assert_eq!(
+            mirror_bytes(&conn).unwrap(),
+            (64, 1),
+            "'kept' is still on disk, so it still counts as saved"
+        );
+    }
+
+    #[test]
+    fn version_prune_keeps_the_newest_and_reports_the_rest() {
+        let conn = mem();
+        let course = seeded_course(&conn);
+        let rid = seed_resource(&conn, course, "mod:resource:1", "Lecture 1", None, None);
+        for day in ["2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z", "2026-03-03T00:00:00Z"] {
+            version_insert(
+                &conn,
+                &MirrorVersion {
+                    resource_id: rid,
+                    rel_path: "CS F222/Lecture 1.pdf".into(),
+                    sha256: Some(day.into()),
+                    size_bytes: 10,
+                    replaced_at: day.into(),
+                },
+            )
+            .unwrap();
+        }
+
+        assert_eq!(version_list(&conn, rid).unwrap().len(), 3);
+        let dropped = version_prune(&conn, rid, 2).unwrap();
+        assert_eq!(dropped.len(), 1);
+        assert_eq!(dropped[0].replaced_at, "2026-03-01T00:00:00Z", "the oldest goes");
+        assert_eq!(version_list(&conn, rid).unwrap().len(), 2);
+
+        // A keep of 0 removes every history entry.
+        assert_eq!(version_prune(&conn, rid, 0).unwrap().len(), 2);
+        assert!(version_list(&conn, rid).unwrap().is_empty());
+    }
+
+    #[test]
+    fn deleting_a_resource_deletes_its_mirror_rows() {
+        let conn = mem();
+        let course = seeded_course(&conn);
+        let rid = seed_resource(&conn, course, "mod:resource:1", "Lecture 1", None, None);
+        mirror_upsert(
+            &conn,
+            &MirrorRow {
+                resource_id: rid,
+                rel_path: "CS F222/Lecture 1.pdf".into(),
+                sha256: None,
+                size_bytes: 0,
+                mime: None,
+                status: "failed".into(),
+                error: Some("boom".into()),
+                attempts: 1,
+                source_etag: None,
+                source_modified: None,
+                downloaded_at: None,
+                last_checked: None,
+            },
+        )
+        .unwrap();
+        queue_enqueue(&conn, rid, P_ON_DEMAND, "t0").unwrap();
+
+        conn.execute("DELETE FROM resources WHERE id = ?1", params![rid]).unwrap();
+        assert!(mirror_get(&conn, rid).unwrap().is_none());
+        assert_eq!(queue_len(&conn), 0, "a queue row for a dead resource is gone too");
     }
 }

@@ -33,6 +33,23 @@ pub struct Settings {
     #[serde(default = "default_cache_limit_bytes")]
     pub cache_limit_bytes: u64,
 
+    // Mirror (the permanent local copy of everything Quanta serves)
+    /// Download new and updated resources as each scan finds them.
+    #[serde(default = "default_true")]
+    pub mirror_enabled: bool,
+    /// Mirror root. `None` means the default under the user's Documents folder.
+    #[serde(default)]
+    pub mirror_root: Option<String>,
+    /// Files above this size are skipped, not failed. 0 means no limit.
+    #[serde(default = "default_mirror_max_bytes")]
+    pub mirror_max_bytes: u64,
+    /// Pause the queue rather than fill the disk below this free-space floor.
+    #[serde(default = "default_mirror_min_free_bytes")]
+    pub mirror_min_free_bytes: u64,
+    /// Superseded copies kept per resource under `<root>/.history`.
+    #[serde(default = "default_mirror_keep_versions")]
+    pub mirror_keep_versions: usize,
+
     // Crawl limits (safety rails; conservative defaults)
     pub max_courses: usize,
     pub max_resources_per_course: usize,
@@ -59,6 +76,11 @@ impl Default for Settings {
             deadline_reminder_hours: 48,
             timezone: "system".to_string(),
             cache_limit_bytes: default_cache_limit_bytes(),
+            mirror_enabled: true,
+            mirror_root: None,
+            mirror_max_bytes: default_mirror_max_bytes(),
+            mirror_min_free_bytes: default_mirror_min_free_bytes(),
+            mirror_keep_versions: default_mirror_keep_versions(),
 
             max_courses: 60,
             max_resources_per_course: 400,
@@ -82,6 +104,24 @@ impl Settings {
         self.request_timeout_secs = self.request_timeout_secs.clamp(5, 120);
         self.concurrency = self.concurrency.clamp(1, 8);
         self.deadline_reminder_hours = self.deadline_reminder_hours.clamp(1, 24 * 30);
+
+        // Mirror. 0 is the "no limit" choice and must survive the clamp.
+        if self.mirror_max_bytes != 0 {
+            self.mirror_max_bytes =
+                self.mirror_max_bytes.clamp(16 * 1024 * 1024, 64 * 1024 * 1024 * 1024);
+        }
+        self.mirror_min_free_bytes =
+            self.mirror_min_free_bytes.clamp(512 * 1024 * 1024, 1024 * 1024 * 1024 * 1024);
+        self.mirror_keep_versions = self.mirror_keep_versions.min(10);
+        if self
+            .mirror_root
+            .as_deref()
+            .map(|s| s.trim().is_empty())
+            .unwrap_or(false)
+        {
+            self.mirror_root = None;
+        }
+
         for slot in [&self.quiet_hours_start, &self.quiet_hours_end] {
             if let Some(v) = slot {
                 if !is_valid_hhmm(v) {
@@ -111,6 +151,24 @@ impl Settings {
 /// eviction pass stays cheap.
 fn default_cache_limit_bytes() -> u64 {
     2 * 1024 * 1024 * 1024
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// 500 MB. Above this a file is skipped with 'too_large', not failed.
+fn default_mirror_max_bytes() -> u64 {
+    500 * 1024 * 1024
+}
+
+/// 5 GB. Below this the queue pauses instead of filling the disk.
+fn default_mirror_min_free_bytes() -> u64 {
+    5 * 1024 * 1024 * 1024
+}
+
+fn default_mirror_keep_versions() -> usize {
+    3
 }
 
 pub fn is_valid_hhmm(s: &str) -> bool {
@@ -143,6 +201,51 @@ mod tests {
         json.as_object_mut().unwrap().remove("cacheLimitBytes");
         let parsed: Settings = serde_json::from_value(json).unwrap();
         assert_eq!(parsed.cache_limit_bytes, Settings::default().cache_limit_bytes);
+    }
+
+    #[test]
+    fn missing_mirror_fields_do_not_discard_the_settings_row() {
+        // Same guarantee for the mirror fields: a row written before Part B.
+        let mut json = serde_json::to_value(Settings::default()).unwrap();
+        let obj = json.as_object_mut().unwrap();
+        for key in [
+            "mirrorEnabled",
+            "mirrorRoot",
+            "mirrorMaxBytes",
+            "mirrorMinFreeBytes",
+            "mirrorKeepVersions",
+        ] {
+            obj.remove(key);
+        }
+        let parsed: Settings = serde_json::from_value(json).unwrap();
+        assert!(parsed.mirror_enabled);
+        assert_eq!(parsed.mirror_root, None);
+        assert_eq!(parsed.mirror_max_bytes, 500 * 1024 * 1024);
+        assert_eq!(parsed.mirror_min_free_bytes, 5 * 1024 * 1024 * 1024);
+        assert_eq!(parsed.mirror_keep_versions, 3);
+    }
+
+    #[test]
+    fn mirror_sanitize_keeps_zero_as_no_limit_and_clamps_the_rest() {
+        let mut s = Settings {
+            mirror_max_bytes: 0,
+            mirror_min_free_bytes: 1,
+            mirror_keep_versions: 99,
+            mirror_root: Some("   ".into()),
+            ..Settings::default()
+        };
+        s.sanitize();
+        assert_eq!(s.mirror_max_bytes, 0, "0 means no limit and must survive");
+        assert_eq!(s.mirror_min_free_bytes, 512 * 1024 * 1024);
+        assert_eq!(s.mirror_keep_versions, 10);
+        assert_eq!(s.mirror_root, None, "a blank root means the default");
+
+        let mut s = Settings {
+            mirror_max_bytes: 1,
+            ..Settings::default()
+        };
+        s.sanitize();
+        assert_eq!(s.mirror_max_bytes, 16 * 1024 * 1024);
     }
 
     #[test]

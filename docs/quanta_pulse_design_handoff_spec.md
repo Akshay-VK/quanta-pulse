@@ -258,7 +258,8 @@ In-page content never has a shadow. Separation comes from `--line`.
 | States | Hover `--hover`. Selected `--selected`. Focus ring on the select button. Unread: title weight 500. Unavailable: title struck through and `--muted` |
 | Title | One line, ellipsis. Full text in the `title` attribute and in the peek panel |
 | Time | Caption `--muted`, no wrap, from `lib/format.ts`. Missing date reads 'Upload date unavailable', never a substitute |
-| Actions | Open and overflow buttons are visible on hover, on `:focus-within` and on the selected row. They stay in the tab order. Open label: 'Open file', 'Open course' for deadlines, 'Read post' for announcements |
+| Mirror status | When the resource can have a local copy (§6.7) a 16px marker sits before the time: a tick, a spinner, a clock, an alert or a drive for saved / downloading / waiting / failed / skipped / kept. It carries a `title` and an `aria-label` with the state and, for a failure, the reason. Nothing is hidden when the row is narrow |
+| Actions | Open and overflow buttons are visible on hover, on `:focus-within` and on the selected row. They stay in the tab order. Open label: 'Open local copy' when a local copy is saved, 'Download and open' when the resource can have one but does not yet, otherwise 'Open file', 'Open course' for deadlines, 'Read post' for announcements |
 | Overflow menu | Open file, Open Quanta page, Copy link, Mark as read or unread |
 | Rule | The row is never a button containing another button. Selecting and opening are separate controls |
 
@@ -266,7 +267,7 @@ In-page content never has a shadow. Separation comes from `--line`.
 | --- | --- |
 | GroupHeader | Caption 500 `--muted` with a mono count. Padding `--sp-4` top, `--sp-1` bottom. Sticky at `--z-sticky` with `--bg` fill and a 1px `--line` bottom border while stuck. Labels come from `groupByDate`: Today, Yesterday, then weekday and date |
 | DataTable | Header row `--side`, 32 high, caption `--muted`, sticky. Body rows `--row-h`, 1px `--line` bottom, hover `--hover`. Sortable headers are buttons with a chevron and set `aria-sort`. Numeric columns are right-aligned mono. Cells truncate with a `title`. Under 760px the table scrolls inside its own `overflow-x: auto` box with a sticky first column. Virtualised above 200 rows |
-| PropertyList | `dl` with a 92px label column and a flexible value column. Labels `--type-small` `--muted`, values `--type-small` `--ink`, values wrap. Path and URL values reveal a copy IconButton on hover |
+| PropertyList | `dl` with a 92px label column and a flexible value column. Labels `--type-small` `--muted`, values `--type-small` `--ink`, values wrap. Path and URL values reveal a copy IconButton on hover. A local path (§6.7) renders mono |
 | StatBlock | Used in the Calendar day digest. Label in caption `--muted`, value in `--type-ui-strong` mono. Zero values render muted. No colour fills |
 | EmptyState | Centred, `--sp-12` vertical padding. Title in `--type-dialog`, one explanatory line in `--type-ui` `--muted`, optional single button. No illustrations. Copy is defined per screen in section 7 |
 | Skeleton | `--hover` bars matching the final row height. Shown only after a 200 ms delay to avoid flashing. 1.4 s shimmer, static under reduced motion |
@@ -281,11 +282,39 @@ In-page content never has a shadow. Separation comes from `--line`.
 | ConfirmDialog (Radix) | 440 wide, `--radius-lg`, `--raised`, `--shadow-dialog`, padding `--sp-6`. Title `--type-dialog`, body `--type-ui` `--muted`. Footer right-aligned: secondary 'Cancel' (initial focus) and a danger or primary confirm. The confirm label repeats the trigger verb. Scrim `--overlay` fades 160 ms, panel scales .98 to 1 with a fade over 160 ms. Esc and scrim click cancel unless an action is running. Used for Clear activity, Re-baseline course, Re-baseline all, Sign out |
 | Tooltip | 12/16, `--ink` fill, `--bg` text, `--radius-xs`, padding 4px 8px. 400 ms open delay, instant when moving between tooltips. Never the only place for essential information |
 | Menu (Radix) | `--raised`, `--shadow-pop`, `--radius-md`, padding 4. Items 28 high with `--radius-xs`, hover and focus `--hover`. Destructive item text uses `--t-red-fg`. Optional right-aligned mono shortcut. Arrows, Home, End and typeahead |
-| SyncStatus | Dot 8px plus text. idle: green dot, 'Synced 4 min ago', relative time refreshed every 30 s, Tooltip with the exact time and next scan. syncing: amber dot with a ping ring (1.4 s), 'Scanning 7 of 12 courses' from `sync:progress`. error: red dot, 'Last scan failed', click opens History scans. paused: amber dot, 'Monitoring paused'. All with a text label |
+| SyncStatus | Dot 8px plus text. idle: green dot, 'Synced 4 min ago', relative time refreshed every 30 s, Tooltip with the exact time and next scan. syncing: amber dot with a ping ring (1.4 s), 'Scanning 7 of 12 courses' from `sync:progress`. error: red dot, 'Last scan failed', click opens History scans. paused: amber dot, 'Monitoring paused'. While the mirror is downloading, a second line reads 'Downloading 2 of 9 · 128 MB remaining' with a chevron that opens the downloads popover. All with a text label |
+| DownloadsPopover | 280–360 wide, opened from the chevron on the sidebar's download line. Rows: Active, Queued, Completed, Failed, Remaining. 'Pause' or 'Resume' while work is pending. When anything failed, a '3 failed ▼' disclosure expands to the reason and 'Retry all'. Esc, outside click or the trigger closes it |
 | SyncButton | Secondary sm, full width in the sidebar. Idle 'Sync now'. Syncing: refresh icon spins, label 'Scanning', disabled, `aria-busy='true'`. Collapsed rail: IconButton |
 | SyncProgress | 2px bar at the top of `<main>`. Unknown total: indeterminate sweep, 40% wide, 1.1 s ease-in-out loop. Known total: determinate fill with a 160 ms width transition. Fades out over 160 ms on `sync:done` |
-| PeekPanel | `aside` labelled 'Details', width `--peek-w`, `--raised`, padding `--sp-5` `--sp-6`. Header: StatusTag left, close IconButton right. Title in `--type-title`, clamped to 3 lines. Then PropertyList, then actions. Primary 'Open file' (or 'Open course', 'Read post'), secondary 'Preview' only when `lib/preview.ts` allows it, overflow menu. Enter: 220 ms slide of 14px plus fade. Exit: 120 ms fade. Selecting another row cross-fades the content in 120 ms without re-running the slide. Keyboard open moves focus to the panel title, close returns focus to the originating row. Esc closes. Unavailable files add the note 'Missing for 2 scans in a row. It may come back.' |
+| PeekPanel | `aside` labelled 'Details', width `--peek-w`, `--raised`, padding `--sp-5` `--sp-6`. Header: StatusTag left, close IconButton right. Title in `--type-title`, clamped to 3 lines. Then PropertyList, then actions. Primary 'Open file' (or 'Open course', 'Read post'), secondary 'Preview' only when `lib/preview.ts` allows it, overflow menu. Enter: 220 ms slide of 14px plus fade. Exit: 120 ms fade. Selecting another row cross-fades the content in 120 ms without re-running the slide. Keyboard open moves focus to the panel title, close returns focus to the originating row. Esc closes. Unavailable files add the note 'Missing for 2 scans in a row. It may come back.' A resource with a local copy (§6.7) adds a 'Local copy' group after the properties — state, size, mono path, reason — with 'Open local copy' when it can be opened |
 | PreviewDialog | Radix Dialog, up to 960x720 and 80% of the window. Header with title, type, 'Open in Quanta' and close. Body renders per the preview decision. Loading shows a Skeleton. Failure shows an error Banner with 'Open in Quanta instead'. Preview lease behaviour in `state.rs` is unchanged |
+
+### 6.7 Local storage: preview cache and permanent mirror
+
+Two stores that look alike and are not interchangeable.
+
+| | Preview cache (`core/files.rs`) | Permanent mirror (`core/mirror.rs`) |
+| --- | --- | --- |
+| Table | `file_cache` | `local_files`, `local_file_versions`, `download_queue` |
+| Key | `(resource_id, content_hash)` | `resource_id` |
+| Layout | `<data>/files/<resource_id>/<sha256>` | `<root>/<course>/<section path>/<file>` |
+| Filled by | A preview download, binary only, ≤ 8 MB | The mirror queue, everything Quanta serves |
+| Eviction | LRU against `cache_limit_bytes` | Never. No automatic deletion at all |
+| Deleted when… | LRU pressure | The user deletes it |
+
+`local_file(resource_id)` reads the mirror first, then the preview cache: the same bytes under the same content hash, so a resource previewed earlier is already local. A row whose file has vanished reads as a miss, never an error.
+
+**Layout.** Segments are sanitised for Windows *and* POSIX: Unicode NFC, `<>:"/\|?*` and control characters become `-`, trailing dots and spaces are dropped (Windows would do it silently and leave the stored path disagreeing with the file), reserved device names are prefixed, a segment is capped at 80 characters keeping its extension, and a whole path is capped at 240 by dropping the deepest sections first. Collisions get ` (2)`, ` (3)` — Windows and macOS both fold case. `join_within` is a traversal guard: anything that is not a plain relative path is rejected.
+
+Text pages have no file, so they become a Markdown snapshot at `<course>/Announcements/<yyyy-MM-dd> <title>.md` (or `Pages/` for other text kinds), converted from HTML with the same content-root rule as the in-app preview.
+
+**Queue.** Priorities: 0 on demand, 1 new or updated from the latest scan, 2 backfill. Within a tier, newest upload first, so a fresh semester is usable before last year's archive finishes. Up to 3 downloads at once, ≥ 200 ms apart. The queue lives in `download_queue` so an interrupted backfill survives a restart. Exponential backoff (2 s doubling, capped at 5 min, deterministic jitter) lives in `local_files.attempts`; a resource stops being retried after ~8 attempts and becomes 'failed', from which 'Retry failed' starts it over.
+
+**A download.** Headers first, then the name from `Content-Disposition` (including RFC 5987 `filename*`, with the directory part stripped), then the title or URL path. Bytes stream to `<name>.part` while SHA-256 is computed, with per-chunk stall detection and no overall timeout. A partial file is resumed with `Range` + `If-Range`, so a changed file restarts rather than corrupts. On completion the previous copy moves to `<root>/.history/<resource_id>/<stamp>_<name>` and only the newest few are kept; then the new file is renamed into place.
+
+Moodle answers an expired session with HTTP 200 and its login page. `stream_to` sniffs the first 64 KB and treats that as an auth failure, so a login page is never saved as a file — the queue becomes `waiting_for_sign_in`, keeps its rows, and resumes on the next sign-in.
+
+Nothing in the mirror writes a `change_events` row and the baseline-scan rule is untouched: mirroring is not a content change.
 
 ## 7. Screens
 
@@ -474,9 +503,10 @@ A DataTable over scan history.
 | --- | --- |
 | Appearance | Theme: ToggleGroup System, Light, Dark |
 | Account | Status (dot plus 'Signed in', 'Session expired' or 'Signed out'). Sign-in method (Password or BITS SSO). Session acquired (mono time). Notification permission ('Allowed', 'Blocked' or 'Not asked') with 'Allow notifications' or 'Open system settings' and 'Send test notification'. 'Restart session' appears when expired. 'Sign out' is a danger ghost button that opens the ConfirmDialog |
-| Notifications | Master Switch. Per-category Switches: New files, Updated files, Announcements, Deadlines, Unavailable files (matching the per-category gates in `notify.rs`). Deadline window Select. Quiet hours Switch with two TimeFields. When the master is off, the rest are dimmed, `aria-disabled`, with the helper 'Turn on notifications to change these' |
+| Notifications | Master Switch. Per-category Switches: New files, Updated files, Announcements, Deadlines, Unavailable files, Authentication reminders (the six shipped categories, matching the per-category gates in `notify.rs`). Deadline window Select. Quiet hours Switch with two TimeFields. When the master is off, the rest are dimmed, `aria-disabled`, with the helper 'Turn on notifications to change these' |
 | Monitoring | Sync interval Select (options from the `settings.rs` limits). 'Run in background' Switch with 'Keep scanning from the menu bar after the window closes'. 'Launch at login' Switch. Timezone: read-only row with the system timezone and 'Dates are grouped by your local calendar days' |
-| Data | PropertyList: database path (copy button, 'Show in folder'), size, counts for courses, resources and events, logs folder ('Open'), file cache (size and file count). 'Cached files' row pairs a size-limit Select (1–20 GB, default 2 GB) with a 'Clear cached files' button. A separated group at the bottom holds 'Re-baseline all courses' (secondary, danger text) with a ConfirmDialog: 'Records everything as known. Nothing is reported as new until the next scan.' |
+| Files | Mirror folder (mono path, 'Change…', 'Open folder'). Changing it offers 'Move existing files' (copy, verify, delete) or 'Start fresh here'. 'Download new files automatically' Switch. 'Download existing files' row with the queue line ('Saved 47 of 47 · 312 MB', 'Downloading in the background…' or 'Paused') and 'Pause'/'Resume' plus 'Download all'. 'Skip files larger than' (No limit–1 GB), 'Keep free space' (2/5/10 GB) and 'Previous versions to keep' (None–5) Selects. 'Failures' with 'Retry all' only when something failed. 'Verify files' with 'Verify now'. The danger group 'Delete all local copies' lives in Data |
+| Data | PropertyList: database path (copy button, 'Show in folder'), size, counts for courses, resources and events, logs folder ('Open'), preview cache (size and file count). 'Preview cache' row pairs a size-limit Select (1–20 GB, default 2 GB) with a 'Clear cached files' button. A separated group at the bottom holds 'Re-baseline all courses' (secondary, danger text) with a ConfirmDialog: 'Records everything as known. Nothing is reported as new until the next scan.' |
 
 ### 7.7 System states
 
@@ -619,8 +649,9 @@ Tauri commands, and any later HTTP or MCP server, stay thin:
 
 ```
 src-tauri/src/
-  core/          mod.rs  files.rs  search.rs  get_file.rs  …   (plain fns over
-                 db / file store / client handles — no Tauri types)
+  core/          mod.rs  files.rs  mirror/  search.rs  get_file.rs  …  (plain
+                 fns over db / file store / client handles — no Tauri types)
+  mirror_worker.rs  the mirror's loop; owns no logic, only timing and events
   commands.rs    thin adapters; the only layer that knows about AppState
 ```
 
@@ -698,7 +729,7 @@ Keep every existing suite, including `dashboard-consistency` and `courses`. Add:
 - **Only Today has been drawn.** The Calm artboards cover Today in light and dark. Calendar, Library, History, Settings, Login and the system states are specified here from the existing structure in PROJECT.md, with wireframes, and have not had visual comps yet. Worth drawing before phases 3 to 5.
 - **Library as pages, not inline expansion.** This is a deliberate change from the current `aria-expanded` course expansion. Confirm with the product owner.
 - **Viewing does not mark read.** Opening the file or pressing R does. Confirm this matches the intended meaning of the unread flag.
-- **Sync interval options** and the per-category notification list are taken from the structure described in PROJECT.md. The developer should confirm the exact values against `settings.rs` and `notify.rs`.
+- **Sync interval options** are taken from the limits in `settings.rs`, and the per-category notification list from the six Switches the Settings UI ships. Both were checked against the code in Phase 9.
 - **Calendar dots** are distinguished by colour plus the legend and cell labels. If testing shows this is not enough, add shape variation (circle, square, ring).
 - **Windows title bar** stays native. A custom caption-button bar is out of scope.
 - **Fonts** are SIL Open Font License and bundled, so offline use and distribution are fine.

@@ -316,6 +316,9 @@ async fn finalize_session(app: &AppHandle, session: SessionInfo) -> Result<AuthS
         let conn = state.conn();
         let _ = db::set_kv(&conn, "current_email", &session.email);
         state.set_client(Some(client));
+        // Anything that parked itself waiting for a session resumes now, and
+        // the pending downloads are re-validated against this session.
+        state.mirror.session_restored();
         state.sync.set_auth_state("authenticated");
         *state.sync.last_error.lock().unwrap() = None;
     }

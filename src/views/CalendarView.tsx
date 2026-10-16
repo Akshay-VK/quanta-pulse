@@ -33,6 +33,7 @@ import { eventLinks, primaryUrl } from "../lib/open";
 import type { ChangeEvent, Course, Digest } from "../lib/types";
 import PageHeader from "../components/PageHeader";
 import ResourceRow from "../components/ResourceRow";
+import { useMirror } from "../hooks/useMirror";
 import StatBlock from "../components/StatBlock";
 import { Banner } from "../components/ui/Banner";
 import { Button } from "../components/ui/Button";
@@ -44,6 +45,7 @@ import type { StatusKind } from "../components/ui/StatusTag";
 export interface CalendarViewProps {
   courses: Course[];
   onOpen: (url: string) => void;
+  onOpenLocal?: (resourceId: number) => void;
   onOpenScan: () => void;
   /** Opens a course page from a row's course pill. */
   onOpenCourse?: (courseId: number) => void;
@@ -105,7 +107,14 @@ function dayAriaLabel(key: string, events: ChangeEvent[]): string {
   return `${longDayLabel(key)}, ${parts.length > 0 ? parts.join(", ") : "no activity"}`;
 }
 
-export default function CalendarView({ courses, onOpen, onOpenScan, onOpenCourse }: CalendarViewProps) {
+export default function CalendarView({
+  courses,
+  onOpen,
+  onOpenLocal,
+  onOpenScan,
+  onOpenCourse,
+}: CalendarViewProps) {
+  const mirror = useMirror();
   const [{ cursor, selected }, setView] = useState<ViewState>(initialView);
   const [monthEvents, setMonthEvents] = useState<ChangeEvent[] | null>(null);
   const [digest, setDigest] = useState<Digest | null>(null);
@@ -409,6 +418,14 @@ export default function CalendarView({ courses, onOpen, onOpenScan, onOpenCourse
                       openLabel={openLabel(e.changeType)}
                       showOpen={Boolean(primary)}
                       density="compact"
+                      local={
+                        e.resourceId == null ? undefined : mirror?.statusOf(e.resourceId)
+                      }
+                      onOpenLocal={
+                        e.resourceId != null && onOpenLocal
+                          ? () => onOpenLocal(e.resourceId as number)
+                          : undefined
+                      }
                       onSelect={noop}
                       onOpen={primary ? () => onOpen(primary) : undefined}
                       menu={[

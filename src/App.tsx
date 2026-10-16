@@ -24,6 +24,8 @@ import SettingsView from "./views/SettingsView";
 import { api } from "./lib/api";
 import { useTheme } from "./hooks/useTheme";
 import { useHotkey } from "./hooks/useHotkey";
+import { MirrorProvider, useMirror } from "./hooks/useMirror";
+import { isLocal } from "./lib/mirrorState";
 import { useMediaQuery } from "./hooks/useMediaQuery";
 import { resolveView, NAV, type ViewId } from "./lib/nav";
 import { cx } from "./lib/cx";
@@ -36,6 +38,7 @@ import type {
   ChangeEvent,
   Course,
   DbInfo,
+  LocalFile,
   Resource,
   ScanRun,
   Settings,
@@ -90,6 +93,8 @@ export default function App() {
   const [showLogin, setShowLogin] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [peekResource, setPeekResource] = useState<Resource | null>(null);
+  const [peekLocal, setPeekLocal] = useState<LocalFile | null>(null);
+  const mirror = useMirror();
   const [previewResource, setPreviewResource] = useState<Resource | null>(null);
   const lastRow = useRef<HTMLElement | null>(null);
 
@@ -390,7 +395,51 @@ export default function App() {
   const openPeek = useCallback((resource: Resource) => {
     lastRow.current = document.activeElement as HTMLElement | null;
     setPeekResource(resource);
+    setPeekLocal(null);
+    void api
+      .mirrorLocalFile(resource.id)
+      .then(setPeekLocal)
+      .catch(() => setPeekLocal(null));
   }, []);
+
+  /** Opens the local copy, downloading it first when it is not on disk. */
+  const openLocal = useCallback(
+    async (resourceId: number) => {
+      try {
+        await api.openLocalFile(resourceId);
+      } catch (err) {
+        notify(String(err), true);
+      }
+    },
+    [notify],
+  );
+
+  /** Download on demand (P0) and tell the user what happened. */
+  const ensureLocal = useCallback(
+    async (resourceId: number) => {
+      try {
+        await api.ensureLocal(resourceId);
+        notify("Saved to this computer.");
+      } catch (err) {
+        notify(String(err), true);
+      }
+    },
+    [notify],
+  );
+
+  const copyLocalPath = useCallback(
+    (path: string | null | undefined) => {
+      if (!path) {
+        notify("No local copy yet.", true);
+        return;
+      }
+      void navigator.clipboard?.writeText(path).then(
+        () => notify("Path copied."),
+        () => notify("Could not copy the path.", true),
+      );
+    },
+    [notify],
+  );
 
   const closePeek = useCallback(() => {
     setPeekResource(null);
@@ -411,6 +460,10 @@ export default function App() {
       statusTag = { kind: "new", label: "New" };
     }
     const previewable = canPreview(peekResource.resourceType, peekResource.url);
+    const local = peekLocal && peekLocal.resourceId === peekResource.id ? peekLocal : null;
+    const localStatus = peekResource.isExternal
+      ? undefined
+      : mirror?.statusOf(peekResource.id) ?? null;
     return {
       statusTag,
       title: peekResource.title,
@@ -419,7 +472,25 @@ export default function App() {
         peekResource.availabilityStatus !== "available"
           ? "Missing for 2 scans in a row. It may come back."
           : null,
-      primaryAction: { label: "Open file", onClick: () => void open(peekResource.url) },
+      primaryAction:
+        localStatus && isLocal(localStatus)
+          ? { label: "Open local copy", onClick: () => void openLocal(peekResource.id) }
+          : { label: "Open file", onClick: () => void open(peekResource.url) },
+      local:
+        localStatus === undefined
+          ? undefined
+          : {
+              status: localStatus?.status ?? "queued",
+              error: localStatus?.error ?? null,
+              sizeBytes: local?.sizeBytes ?? null,
+              path: local?.path ?? null,
+            },
+      onOpenLocal: () => void openLocal(peekResource.id),
+      onRevealLocal: () =>
+        void api.revealLocalFile(peekResource.id).catch((err) => notify(String(err), true)),
+      onCopyLocalPath: () => void copyLocalPath(local?.path),
+      onDownloadNow: () => void ensureLocal(peekResource.id),
+      onRedownload: () => void ensureLocal(peekResource.id),
       secondaryAction: previewable
         ? { label: "Preview", onClick: () => setPreviewResource(peekResource) }
         : null,
@@ -448,7 +519,7 @@ export default function App() {
         },
       ],
     };
-  }, [peekResource, eventKinds, unreadIds, open, toggleResourceRead]);
+  }, [peekResource, peekLocal, mirror, eventKinds, unreadIds, open, openLocal, notify, toggleResourceRead]);
 
   const paletteActions: PaletteAction[] = useMemo(
     () => [
@@ -536,7 +607,8 @@ export default function App() {
     : { items: [], current: currentLabel };
 
   return (
-    <TooltipProvider>
+    <MirrorProvider>
+      <TooltipProvider>
       <div className={cx("app", collapsed && "rail", drawerOpen && "drawer-open")}>
         {narrow && drawerOpen && (
           <div
@@ -603,6 +675,7 @@ export default function App() {
                   selectedId={peekResource?.id ?? null}
                   onSelect={openPeek}
                   onOpen={(url) => void open(url)}
+                  onOpenLocal={(resourceId) => void openLocal(resourceId)}
                   onPreview={setPreviewResource}
                   onToggleRead={(resource) => void toggleResourceRead(resource)}
                   onMarkAllRead={() => void markAllRead()}
@@ -615,6 +688,7 @@ export default function App() {
                 <CalendarView
                   courses={courses}
                   onOpen={(url) => void open(url)}
+                  onOpenLocal={(resourceId) => void openLocal(resourceId)}
                   onOpenScan={() => navigate("history")}
                   onOpenCourse={navigateToCourse}
                 />
@@ -638,6 +712,7 @@ export default function App() {
                   scans={scans}
                   events={historyEvents}
                   onOpen={(url) => void open(url)}
+                  onOpenLocal={(resourceId) => void openLocal(resourceId)}
                   onMarkAllRead={markHistoryRead}
                   onClearAll={clearHistoryActivity}
                   onSyncNow={() => void handleSync()}
@@ -686,6 +761,7 @@ export default function App() {
 
         <Toaster toasts={toasts} onDismiss={dismissToast} />
       </div>
-    </TooltipProvider>
+      </TooltipProvider>
+    </MirrorProvider>
   );
 }

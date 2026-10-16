@@ -6,10 +6,10 @@
 
   .resource-row {
     display: grid;
-    /* selectable region | course pill + status | time | actions. Every track
-       that holds text can shrink, so a long title ellipsises instead of pushing
-       the other columns into each other. */
-    grid-template-columns: minmax(0, 1fr) auto auto auto;
+    /* selectable region | course pill + status | mirror icon | time | actions.
+       Every track that holds text can shrink, so a long title ellipsises
+       instead of pushing the other columns into each other. */
+    grid-template-columns: minmax(0, 1fr) auto auto auto auto;
     align-items: center;
     column-gap: var(--sp-3);
     min-width: 0;
@@ -63,7 +63,7 @@
   }
 
   .row-time {
-    grid-column: 3;
+    grid-column: 4;
     flex: 0 0 auto;
     font: 13px/18px var(--type-small);
     color: var(--muted);
@@ -71,7 +71,7 @@
   }
 
   .row-actions {
-    grid-column: 4;
+    grid-column: 5;
     flex: 0 0 auto;
     display: flex;
     align-items: center;
@@ -101,11 +101,53 @@
     flex: 0 0 auto;
   }
 
+  /* Mirror state marker, before the time: saved, downloading, queued, failed
+     or kept. Never shrinks, never wraps. */
+  .row-mirror {
+    grid-column: 3;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .mirror-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    color: var(--muted);
+  }
+
+  .mirror-icon svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .mirror-ok { color: var(--ok, var(--muted)); }
+  .mirror-muted { color: var(--muted); }
+  .mirror-warn { color: var(--warn, var(--muted)); }
+  .mirror-bad { color: var(--t-red-fg); }
+  .mirror-busy { color: var(--muted); }
+
+  .mirror-spin {
+    animation: mirror-spin 1.1s linear infinite;
+  }
+
+  @keyframes mirror-spin {
+    to { transform: rotate(360deg); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .mirror-spin { animation: none; }
+  }
+
   /* Two lines for narrow containers (the Calendar day panel and any row
      measured under 560px): title on line 1, pill, tag and time on line 2,
      aligned under the title. */
   .resource-row.row-compact {
-    grid-template-columns: 7px 16px minmax(0, 1fr) auto;
+    grid-template-columns: 7px 16px minmax(0, 1fr) auto auto;
     row-gap: var(--sp-1);
     padding-top: var(--sp-2);
     padding-bottom: var(--sp-2);
@@ -117,7 +159,7 @@
   }
 
   .row-compact .row-actions {
-    grid-column: 4;
+    grid-column: 5;
     grid-row: 1;
   }
 
@@ -127,8 +169,13 @@
     min-width: 0;
   }
 
-  .row-compact .row-time {
+  .row-compact .row-mirror {
     grid-column: 4;
+    grid-row: 2;
+  }
+
+  .row-compact .row-time {
+    grid-column: 5;
     grid-row: 2;
     justify-self: end;
   }
@@ -733,5 +780,108 @@
     height: 6px;
     border-radius: var(--radius-pill);
     background: currentColor;
+  }
+
+  /* ---------------------------------------------------------- Downloads popover */
+
+  .downloads-popover {
+    min-width: 280px;
+    max-width: 360px;
+  }
+
+  .popover-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--sp-3);
+  }
+
+  .popover-header h3 {
+    font: 500 14px/20px var(--type-ui-strong);
+    margin: 0;
+  }
+
+  .popover-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--sp-2) var(--sp-4);
+    margin-bottom: var(--sp-3);
+  }
+
+  .stat-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font: 13px/18px var(--type-small);
+  }
+
+  .stat-label {
+    color: var(--muted);
+  }
+
+  .stat-value {
+    font-family: var(--type-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .stat-bad {
+    color: var(--t-red-fg);
+  }
+
+  .popover-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: var(--sp-3);
+  }
+
+  .popover-failed {
+    border-top: 1px solid var(--line);
+    padding-top: var(--sp-3);
+  }
+
+  .failed-toggle {
+    width: 100%;
+    justify-content: space-between;
+    text-align: left;
+    color: var(--t-red-fg);
+  }
+
+  .failed-list {
+    margin-top: var(--sp-2);
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+  }
+
+  .failed-note {
+    font: 12px/16px var(--type-caption);
+    color: var(--muted);
+    margin: 0;
+  }
+
+  .retry-all {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* Sync status second line */
+  .sync-copy.sync-downloading {
+    display: block;
+    font: 12px/16px var(--type-caption);
+    color: var(--muted);
+    margin-top: 1px;
+  }
+
+  .sync-copy.sync-downloading .sync-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: sync-pulse 1.4s ease-in-out infinite;
+  }
+
+  @keyframes sync-pulse {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
   }
 }

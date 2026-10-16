@@ -11,3 +11,4 @@
 //! to write back.
 
 pub mod files;
+pub mod mirror;

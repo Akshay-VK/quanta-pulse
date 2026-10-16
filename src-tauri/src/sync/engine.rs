@@ -368,6 +368,20 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
         if let Err(e) = db::bump_miss_streak(&conn, &missing_ids, MISS_THRESHOLD) {
             outcome.errors.push(format!("miss tracking failed: {e}"));
         }
+        // A resource Quanta keeps hiding keeps whatever it has, labelled: the
+        // local copy is exactly what should outlive the listing.
+        let _ = state.mirror.mark_unavailable_kept(&conn);
+    }
+
+    // Hand the scan's findings to the mirror. Only when the scan completed:
+    // a cancelled half-scan must not push the backfill ahead of a full one.
+    if !discovery.cancelled {
+        let state = app.state::<AppState>();
+        let conn = state.conn();
+        let queued = state.mirror.enqueue_all(&conn);
+        if queued > 0 {
+            tracing::info!(queued, "scan enqueued for the local mirror");
+        }
     }
 
     // Persist the baseline marker after a successful, complete first scan.

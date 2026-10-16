@@ -8,6 +8,7 @@ use rusqlite::Connection;
 use tauri::{AppHandle, Manager};
 
 use crate::core::files::FileStore;
+use crate::core::mirror::{Mirror, MirrorConfig, MirrorCtx};
 use crate::db;
 use crate::models::SyncStatus;
 use crate::quanta::client::QuantaClient;
@@ -83,6 +84,8 @@ pub struct AppState {
     pub db_path: PathBuf,
     /// Local cache of downloaded resource bytes, beside the database.
     pub files: FileStore,
+    /// The permanent local mirror. Never evicts, never deletes.
+    pub mirror: Arc<Mirror>,
     pub client: Mutex<Option<Arc<QuantaClient>>>,
     pub settings: Mutex<Settings>,
     pub sync: Arc<SyncControl>,
@@ -100,10 +103,21 @@ impl AppState {
         let conn = db::open(&db_path).map_err(|e| format!("cannot open database: {e}"))?;
         let settings = db::load_settings(&conn);
 
+        // The mirror root: an explicit setting, or a predictable place under
+        // the user's Documents folder, next to nothing important.
+        let default_root = Mirror::default_root(app.path().document_dir().ok(), &dir);
+        let mirror = Mirror::new(default_root.clone(), MirrorConfig::from_settings(&settings));
+        if std::fs::create_dir_all(&default_root).is_err() {
+            // A mirror root that cannot be created is reported at download time.
+            tracing::warn!("mirror root is not writable: {}", default_root.display());
+        }
+        mirror.apply_settings(&settings);
+
         Ok(AppState {
             conn: Mutex::new(conn),
             db_path,
             files: FileStore::new(&dir),
+            mirror,
             client: Mutex::new(None),
             settings: Mutex::new(settings),
             sync: Arc::new(SyncControl::default()),
@@ -112,6 +126,15 @@ impl AppState {
 
     pub fn conn(&self) -> MutexGuard<'_, Connection> {
         self.conn.lock().unwrap()
+    }
+
+    /// The handles the mirror needs for one operation. The connection reference
+    /// is a borrow, never a guard: nothing here holds it across a `.await`.
+    pub fn mirror_ctx(&self) -> MirrorCtx<'_> {
+        MirrorCtx {
+            conn: &self.conn,
+            client: self.client(),
+        }
     }
 
     pub fn settings(&self) -> Settings {
@@ -124,6 +147,7 @@ impl AppState {
             let conn = self.conn();
             db::save_settings(&conn, &settings).map_err(|e| e.to_string())?;
         }
+        self.mirror.apply_settings(&settings);
         *self.settings.lock().unwrap() = settings;
         Ok(())
     }

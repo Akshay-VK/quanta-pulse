@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMirror } from "../../hooks/useMirror";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   ExternalLink,
@@ -244,6 +245,9 @@ export default function CoursePage({
     walk(tree);
     return ids;
   }, [tree]);
+
+  // Local mirror stats for this course (derived from the global mirror).
+  const mirror = useMirror();
 
   const setAllExpanded = (expand: boolean) => {
     const next = new Set(expand ? allFolderIds() : []);
@@ -582,6 +586,17 @@ export default function CoursePage({
           ·
         </span>
         <span className="stat-strip-item">{paused ? "Paused" : "Monitoring"}</span>
+        {mirror?.stats && (
+          <>
+            <span className="stat-strip-sep" aria-hidden="true">
+              ·
+            </span>
+            <span className="stat-strip-item">
+              Saved <span className="mono">{mirror.stats.done.toLocaleString()}</span> of{" "}
+              <span className="mono">{mirror.stats.totalResources.toLocaleString()}</span>
+            </span>
+          </>
+        )}
       </div>
 
       <div className="history-tabs">
@@ -661,7 +676,17 @@ export default function CoursePage({
                 Clear filters
               </Button>
             )}
-            <span className="course-page-expand">
+              {mirror?.stats && mirror.stats.done < mirror.stats.totalResources && (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => void mirror.startBackfill()}
+                  disabled={mirror.stats.state === "running" || mirror.stats.state === "paused"}
+                >
+                  Download all
+                </Button>
+              )}
+              <span className="course-page-expand">
               {expanded.size > 0 ? (
                 <Button variant="ghost" size="sm" onClick={() => setAllExpanded(false)}>
                   <FolderTree aria-hidden="true" />

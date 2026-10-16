@@ -101,6 +101,7 @@ async function render(
           selectedId={null}
           onSelect={handlers.onSelect ?? (() => {})}
           onOpen={() => {}}
+          onOpenLocal={() => {}}
           onPreview={() => {}}
           onToggleRead={() => {}}
           onMarkAllRead={() => {}}

@@ -5,7 +5,21 @@ import { IconButton } from "./ui/IconButton";
 import { Menu, type MenuItemSpec } from "./ui/Menu";
 import { StatusTag, type StatusKind } from "./ui/StatusTag";
 import PropertyList from "./PropertyList";
+import { formatBytes } from "../lib/format";
+import { MIRROR_STATUS, isLocal } from "../lib/mirrorState";
 import type { DetailProperty } from "../lib/details";
+
+/** Mirror state of the resource in the panel, for the 'Local copy' group. */
+export interface PeekLocal {
+  status: string;
+  error: string | null;
+  sizeBytes: number | null;
+  path: string | null;
+}
+
+function localStatusLabel(local: PeekLocal): string {
+  return MIRROR_STATUS[local.status as keyof typeof MIRROR_STATUS]?.label ?? local.status;
+}
 
 export interface PeekDetails {
   statusTag?: { kind: StatusKind; label: string } | null;
@@ -14,6 +28,13 @@ export interface PeekDetails {
   note?: string | null;
   primaryAction?: { label: string; onClick: () => void } | null;
   secondaryAction?: { label: string; onClick: () => void } | null;
+  /** The mirror state of this resource, when it can have a local copy. */
+  local?: PeekLocal | null;
+  onOpenLocal?: () => void;
+  onRevealLocal?: () => void;
+  onCopyLocalPath?: () => void;
+  onDownloadNow?: () => void;
+  onRedownload?: () => void;
   menu?: MenuItemSpec[];
 }
 
@@ -39,6 +60,17 @@ export default function PeekPanel({
 
   if (!open || !details) return null;
 
+  const local = details.local ?? null;
+  const saved = isLocal(local);
+  const localPrimary = saved
+    ? { label: "Open local copy", onClick: details.onOpenLocal ?? (() => {}) }
+    : null;
+  const localActionLabel = local
+    ? local.status === "kept" || saved
+      ? null
+      : "Download now"
+    : null;
+
   return (
     <aside className="peek open" aria-label="Details">
       <div className="peek-inner peek-enter">
@@ -58,6 +90,52 @@ export default function PeekPanel({
         </h2>
 
         <PropertyList className="peek-properties" properties={details.properties} />
+
+        {details.local && (
+          <>
+            <h3 className="peek-group-title">Local copy</h3>
+            <PropertyList
+              className="peek-properties"
+              properties={[
+                { label: "Status", value: localStatusLabel(details.local) },
+                ...(details.local.sizeBytes != null
+                  ? [{ label: "Size", value: formatBytes(details.local.sizeBytes) }]
+                  : []),
+                ...(details.local.path
+                  ? [{ label: "Path", value: details.local.path, mono: true, copy: details.local.path }]
+                  : []),
+                ...(details.local.error ? [{ label: "Why", value: details.local.error }] : []),
+              ]}
+            />
+            <div className="peek-local-actions">
+              {localPrimary && (
+                <Button variant="secondary" size="sm" onClick={localPrimary.onClick}>
+                  {localPrimary.label}
+                </Button>
+              )}
+              {details.onRevealLocal && (
+                <Button variant="secondary" size="sm" onClick={details.onRevealLocal}>
+                  Show in folder
+                </Button>
+              )}
+              {details.onCopyLocalPath && details.local.path && (
+                <Button variant="secondary" size="sm" onClick={details.onCopyLocalPath}>
+                  Copy path
+                </Button>
+              )}
+              {(details.onDownloadNow || details.onRedownload) &&
+                localActionLabel && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={details.onRedownload ?? details.onDownloadNow}
+                  >
+                    {localActionLabel}
+                  </Button>
+                )}
+            </div>
+          </>
+        )}
 
         {details.note && <p className="peek-note">{details.note}</p>}
 

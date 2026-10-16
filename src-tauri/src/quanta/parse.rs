@@ -876,7 +876,7 @@ fn has_block_descendant(el: &ElementRef) -> bool {
     el.select(&S_READABLE_BLOCK).any(|d| d.id() != el.id())
 }
 
-fn select_content_root(doc: &Html) -> Option<ElementRef<'_>> {
+pub(crate) fn select_content_root(doc: &Html) -> Option<ElementRef<'_>> {
     for css in [
         "#region-main",
         ".course-content",

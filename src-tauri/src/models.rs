@@ -215,3 +215,51 @@ pub struct CacheStats {
     pub total_bytes: i64,
     pub limit_bytes: u64,
 }
+
+/// One resource's permanent local copy, resolved to an absolute path.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalFile {
+    pub resource_id: i64,
+    /// Path relative to the mirror root, exactly as stored at write time.
+    pub rel_path: String,
+    pub path: String,
+    pub size_bytes: i64,
+    pub mime: Option<String>,
+    pub sha256: Option<String>,
+    /// queued | downloading | ok | failed | skipped | kept
+    pub status: String,
+    pub error: Option<String>,
+}
+
+/// One resource's mirror state, for row status icons. No path: the UI asks for
+/// the path only when the user acts on a file it knows is local.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalFileStatus {
+    pub resource_id: i64,
+    /// queued | downloading | ok | failed | skipped | kept
+    pub status: String,
+    pub error: Option<String>,
+}
+
+/// Mirror occupancy and queue state, for Settings > Files and the sidebar.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MirrorStats {
+    pub queued: i64,
+    pub downloading: i64,
+    pub done: i64,
+    pub failed: i64,
+    pub skipped: i64,
+    /// Local copies Quanta no longer serves. Never deleted automatically.
+    pub kept: i64,
+    /// Resources that can have a local copy at all.
+    pub total_resources: i64,
+    pub bytes_done: i64,
+    pub bytes_total: i64,
+    /// idle | running | paused | low_disk | waiting_for_sign_in
+    pub state: String,
+    pub root: String,
+    pub free_bytes: u64,
+}

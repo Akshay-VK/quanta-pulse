@@ -34,9 +34,36 @@ vi.mock("../src/lib/api", () => ({
     rebuildBaseline: vi.fn().mockResolvedValue(undefined),
     cacheStats: vi.fn().mockResolvedValue({ fileCount: 0, totalBytes: 0, limitBytes: 2147483648 }),
     clearFileCache: vi.fn().mockResolvedValue({ fileCount: 0, totalBytes: 0, limitBytes: 2147483648 }),
+    mirrorStats: vi.fn().mockResolvedValue({
+      queued: 0,
+      downloading: 0,
+      done: 0,
+      failed: 0,
+      skipped: 0,
+      kept: 0,
+      totalResources: 0,
+      bytesDone: 0,
+      bytesTotal: 0,
+      state: "idle",
+      root: "",
+      freeBytes: 0,
+    }),
+    mirrorStartBackfill: vi.fn().mockResolvedValue({}),
+    mirrorPause: vi.fn().mockResolvedValue({}),
+    mirrorResume: vi.fn().mockResolvedValue({}),
+    mirrorRetryFailed: vi.fn().mockResolvedValue({}),
+    mirrorVerifyFiles: vi.fn().mockResolvedValue({}),
+    mirrorDeleteAll: vi.fn().mockResolvedValue({}),
+    mirrorLocalFiles: vi.fn().mockResolvedValue([]),
+    pickMirrorRoot: vi.fn().mockResolvedValue({}),
+    openLocalFile: vi.fn().mockResolvedValue(undefined),
+    revealLocalFile: vi.fn().mockResolvedValue(undefined),
+    ensureLocal: vi.fn().mockResolvedValue({}),
+    openAppFolder: vi.fn().mockResolvedValue(undefined),
+    mirrorMoveFiles: vi.fn().mockResolvedValue({}),
+    mirrorLocalFile: vi.fn().mockResolvedValue(null),
   },
 }));
-
 import TodayView from "../src/views/TodayView";
 import CalendarView from "../src/views/CalendarView";
 import LibraryView from "../src/views/LibraryView";
@@ -124,6 +151,11 @@ const SETTINGS: Settings = {
   deadlineReminderHours: 48,
   timezone: "Asia/Kolkata",
   cacheLimitBytes: 2 * 1024 * 1024 * 1024,
+  mirrorEnabled: true,
+  mirrorRoot: null,
+  mirrorMaxBytes: 500 * 1024 * 1024,
+  mirrorMinFreeBytes: 5 * 1024 * 1024 * 1024,
+  mirrorKeepVersions: 3,
   maxCourses: 20,
   maxResourcesPerCourse: 500,
   maxDetailFetches: 40,
@@ -204,6 +236,7 @@ const SCENARIOS: Scenario[] = [
         selectedId={null}
         onSelect={noop}
         onOpen={noop}
+        onOpenLocal={noop}
         onPreview={noop}
         onToggleRead={noop}
         onMarkAllRead={noop}

@@ -286,8 +286,10 @@ and 620px (rows wrap, title/time full width). Reduced-motion is honoured.
 | `lib.rs` | `run()`: builds the app, plugins, the authoritative `invoke_handler` command list, setup, window-close → background behavior, exit cleanup |
 | `commands.rs` | Every Tauri command; a thin adapter that delegates to `core/` or a focused module |
 | `core/` | Transport-agnostic domain logic — plain functions over a `Connection`, the file store and the client. Tauri commands (and a future HTTP or MCP server) are adapters over this, so logic never lives in a handler |
-| `core/files.rs` | `FileStore`: the on-demand byte cache under `files/<resource_id>/<sha256>`, with LRU eviction and the `file_cache` index |
-| `state.rs` | `AppState`: shared SQLite connection, file store, settings, HTTP client, sync status, preview lease — all behind locks |
+| `core/files.rs` | `FileStore`: the on-demand byte cache under `files/<resource_id>/<sha256>`, with LRU eviction and the `file_cache` index. Evictable by design |
+| `core/mirror.rs` | The permanent mirror: `local_files` / `local_file_versions` / `download_queue`, the download pipeline, `.history` versioning, `ensure_local`. Never evicts, never deletes. Text pages become Markdown snapshots |
+| `mirror_worker.rs` | The mirror's loop: drains the queue a few items at a time, then waits; forwards `mirror:progress` / `mirror:file` to the webview |
+| `state.rs` | `AppState`: shared SQLite connection, file store, mirror, settings, HTTP client, sync status, preview lease — all behind locks |
 | `auth.rs` | Password login and SSO (SAML2), session restore/refresh/restart, logout |
 | `settings.rs` | Settings model, validation (`sanitize`, `is_valid_hhmm`), quiet hours |
 | `models.rs` | Serde models with `rename_all = "camelCase"` |

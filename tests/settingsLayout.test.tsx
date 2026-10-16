@@ -19,6 +19,29 @@ vi.mock("../src/lib/api", () => ({
     testNotification: vi.fn().mockResolvedValue(undefined),
     openNotificationSettings: vi.fn().mockResolvedValue(undefined),
     rebuildBaseline: vi.fn().mockResolvedValue(undefined),
+    mirrorStats: vi.fn().mockResolvedValue({
+      queued: 0,
+      downloading: 0,
+      done: 0,
+      failed: 0,
+      skipped: 0,
+      kept: 0,
+      totalResources: 0,
+      bytesDone: 0,
+      bytesTotal: 0,
+      state: "idle",
+      root: "",
+      freeBytes: 0,
+    }),
+    mirrorStartBackfill: vi.fn().mockResolvedValue(undefined),
+    mirrorPause: vi.fn().mockResolvedValue(undefined),
+    mirrorResume: vi.fn().mockResolvedValue(undefined),
+    mirrorRetryFailed: vi.fn().mockResolvedValue(undefined),
+    mirrorVerifyFiles: vi.fn().mockResolvedValue(undefined),
+    mirrorDeleteAll: vi.fn().mockResolvedValue(undefined),
+    pickMirrorRoot: vi.fn().mockResolvedValue(null),
+    mirrorMoveFiles: vi.fn().mockResolvedValue(undefined),
+    openAppFolder: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
@@ -64,6 +87,11 @@ const SETTINGS: Settings = {
   deadlineReminderHours: 48,
   timezone: "Asia/Kolkata",
   cacheLimitBytes: 2 * 1024 * 1024 * 1024,
+  mirrorEnabled: true,
+  mirrorRoot: null,
+  mirrorMaxBytes: 500 * 1024 * 1024,
+  mirrorMinFreeBytes: 5 * 1024 * 1024 * 1024,
+  mirrorKeepVersions: 3,
   maxCourses: 20,
   maxResourcesPerCourse: 500,
   maxDetailFetches: 40,
@@ -118,8 +146,15 @@ describe("Settings structure", () => {
   it("lists one nav item per section, in spec order", async () => {
     await render();
     const labels = [...container.querySelectorAll(".settings-link")].map((el) => el.textContent);
-    expect(labels).toEqual(["Appearance", "Account", "Notifications", "Monitoring", "Data"]);
-    expect(container.querySelectorAll(".settings-section")).toHaveLength(5);
+    expect(labels).toEqual([
+      "Appearance",
+      "Account",
+      "Notifications",
+      "Monitoring",
+      "Files",
+      "Data",
+    ]);
+    expect(container.querySelectorAll(".settings-section")).toHaveLength(6);
     // The first section is the one highlighted on load.
     expect(container.querySelector(".settings-link[aria-current='true']")?.textContent).toBe(
       "Appearance",

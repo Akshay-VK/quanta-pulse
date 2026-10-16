@@ -16,7 +16,7 @@ export default function PropertyList({
         <div className="prop-row" key={prop.label}>
           <dt className="prop-label">{prop.label}</dt>
           <dd className="prop-value">
-            <span>{prop.value}</span>
+            <span className={prop.mono ? "mono" : undefined}>{prop.value}</span>
             {prop.copy && (
               <IconButton
                 label={`Copy ${prop.label.toLowerCase()}`}

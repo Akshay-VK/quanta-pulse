@@ -1,9 +1,12 @@
 import { ExternalLink, Eye, MoreHorizontal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { cx } from "../lib/cx";
+import { isLocal, mirrorTip } from "../lib/mirrorState";
+import type { LocalFileStatus } from "../lib/types";
 import { CoursePill } from "./ui/CoursePill";
 import { FileTypeIcon } from "./ui/FileTypeIcon";
 import { IconButton } from "./ui/IconButton";
+import { MirrorStatusIcon } from "./ui/MirrorStatusIcon";
 import { Menu, type MenuItemSpec } from "./ui/Menu";
 import { StatusTag, type StatusKind } from "./ui/StatusTag";
 import { UnreadDot } from "./ui/UnreadDot";
@@ -63,6 +66,8 @@ export default function ResourceRow({
   showOpen = true,
   previewAvailable = false,
   density = "comfortable",
+  local,
+  onOpenLocal,
   onSelect,
   onOpen,
   onPreview,
@@ -83,6 +88,14 @@ export default function ResourceRow({
   showOpen?: boolean;
   previewAvailable?: boolean;
   density?: RowDensity;
+  /**
+   * Mirror state of this resource: a status row, null when there is no local
+   * copy yet, or undefined when the resource cannot have one (an external
+   * link). Drives the status icon and the open/download label.
+   */
+  local?: LocalFileStatus | null;
+  /** Opens the local copy through the Shell ('Open local copy'). */
+  onOpenLocal?: () => void;
   onSelect: () => void;
   onOpen?: () => void;
   onPreview?: () => void;
@@ -92,6 +105,10 @@ export default function ResourceRow({
 }) {
   const { ref, narrow } = useAutoCompact();
   const compact = density === "compact" || narrow;
+  const saved = isLocal(local);
+  // With a local copy the primary action opens it; without one it downloads
+  // first and then opens.
+  const resolvedOpenLabel = local === undefined ? openLabel : saved ? openLabel : "Download and open";
 
   return (
     <div
@@ -135,6 +152,12 @@ export default function ResourceRow({
         </span>
       )}
 
+      {local && (
+        <span className="row-mirror" title={mirrorTip(local) ?? undefined}>
+          <MirrorStatusIcon file={local} />
+        </span>
+      )}
+
       <span className="row-time">{timeLabel}</span>
 
       <span className="row-actions">
@@ -143,8 +166,12 @@ export default function ResourceRow({
             <Eye aria-hidden="true" />
           </IconButton>
         )}
-        {showOpen && onOpen && (
-          <IconButton label={openLabel} size={28} onClick={onOpen}>
+        {showOpen && (saved ? onOpenLocal : onOpen) && (
+          <IconButton
+            label={saved ? "Open local copy" : resolvedOpenLabel}
+            size={28}
+            onClick={() => (saved ? onOpenLocal?.() : onOpen?.())}
+          >
             <ExternalLink aria-hidden="true" />
           </IconButton>
         )}

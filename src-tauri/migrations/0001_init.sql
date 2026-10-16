@@ -95,6 +95,52 @@ CREATE TABLE IF NOT EXISTS file_cache (
   PRIMARY KEY (resource_id, content_hash)
 );
 
+-- Permanent local mirror of every file and page Quanta serves, laid out for a
+-- human to browse: <mirror root>/<course display name>/<section path>/<file>.
+--
+-- This is deliberately NOT file_cache. The preview cache is an LRU that evicts;
+-- the mirror never evicts and never deletes: a resource that disappears from
+-- Quanta keeps its local copy with status 'kept', and only an explicit user
+-- action removes anything. Mirroring is not a content change, so it never
+-- writes a change_events row and the baseline-scan rule is untouched.
+--
+-- status is one of queued | downloading | ok | failed | skipped | kept.
+CREATE TABLE IF NOT EXISTS local_files (
+  resource_id     INTEGER PRIMARY KEY REFERENCES resources(id) ON DELETE CASCADE,
+  rel_path        TEXT    NOT NULL,
+  sha256          TEXT,
+  size_bytes      INTEGER NOT NULL DEFAULT 0,
+  mime            TEXT,
+  status          TEXT    NOT NULL,
+  error           TEXT,
+  attempts        INTEGER NOT NULL DEFAULT 0,
+  source_etag     TEXT,
+  source_modified TEXT,
+  downloaded_at   TEXT,
+  last_checked    TEXT
+);
+
+-- Superseded copies, moved to <root>/.history/<resource_id>/<stamp>_<name>.
+CREATE TABLE IF NOT EXISTS local_file_versions (
+  resource_id INTEGER NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
+  rel_path    TEXT    NOT NULL,
+  sha256      TEXT,
+  size_bytes  INTEGER NOT NULL,
+  replaced_at TEXT    NOT NULL
+);
+
+-- The work list survives a restart, so an interrupted backfill resumes.
+CREATE TABLE IF NOT EXISTS download_queue (
+  resource_id INTEGER PRIMARY KEY REFERENCES resources(id) ON DELETE CASCADE,
+  priority    INTEGER NOT NULL,
+  enqueued_at TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_local_files_status     ON local_files(status);
+CREATE INDEX IF NOT EXISTS idx_local_files_checked    ON local_files(last_checked);
+CREATE INDEX IF NOT EXISTS idx_versions_resource      ON local_file_versions(resource_id, replaced_at DESC);
+CREATE INDEX IF NOT EXISTS idx_download_queue_order   ON download_queue(priority, enqueued_at);
+
 CREATE INDEX IF NOT EXISTS idx_resources_course   ON resources(course_id);
 CREATE INDEX IF NOT EXISTS idx_file_cache_last_used ON file_cache(last_used_at);
 CREATE INDEX IF NOT EXISTS idx_resources_avail    ON resources(availability_status);

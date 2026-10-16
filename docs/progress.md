@@ -120,3 +120,55 @@ Tracking the implementation of `docs/quanta_pulse_design_handoff_spec.md`
       case). `vitest.config.ts` gained `css: true` so tests can read the real
       stylesheets as text; jsdom does not lay out CSS, so the grid/min-width
       contract is asserted against the source.
+
+## Phase 9 — Local mirror core (spec B0–B8)
+
+Permanent local copies of everything Quanta serves, kept separate from the
+preview cache so nothing can evict or delete them.
+
+- [x] Schema: `local_files`, `local_file_versions`, `download_queue` appended
+      to `migrations/0001_init.sql` (idempotent; the only schema in the repo).
+- [x] `core/mirror.rs`: the queue, the download, versioning, stats and
+      `ensure_local`; `core/mirror/paths.rs` the segment rules and the traversal
+      guard; `core/mirror/markdown.rs` HTML→Markdown snapshots.
+- [x] `quanta/client.rs`: `download` (headers first, so the name comes from
+      `Content-Disposition`) and `stream_to` (per-chunk stall detection, login
+      page sniffing, a size ceiling). A second `Client` with no overall timeout
+      shares the cookie jar — a lecture recording outlives the API timeout.
+- [x] Resumable downloads: `.part` + SHA-256 while streaming, `Range` +
+      `If-Range` so a changed file restarts, atomic rename with retries,
+      superseded copies to `.history` (kept: 3, configurable).
+- [x] `Settings`: `mirrorEnabled`, `mirrorRoot`, `mirrorMaxBytes`,
+      `mirrorMinFreeBytes`, `mirrorKeepVersions`, all with serde defaults so an
+      existing settings row is not discarded on upgrade.
+- [x] Commands: `mirror_status`, `mirror_local_files`, `mirror_local_file`,
+      `mirror_start_backfill`, `mirror_pause`, `mirror_resume`,
+      `mirror_retry_failed`, `mirror_verify_files`, `mirror_delete_all`,
+      `mirror_move_files`, `pick_mirror_root`, `ensure_local`, `open_local_file`,
+      `reveal_local_file`, `open_app_folder` (database / logs / mirror, 'Open'
+      and 'Show in folder'; the folder comes from `kind`, never from the
+      caller). `mirror_worker.rs` runs the loop and forwards `mirror:progress`
+      / `mirror:file`.
+- [x] Triggers: every completed scan enqueues backfill + re-checks; sign-in
+      clears `waiting_for_sign_in`; a resource Quanta keeps hiding becomes
+      `kept` and is never deleted.
+- [x] B6 UI: `lib/mirrorState.ts` (labels, tips, tones), `MirrorStatusIcon`,
+      `hooks/useMirror.tsx` (one listener, one fetch, shared through context),
+      the row marker and 'Open local copy' / 'Download and open' labels, the
+      PeekPanel 'Local copy' group, the sidebar download line and the
+      downloads popover.
+- [x] B7 Settings > Files: mirror folder with 'Change…' / 'Open folder' and
+      the move-or-start-fresh banner, download switches, the queue row with
+      Pause/Resume and 'Download all', the size, free-space and version
+      selects, 'Retry all' and 'Verify now'; 'Delete all local copies' sits in
+      the Data danger group.
+- [x] Spec §6.5 (row marker and actions), §6.6 (download line and popover,
+      PeekPanel local group), §6.7 (the two stores) and §7.6 (Files) updated.
+- [x] Tests: 26 `core::mirror` tests (path rules, backoff, content-disposition,
+      hashing sink, snapshot naming, Markdown) and `tests/mirrorUi.test.tsx`
+      for every icon state, the row's open labels and the PeekPanel group.
+      122 Rust tests, 217 frontend tests, tsc, eslint and `vite build` pass. No
+      new runtime deps beyond `fs2`, `percent-encoding`,
+      `unicode-normalization` (already in the lockfile tree); no npm packages.
+- [ ] B9 resource actions (single-file 'Download now', 'Open local copy',
+      'Show in folder' on the row menu) — not started.

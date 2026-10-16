@@ -4,7 +4,7 @@ import { api } from "../lib/api";
 import { cx } from "../lib/cx";
 import { formatBytes, formatCompact } from "../lib/format";
 import type { DetailProperty } from "../lib/details";
-import type { AuthStatus, CacheStats, DbInfo, Settings, ThemeMode } from "../lib/types";
+import type { AuthStatus, CacheStats, DbInfo, Settings, ThemeMode, MirrorStats } from "../lib/types";
 import PageHeader from "../components/PageHeader";
 import SettingRow from "../components/SettingRow";
 import { ToggleGroup } from "../components/ui/ToggleGroup";
@@ -63,6 +63,7 @@ const NAV_ITEMS = [
   { id: "account", label: "Account" },
   { id: "notifications", label: "Notifications" },
   { id: "monitoring", label: "Monitoring" },
+  { id: "files", label: "Files" },
   { id: "data", label: "Data" },
 ];
 
@@ -97,9 +98,13 @@ export default function SettingsView({
   const [showDiscard, setShowDiscard] = useState(false);
   const [showSignOut, setShowSignOut] = useState(false);
   const [showRebaseline, setShowRebaseline] = useState(false);
+  const [showDeleteAll, setShowDeleteAll] = useState(false);
   const [cacheStats, setCacheStats] = useState<CacheStats | null>(null);
   const [clearingCache, setClearingCache] = useState(false);
   const [active, setActive] = useState<string>("appearance");
+  const [mirrorStats, setMirrorStats] = useState<MirrorStats | null>(null);
+  const [changingMirrorRoot, setChangingMirrorRoot] = useState(false);
+  const [movingFiles, setMovingFiles] = useState(false);
 
   useEffect(() => setDraft(settings), [settings]);
 
@@ -110,6 +115,10 @@ export default function SettingsView({
       .cacheStats()
       .then(setCacheStats)
       .catch(() => setCacheStats(null));
+  }, []);
+
+  useEffect(() => {
+    api.mirrorStats().then(setMirrorStats).catch(() => setMirrorStats(null));
   }, []);
 
   useEffect(() => {
@@ -208,6 +217,82 @@ export default function SettingsView({
       setCacheStats(await api.clearFileCache());
     } finally {
       setClearingCache(false);
+    }
+  }
+
+  async function pickMirrorRoot() {
+    setChangingMirrorRoot(true);
+    try {
+      await api.pickMirrorRoot();
+      await api.mirrorStats().then(setMirrorStats);
+    } catch {
+      // Error handled by toast in app shell.
+    }
+  }
+
+  async function openMirrorFolder() {
+    try {
+      await api.openAppFolder("mirror", false);
+    } catch {
+      // Error handled by toast in app shell.
+    }
+  }
+
+  async function moveFilesToNewRoot() {
+    setMovingFiles(true);
+    try {
+      await api.mirrorMoveFiles();
+      setChangingMirrorRoot(false);
+      await api.mirrorStats().then(setMirrorStats);
+    } catch {
+      // Error handled by toast in app shell.
+    } finally {
+      setMovingFiles(false);
+    }
+  }
+
+  async function startBackfill() {
+    try {
+      await api.mirrorStartBackfill();
+      await api.mirrorStats().then(setMirrorStats);
+    } catch {
+      // Error handled by toast in app shell.
+    }
+  }
+
+  async function pauseMirror() {
+    try {
+      await api.mirrorPause();
+      await api.mirrorStats().then(setMirrorStats);
+    } catch {
+      // Error handled by toast in app shell.
+    }
+  }
+
+  async function resumeMirror() {
+    try {
+      await api.mirrorResume();
+      await api.mirrorStats().then(setMirrorStats);
+    } catch {
+      // Error handled by toast in app shell.
+    }
+  }
+
+  async function retryFailed() {
+    try {
+      await api.mirrorRetryFailed();
+      await api.mirrorStats().then(setMirrorStats);
+    } catch {
+      // Error handled by toast in app shell.
+    }
+  }
+
+  async function verifyFiles() {
+    try {
+      await api.mirrorVerifyFiles();
+      await api.mirrorStats().then(setMirrorStats);
+    } catch {
+      // Error handled by toast in app shell.
     }
   }
 
@@ -429,6 +514,162 @@ export default function SettingsView({
           </SettingRow>
         </section>
 
+        <section id="files" className="settings-section">
+          <h2 className="settings-group-title">Files</h2>
+          <SettingRow
+            title="Mirror folder"
+            description="Where the permanent local copies are stored. Changing this does not move existing files unless you choose to move them."
+          >
+            <div className="settings-inline">
+              <span className="mono" style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+                {draft.mirrorRoot || "Default (Documents/Quanta Pulse/Files)"}
+              </span>
+              <Button variant="secondary" size="sm" onClick={pickMirrorRoot}>
+                Change…
+              </Button>
+              <Button variant="secondary" size="sm" onClick={openMirrorFolder}>
+                Open folder
+              </Button>
+            </div>
+          </SettingRow>
+
+          {changingMirrorRoot && mirrorStats && (
+            <div className="settings-move-banner" role="alert">
+              <p>
+                <strong>Move existing files?</strong> The new folder is empty. Do you want to copy
+                everything from the current mirror and verify it, or start fresh?
+              </p>
+              <div className="settings-inline">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  loading={movingFiles}
+                  onClick={moveFilesToNewRoot}
+                >
+                  Move existing files
+                </Button>
+                <Button variant="secondary" size="sm" onClick={() => setChangingMirrorRoot(false)}>
+                  Start fresh here
+                </Button>
+              </div>
+            </div>
+          )}
+
+          <SettingRow
+            title="Download new files automatically"
+            description="When a scan finds new or updated resources, queue them for download."
+          >
+            <Switch
+              checked={draft.mirrorEnabled}
+              onCheckedChange={(v) => set("mirrorEnabled", v)}
+              ariaLabel="Download new files automatically"
+            />
+          </SettingRow>
+
+          {mirrorStats && (
+            <SettingRow
+              title="Download existing files"
+              description={
+                mirrorStats.state === "running"
+                  ? "Downloading in the background…"
+                  : mirrorStats.state === "paused"
+                  ? "Paused. Click Resume to continue."
+                  : `Saved ${mirrorStats.done.toLocaleString()} of ${mirrorStats.totalResources.toLocaleString()} files · ${formatBytes(mirrorStats.bytesDone)}`
+              }
+            >
+              <div className="settings-inline">
+                <Button
+                  variant={mirrorStats.state === "paused" ? "primary" : "secondary"}
+                  size="sm"
+                  onClick={mirrorStats.state === "paused" ? resumeMirror : pauseMirror}
+                  disabled={mirrorStats.state !== "running" && mirrorStats.state !== "paused"}
+                >
+                  {mirrorStats.state === "paused" ? "Resume" : "Pause"}
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={startBackfill}
+                  disabled={mirrorStats.state === "running"}
+                >
+                  Download all
+                </Button>
+              </div>
+            </SettingRow>
+          )}
+
+          <SettingRow
+            title="Skip files larger than"
+            description="Files above this size are skipped and marked as 'too large'. You can still download them individually."
+          >
+            <Select
+              value={String(draft.mirrorMaxBytes)}
+              onValueChange={(v) => set("mirrorMaxBytes", Number(v))}
+              options={[
+                { value: "0", label: "No limit" },
+                { value: String(100 * 1024 * 1024), label: "100 MB" },
+                { value: String(250 * 1024 * 1024), label: "250 MB" },
+                { value: String(500 * 1024 * 1024), label: "500 MB" },
+                { value: String(1024 * 1024 * 1024), label: "1 GB" },
+              ]}
+              ariaLabel="Maximum file size to download automatically"
+            />
+          </SettingRow>
+
+          <SettingRow
+            title="Keep free space"
+            description="Pause the queue rather than fill the disk below this floor."
+          >
+            <Select
+              value={String(draft.mirrorMinFreeBytes)}
+              onValueChange={(v) => set("mirrorMinFreeBytes", Number(v))}
+              options={[
+                { value: String(2 * 1024 * 1024 * 1024), label: "2 GB" },
+                { value: String(5 * 1024 * 1024 * 1024), label: "5 GB" },
+                { value: String(10 * 1024 * 1024 * 1024), label: "10 GB" },
+              ]}
+              ariaLabel="Minimum free disk space"
+            />
+          </SettingRow>
+
+          <SettingRow
+            title="Previous versions to keep"
+            description="Older versions of changed files are moved to .history. Only the newest N are kept per resource."
+          >
+            <Select
+              value={String(draft.mirrorKeepVersions)}
+              onValueChange={(v) => set("mirrorKeepVersions", Number(v))}
+              options={[
+                { value: "0", label: "None" },
+                { value: "1", label: "1" },
+                { value: "3", label: "3" },
+                { value: "5", label: "5" },
+              ]}
+              ariaLabel="Number of previous versions to keep"
+            />
+          </SettingRow>
+
+          {mirrorStats && mirrorStats.failed > 0 && (
+            <SettingRow
+              title="Failures"
+              description={`${mirrorStats.failed} file${mirrorStats.failed === 1 ? "" : "s"} could not be downloaded.`}
+            >
+              <Button variant="secondary" size="sm" onClick={retryFailed}>
+                Retry all
+              </Button>
+            </SettingRow>
+          )}
+
+          <SettingRow
+            title="Verify files"
+            description="Re-hash every local copy and re-download any that are missing or corrupt."
+          >
+            <Button variant="secondary" size="sm" onClick={verifyFiles}>
+              Verify now
+            </Button>
+          </SettingRow>
+        </section>
+
         <section id="data" className="settings-section">
           <h2 className="settings-group-title">Data</h2>
           <PropertyList properties={dbProps} />
@@ -456,6 +697,16 @@ export default function SettingsView({
           <SettingRow title="Re-baseline" description="Record everything as known. Nothing is reported as new until the next scan.">
             <Button variant="secondary" size="sm" onClick={() => setShowRebaseline(true)}>Re-baseline all courses</Button>
           </SettingRow>
+          <div className="settings-danger-group">
+            <SettingRow
+              title="Delete all local copies"
+              description="Permanently remove every file from the mirror folder. This cannot be undone."
+            >
+              <Button variant="danger" size="sm" onClick={() => setShowDeleteAll(true)}>
+                Delete all local copies
+              </Button>
+            </SettingRow>
+          </div>
           <p className="settings-note">
             Session cookies stay in memory and are not saved. Times are shown in your local timezone.
           </p>
@@ -513,6 +764,19 @@ export default function SettingsView({
         onConfirm={async () => {
           await api.rebuildBaseline();
           await onRefresh();
+        }}
+      />
+      <ConfirmDialog
+        open={showDeleteAll}
+        onOpenChange={setShowDeleteAll}
+        title="Delete all local copies?"
+        body="This permanently removes every file from the mirror folder. The preview cache is not affected. This cannot be undone."
+        confirmLabel="Delete all"
+        cancelLabel="Cancel"
+        destructive
+        onConfirm={async () => {
+          await api.mirrorDeleteAll();
+          await api.mirrorStats().then(setMirrorStats);
         }}
       />
       </div>

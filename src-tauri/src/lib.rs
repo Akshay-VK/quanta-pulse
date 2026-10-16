@@ -9,6 +9,7 @@ pub mod commands;
 pub mod core;
 pub mod db;
 pub mod logging;
+pub mod mirror_worker;
 pub mod models;
 pub mod notify;
 pub mod quanta;
@@ -23,6 +24,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -61,6 +63,21 @@ pub fn run() {
             commands::clear_file_cache,
             commands::open_external,
             commands::open_notification_settings,
+            commands::mirror_status,
+            commands::mirror_local_files,
+            commands::mirror_local_file,
+            commands::mirror_start_backfill,
+            commands::mirror_pause,
+            commands::mirror_resume,
+            commands::mirror_retry_failed,
+            commands::mirror_verify_files,
+            commands::mirror_delete_all,
+            commands::pick_mirror_root,
+            commands::mirror_move_files,
+            commands::ensure_local,
+            commands::open_local_file,
+            commands::reveal_local_file,
+            commands::open_app_folder,
             commands::set_monitoring,
             commands::preview_resource,
             commands::show_main_window,
@@ -79,7 +96,19 @@ pub fn run() {
 
             tray::setup(app)?;
             spawn_ui_readiness_probe(handle.clone());
-            sync::scheduler::start(handle);
+            sync::scheduler::start(handle.clone());
+
+            // Backfill at start-up so a fresh install fills the mirror without
+            // waiting for the first scan, then let the worker own the queue.
+            let state = app.state::<state::AppState>();
+            let enqueued = {
+                let conn = state.conn();
+                state.mirror.enqueue_all(&conn)
+            };
+            if enqueued > 0 {
+                tracing::info!(enqueued, "mirror backfill queued");
+            }
+            mirror_worker::start(handle);
             Ok(())
         })
         .on_window_event(|window, event| {

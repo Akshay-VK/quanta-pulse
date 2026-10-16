@@ -10,6 +10,9 @@ import type {
   Course,
   DbInfo,
   Digest,
+  LocalFile,
+  LocalFileStatus,
+  MirrorStats,
   Resource,
   ResourceFilter,
   ResourcePreview,
@@ -74,4 +77,34 @@ export const api = {
   clearFileCache: () => invoke<CacheStats>("clear_file_cache"),
   openExternal: (url: string) => invoke<void>("open_external", { url }),
   openNotificationSettings: () => invoke<void>("open_notification_settings"),
+
+  /** The permanent mirror: occupancy and queue state. */
+  mirrorStats: () => invoke<MirrorStats>("mirror_status"),
+  /** One status per indexed resource, for row icons. */
+  mirrorLocalFiles: () => invoke<LocalFileStatus[]>("mirror_local_files"),
+  /** The resolved copy of one resource, for the peek panel's path and size. */
+  mirrorLocalFile: (resourceId: number) =>
+    invoke<LocalFile | null>("mirror_local_file", { resourceId }),
+  mirrorStartBackfill: () => invoke<MirrorStats>("mirror_start_backfill"),
+  mirrorPause: () => invoke<MirrorStats>("mirror_pause"),
+  mirrorResume: () => invoke<MirrorStats>("mirror_resume"),
+  mirrorRetryFailed: () => invoke<MirrorStats>("mirror_retry_failed"),
+  /** Re-hash local copies and requeue what is missing or corrupt. */
+  mirrorVerifyFiles: () => invoke<MirrorStats>("mirror_verify_files"),
+  /** Remove every local copy. Manual action only. */
+  mirrorDeleteAll: () => invoke<MirrorStats>("mirror_delete_all"),
+  /** Move existing files to a new mirror root. */
+  mirrorMoveFiles: () => invoke<MirrorStats>("mirror_move_files"),
+  /** Pick a different mirror folder. */
+  pickMirrorRoot: () => invoke<MirrorStats>("pick_mirror_root"),
+
+  /** Open or reveal a resource's local copy, downloading it first if needed. */
+  openLocalFile: (resourceId: number) => invoke<void>("open_local_file", { resourceId }),
+  revealLocalFile: (resourceId: number) =>
+    invoke<void>("reveal_local_file", { resourceId }),
+  ensureLocal: (resourceId: number) => invoke<LocalFile>("ensure_local", { resourceId }),
+
+  /** 'Open' / 'Show in folder' for the database, logs and mirror folders. */
+  openAppFolder: (kind: "database" | "logs" | "mirror", reveal = false) =>
+    invoke<void>("open_app_folder", { kind, reveal }),
 };
