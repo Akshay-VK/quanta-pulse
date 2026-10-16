@@ -17,6 +17,13 @@ pub fn now_rfc3339() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
+/// The settings key that records the last app version that ran against this
+/// database. Written after every successful migration.
+pub const LAST_APP_VERSION_KEY: &str = "last_app_version";
+
+/// How many pre-migration backups to keep.
+const BACKUP_KEEP: usize = 3;
+
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -26,8 +33,94 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
-    migrate(&conn)?;
+    upgrade(&conn, path, env!("CARGO_PKG_VERSION"))
+        .map_err(|e| rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(1), Some(e)))?;
     Ok(conn)
+}
+
+/// Prepare a database for the running app version: back up before migrating an
+/// upgrade, run the migration, then record the version.
+///
+/// The backup is taken with the SQLite backup API, so it is consistent even
+/// though the source is an open WAL database. When the backup fails the
+/// migration is aborted and the error says why — an un-migrated, unmodified
+/// database is safer than a migrated one nobody can roll back to.
+pub fn upgrade(conn: &Connection, db_path: &Path, app_version: &str) -> Result<(), String> {
+    let recorded = get_kv(conn, LAST_APP_VERSION_KEY);
+
+    // Back up only when the running version is newer than the recorded one. A
+    // matching version needs nothing; a fresh database has nothing to lose; a
+    // database from before version recording is backed up as "unknown".
+    let old_version = match &recorded {
+        Some(v) if v == app_version => None,
+        Some(v) if app_version > v.as_str() => Some(v.clone()),
+        None if has_user_tables(conn) => Some("unknown".to_string()),
+        _ => None,
+    };
+
+    if let Some(old) = old_version {
+        backup_database(conn, db_path, &old)?;
+    }
+
+    migrate(conn).map_err(|e| e.to_string())?;
+    set_kv(conn, LAST_APP_VERSION_KEY, app_version).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Whether the database holds any user tables (i.e. it is not freshly created).
+fn has_user_tables(conn: &Connection) -> bool {
+    conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+        [],
+        |r| r.get::<_, i64>(0),
+    )
+    .map(|n| n > 0)
+    .unwrap_or(false)
+}
+
+/// Write a consistent copy of the database to `<app data>/backups/` and keep the
+/// newest `BACKUP_KEEP` backups.
+fn backup_database(conn: &Connection, db_path: &Path, old_version: &str) -> Result<(), String> {
+    let parent = db_path
+        .parent()
+        .ok_or_else(|| "the database path has no parent".to_string())?;
+    let backups = parent.join("backups");
+    std::fs::create_dir_all(&backups)
+        .map_err(|e| format!("cannot create backups directory {}: {e}", backups.display()))?;
+
+    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+    let dest = backups.join(format!("quanta-pulse-{old_version}-{stamp}.db"));
+    conn.backup(rusqlite::DatabaseName::Main, &dest, None)
+        .map_err(|e| {
+            format!(
+                "backup before migration failed: {e}. Free up space in {} and try again.",
+                backups.display()
+            )
+        })?;
+
+    prune_backups(&backups)?;
+    Ok(())
+}
+
+/// Remove all but the newest `BACKUP_KEEP` backups in `dir`.
+fn prune_backups(dir: &Path) -> Result<(), String> {
+    let mut entries: Vec<(std::path::PathBuf, std::time::SystemTime)> = std::fs::read_dir(dir)
+        .map_err(|e| format!("cannot read backups directory: {e}"))?
+        .filter_map(|entry| {
+            let path = entry.ok()?.path();
+            let meta = path.metadata().ok()?;
+            Some((path, meta.modified().ok()?))
+        })
+        .filter(|(path, _)| path.extension().is_some_and(|ext| ext == "db"))
+        .collect();
+    entries.sort_by_key(|(_, modified)| *modified);
+    while entries.len() > BACKUP_KEEP {
+        let (oldest, _) = entries.remove(0);
+        std::fs::remove_file(&oldest).map_err(|e| {
+            format!("cannot remove old backup {}: {e}", oldest.display())
+        })?;
+    }
+    Ok(())
 }
 
 pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
@@ -1539,6 +1632,119 @@ mod tests {
         let conn = mem();
         migrate(&conn).unwrap();
         assert_eq!(count_courses(&conn), 0);
+    }
+
+    /// A file-backed database whose recorded version is older than the running
+    /// one: `upgrade` must back up before migrating and record the new version.
+    fn file_db() -> (tempfile::TempDir, std::path::PathBuf, Connection) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("quanta-pulse.sqlite");
+        let conn = Connection::open(&path).unwrap();
+        migrate(&conn).unwrap();
+        (dir, path, conn)
+    }
+
+    fn backup_names(dir: &tempfile::TempDir) -> Vec<String> {
+        let backups = dir.path().join("backups");
+        if !backups.exists() {
+            return Vec::new();
+        }
+        let mut names: Vec<String> = std::fs::read_dir(&backups)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn upgrade_backs_up_before_migrating_when_the_version_increases() {
+        let (dir, path, conn) = file_db();
+        set_kv(&conn, LAST_APP_VERSION_KEY, "0.1.0").unwrap();
+        conn.execute_batch("CREATE TABLE legacy (id INTEGER); INSERT INTO legacy VALUES (1);")
+            .unwrap();
+
+        upgrade(&conn, &path, "0.2.0").unwrap();
+
+        let names = backup_names(&dir);
+        assert_eq!(names.len(), 1, "one backup expected: {names:?}");
+        assert!(names[0].starts_with("quanta-pulse-0.1.0-"), "{}", names[0]);
+        assert!(names[0].ends_with(".db"));
+
+        // The backup is a consistent copy that holds the data.
+        let backup = Connection::open(dir.path().join("backups").join(&names[0])).unwrap();
+        let count: i64 = backup.query_row("SELECT COUNT(*) FROM legacy", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 1);
+
+        // The running version is recorded.
+        assert_eq!(get_kv(&conn, LAST_APP_VERSION_KEY).as_deref(), Some("0.2.0"));
+    }
+
+    #[test]
+    fn upgrade_takes_no_backup_when_the_version_matches() {
+        let (dir, path, conn) = file_db();
+        set_kv(&conn, LAST_APP_VERSION_KEY, "0.2.0").unwrap();
+
+        upgrade(&conn, &path, "0.2.0").unwrap();
+
+        assert!(!dir.path().join("backups").exists());
+        assert_eq!(get_kv(&conn, LAST_APP_VERSION_KEY).as_deref(), Some("0.2.0"));
+    }
+
+    #[test]
+    fn upgrade_takes_no_backup_for_a_fresh_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("quanta-pulse.sqlite");
+        // A truly fresh database: no schema, no recorded version, nothing to lose.
+        let conn = Connection::open(&path).unwrap();
+        upgrade(&conn, &path, "0.2.0").unwrap();
+        assert!(!dir.path().join("backups").exists());
+        assert_eq!(get_kv(&conn, LAST_APP_VERSION_KEY).as_deref(), Some("0.2.0"));
+    }
+
+    #[test]
+    fn upgrade_backs_up_a_database_from_before_version_recording() {
+        let (dir, path, conn) = file_db();
+        // An existing database whose build predates version recording: no
+        // recorded version, but user data worth protecting.
+        upgrade(&conn, &path, "0.2.0").unwrap();
+        let names = backup_names(&dir);
+        assert_eq!(names.len(), 1, "one backup expected: {names:?}");
+        assert!(names[0].starts_with("quanta-pulse-unknown-"), "{}", names[0]);
+    }
+
+    #[test]
+    fn upgrade_keeps_the_newest_three_backups() {
+        let (dir, path, conn) = file_db();
+        set_kv(&conn, LAST_APP_VERSION_KEY, "0.1.0").unwrap();
+        for version in ["0.2.0", "0.3.0", "0.4.0", "0.5.0"] {
+            upgrade(&conn, &path, version).unwrap();
+            // Keep modification times distinct so the prune order is deterministic.
+            std::thread::sleep(std::time::Duration::from_millis(1100));
+        }
+
+        let names = backup_names(&dir);
+        assert_eq!(names.len(), 3, "newest three kept: {names:?}");
+        // The newest backup (taken for the 0.4.0 -> 0.5.0 upgrade) survives.
+        assert!(
+            names.iter().any(|n| n.starts_with("quanta-pulse-0.4.0-")),
+            "newest backup missing: {names:?}"
+        );
+    }
+
+    #[test]
+    fn upgrade_aborts_the_migration_when_the_backup_fails() {
+        let (dir, path, conn) = file_db();
+        set_kv(&conn, LAST_APP_VERSION_KEY, "0.1.0").unwrap();
+        // A file where the backups directory should be makes the backup fail.
+        std::fs::write(dir.path().join("backups"), "not a directory").unwrap();
+
+        let result = upgrade(&conn, &path, "0.2.0");
+        let err = result.expect_err("a failed backup must abort the upgrade");
+        assert!(err.contains("backup"), "unexpected error: {err}");
+
+        // The migration did not run and the version was not recorded.
+        assert_eq!(get_kv(&conn, LAST_APP_VERSION_KEY).as_deref(), Some("0.1.0"));
     }
 
     #[test]
