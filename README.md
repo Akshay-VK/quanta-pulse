@@ -383,6 +383,16 @@ included.
 
 ---
 
+## Credits
+
+Quanta Pulse started as a fork of [advayvguy/quanta-pulse](https://github.com/advayvguy/quanta-pulse)
+by **Advay Singh**, whose original tracker this project builds on. Thank you to the
+upstream author for the initial implementation.
+
+> **Licensing note:** this repository currently ships **no licence file**, so
+> redistribution rights are unclear. Add an explicit licence before publishing
+> binaries or accepting contributions.
+
 ## Limitations
 
 - Quanta exposes no upload timestamp for some items; those honestly read

@@ -1,0 +1,13 @@
+# Normalise line endings on checkout; binaries are never filtered.
+* text=auto eol=lf
+
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.icns  binary
+*.pdf   binary
+*.dmg   binary
+*.exe   binary
+*.msi   binary
