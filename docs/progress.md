@@ -172,3 +172,26 @@ preview cache so nothing can evict or delete them.
       `unicode-normalization` (already in the lockfile tree); no npm packages.
 - [ ] B9 resource actions (single-file 'Download now', 'Open local copy',
       'Show in folder' on the row menu) — not started.
+
+## Phase 10 — Text from local copies (spec Part 2)
+
+Text extraction reads the local copy instead of the network, so a mirrored page
+or file previews offline and never pauses a scan.
+
+- [x] `core/text.rs`: `local_text(conn, mirror, resource_id)` returns readable
+      text read through `Mirror::local_file` (the mirror first, then the preview
+      cache). Markdown and plain text pass through; HTML is converted with the
+      same `extract_readable_text` the network path uses. `max_bytes` guard
+      (`MAX_TEXT_BYTES`, 8 MB) so a binary is never pulled into memory; a
+      non-text copy is `None`.
+- [x] `core/mirror.rs`: `Mirror::local_bytes(conn, resource_id, max_bytes)` — the
+      reading half of `local_file`, for callers that need the content.
+- [x] `preview_resource` tries the local copy before anything else: text via
+      `core::text`, a binary via `local_bytes` under `PREVIEW_MAX_BINARY_BYTES`
+      (a larger copy still reports `tooLarge`). Only on a miss does it take the
+      preview lease and fetch. The command doc comment was corrected: content is
+      no longer never-persisted.
+- [x] Tests: 8 `core::text` tests (Markdown passthrough, HTML conversion, binary
+      `None`, over-limit `None`, missing file, vanished file, MIME-over-extension,
+      extension fallback) plus `local_bytes` limits. 131 Rust tests pass;
+      `cargo clippy` adds no warning to the new code.

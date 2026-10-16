@@ -12,3 +12,4 @@
 
 pub mod files;
 pub mod mirror;
+pub mod text;

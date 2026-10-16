@@ -343,6 +343,26 @@ impl Mirror {
         })
     }
 
+    /// The local copy's bytes, at most `max_bytes`. `None` when there is no
+    /// local copy or the file is larger than the caller wants to hold.
+    ///
+    /// The reading half of `local_file`, for callers that need the content and
+    /// not only the path: the in-app preview, the content index, and a future
+    /// Telegram `/get`.
+    pub fn local_bytes(
+        &self,
+        conn: &Connection,
+        resource_id: i64,
+        max_bytes: u64,
+    ) -> Option<(LocalFile, Vec<u8>)> {
+        let file = self.local_file(conn, resource_id)?;
+        if u64::try_from(file.size_bytes).unwrap_or(u64::MAX) > max_bytes {
+            return None;
+        }
+        let bytes = fs::read(&file.path).ok()?;
+        Some((file, bytes))
+    }
+
     pub fn stats(&self, conn: &Connection) -> MirrorStats {
         let counts = db::mirror_counts(conn).unwrap_or_default();
         let count = |status: &str| {

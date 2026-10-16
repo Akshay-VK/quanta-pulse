@@ -288,6 +288,7 @@ and 620px (rows wrap, title/time full width). Reduced-motion is honoured.
 | `core/` | Transport-agnostic domain logic — plain functions over a `Connection`, the file store and the client. Tauri commands (and a future HTTP or MCP server) are adapters over this, so logic never lives in a handler |
 | `core/files.rs` | `FileStore`: the on-demand byte cache under `files/<resource_id>/<sha256>`, with LRU eviction and the `file_cache` index. Evictable by design |
 | `core/mirror.rs` | The permanent mirror: `local_files` / `local_file_versions` / `download_queue`, the download pipeline, `.history` versioning, `ensure_local`. Never evicts, never deletes. Text pages become Markdown snapshots |
+| `core/text.rs` | `local_text`: a resource's text read from its local copy through `Mirror::local_file` — no network, no lease. The preview, the content index and the Telegram bot share this path |
 | `mirror_worker.rs` | The mirror's loop: drains the queue a few items at a time, then waits; forwards `mirror:progress` / `mirror:file` to the webview |
 | `state.rs` | `AppState`: shared SQLite connection, file store, mirror, settings, HTTP client, sync status, preview lease — all behind locks |
 | `auth.rs` | Password login and SSO (SAML2), session restore/refresh/restart, logout |
@@ -319,6 +320,14 @@ clamped 64 MB–64 GB) caps the cache; `core::files::FileStore::evict_to` drops
 least-recently-used entries first, and a row whose file has vanished reads as a
 miss so the cache self-heals. Previews are the first producer; the content
 indexer fills it too.
+
+**Reading a file.** `core::text::local_text` reads a resource's text through
+`core::mirror::Mirror::local_file` — the permanent mirror first, then this
+cache — so the preview, the content index and the Telegram bot all read the
+local copy and never the network when one exists. `preview_resource` tries that
+path before anything else and only then takes the preview lease and fetches, so
+a preview of a mirrored page pauses no scan and works offline. A binary copy is
+served straight from disk under the same size limit a download would be.
 
 **Adding a feature.** Put the logic in `core/`, then write a thin
 `commands.rs` adapter and wrap it in `src/lib/api.ts`. The `Connection` guard is

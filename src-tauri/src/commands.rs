@@ -4,6 +4,7 @@
 //! link in the system browser and is restricted to http(s) destinations.
 
 use serde::{Deserialize, Serialize};
+use std::fs;
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 use zeroize::Zeroizing;
@@ -347,19 +348,18 @@ pub enum ResourcePreview {
     },
 }
 
-/// Fetch a resource through the authenticated Quanta session and describe how
-/// (or whether) it can be previewed in-app. Content is never persisted: it is
-/// fetched on demand and held only long enough to hand to the webview.
+/// Preview a resource in-app.
+///
+/// The local copy is tried first, through `core::text` and `core::mirror`: a
+/// mirrored page or file needs no network, no preview lease and no session, so
+/// a preview never pauses a scan and works offline. Only when nothing is local
+/// is the resource fetched through the authenticated session, and then the
+/// bytes are held only long enough to hand to the webview.
 #[tauri::command]
 pub async fn preview_resource(
     state: State<'_, AppState>,
     resource_id: i64,
 ) -> Result<ResourcePreview, String> {
-    let _preview_lease = state
-        .sync
-        .begin_preview()
-        .ok_or_else(|| "Quanta authentication is being reset. Try again after sign-in.".to_string())?;
-
     // Read the stored metadata, then release the database lock before awaiting.
     let resource = {
         let conn = state.conn();
@@ -394,11 +394,23 @@ pub async fn preview_resource(
         }
     }
 
+    let metadata_kind = preview_kind(&resource.resource_type, Some(&url));
+
+    // A local copy answers offline. A miss falls through to the network.
+    if let Some(preview) = preview_from_local(&state, resource_id, metadata_kind, &resource.url) {
+        return Ok(preview);
+    }
+
+    // From here the network is needed, so take the lease (it pauses scanning)
+    // and require a session.
+    let _preview_lease = state
+        .sync
+        .begin_preview()
+        .ok_or_else(|| "Quanta authentication is being reset. Try again after sign-in.".to_string())?;
     let Some(client) = state.client() else {
         return Err("Sign in to Quanta to preview resources.".to_string());
     };
 
-    let metadata_kind = preview_kind(&resource.resource_type, Some(&url));
     let fetched = client
         .fetch_bytes(&url, PREVIEW_MAX_BINARY_BYTES)
         .await
@@ -461,6 +473,65 @@ fn content_is_html(content_type: Option<&str>) -> bool {
     content_type
         .map(|c| c.contains("text/html") || c.contains("application/xhtml"))
         .unwrap_or(true)
+}
+
+/// A preview built from the resource's local copy, or `None` when there is
+/// nothing local to read.
+///
+/// Text goes through `core::text`, so an announcement or page reads as the same
+/// readable text the preview would have extracted from the network. A binary
+/// copy is read from disk, capped at the same limit a download would be, so a
+/// large file still reports `tooLarge` and opens externally instead of filling
+/// memory.
+fn preview_from_local(
+    state: &AppState,
+    resource_id: i64,
+    metadata_kind: PreviewKind,
+    source_url: &str,
+) -> Option<ResourcePreview> {
+    let conn = state.conn();
+    let file = state.mirror.local_file(&conn, resource_id)?;
+
+    match metadata_kind {
+        PreviewKind::Text => {
+            let local = crate::core::text::local_text(&conn, &state.mirror, resource_id)?;
+            let (text, truncated) = truncate_chars(&local.text, PREVIEW_MAX_TEXT_CHARS);
+            Some(ResourcePreview::Text {
+                text,
+                truncated,
+                source_url: source_url.to_string(),
+                content_type: None,
+            })
+        }
+        kind if kind.is_binary() => {
+            let kind = refine_with_content_type(kind, file.mime.as_deref());
+            if !kind.is_binary() {
+                // The served type turned out to be text; let the network path
+                // decide rather than guessing here.
+                return None;
+            }
+            let size = u64::try_from(file.size_bytes).unwrap_or(u64::MAX);
+            if size > PREVIEW_MAX_BINARY_BYTES as u64 {
+                return Some(ResourcePreview::TooLarge {
+                    size_bytes: Some(size),
+                    limit_bytes: PREVIEW_MAX_BINARY_BYTES as u64,
+                    source_url: source_url.to_string(),
+                });
+            }
+            let bytes = fs::read(&file.path).ok()?;
+            Some(ResourcePreview::Binary {
+                mode: kind.mode().unwrap_or("file").to_string(),
+                mime: file
+                    .mime
+                    .clone()
+                    .unwrap_or_else(|| kind.default_mime().to_string()),
+                data: base64_encode(&bytes),
+                source_url: source_url.to_string(),
+                size_bytes: bytes.len(),
+            })
+        }
+        _ => None,
+    }
 }
 
 fn preview_error(error: QuantaError) -> String {
