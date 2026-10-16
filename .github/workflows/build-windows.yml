@@ -25,8 +25,12 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      # This convenience build is not a release: it uploads a plain installer,
+      # so it creates no updater artifact and needs no signing key. Signed,
+      # updater-enabled installers are built by release.yml on a v*.*.* tag.
       - name: Build NSIS installer
-        run: npx tauri build --bundles nsis
+        shell: bash
+        run: npx tauri build --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":false}}'
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
