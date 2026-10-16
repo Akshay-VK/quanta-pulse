@@ -83,14 +83,35 @@ pub fn help_text() -> String {
     .join("\n")
 }
 
-/// One change event as a Telegram message.
-pub fn event_message(event: &ChangeEvent) -> String {
+/// Telegram's caption ceiling is 1024 characters; keep a little headroom.
+const CAPTION_MAX_CHARS: usize = 1000;
+
+/// One change event as a file caption: the same title and body the native
+/// banner shows, without the link — the attached file is the point, so a URL
+/// would only be a second, worse way to reach the same bytes.
+pub fn event_caption(event: &ChangeEvent) -> String {
     let (title, body) = crate::notify::event_text(event);
-    let mut out = format!("{title}\n{body}");
+    clip(format!("{title}\n{body}"), CAPTION_MAX_CHARS)
+}
+
+/// One change event as plain text, for the cases with no file to attach: an
+/// external link, or a download that failed or is too large to send.
+pub fn event_message(event: &ChangeEvent) -> String {
+    let mut out = event_caption(event);
     if let Some(url) = event.resource_url.as_deref() {
         out.push('\n');
         out.push_str(url);
     }
+    out
+}
+
+/// Trim to `max` characters, on a character boundary, with an ellipsis.
+fn clip(text: String, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text;
+    }
+    let mut out: String = text.chars().take(max.saturating_sub(1)).collect();
+    out.push('…');
     out
 }
 
@@ -445,8 +466,45 @@ mod tests {
     }
 
     #[test]
-    fn the_help_text_lists_the_commands() {
-        let help = help_text();
+    fn a_file_caption_has_no_link_and_is_clipped() {
+        let base = ChangeEvent {
+            id: 1,
+            resource_id: Some(4),
+            course_id: Some(2),
+            course_name: Some("CS F222".to_string()),
+            resource_title: Some("Quiz 2".to_string()),
+            resource_url: Some("https://quanta/x".to_string()),
+            source_page_url: None,
+            section_path: vec![],
+            resource_type: Some("quiz".to_string()),
+            uploaded_at: None,
+            change_type: "new".to_string(),
+            title: "Quiz 2 answer sheet".to_string(),
+            description: None,
+            detected_at: "2026-10-15T00:00:00Z".to_string(),
+            read: false,
+        };
+
+        let caption = event_caption(&base);
+        assert!(caption.starts_with("New upload · CS F222"));
+        assert!(caption.contains("Quiz 2 answer sheet"));
+        assert!(!caption.contains("https://"), "the file replaces the link");
+
+        // The text fallback still carries the link.
+        assert!(event_message(&base).contains("https://quanta/x"));
+
+        // A long body is trimmed to what Telegram accepts, on a char boundary.
+        let long = ChangeEvent {
+            description: Some("é".repeat(4000)),
+            ..base
+        };
+        let clipped = event_caption(&long);
+        assert_eq!(clipped.chars().count(), CAPTION_MAX_CHARS);
+        assert!(clipped.ends_with('…'));
+    }
+
+    #[test]
+    fn the_help_text_lists_the_commands() {        let help = help_text();
         for command in ["/search", "/get", "/status"] {
             assert!(help.contains(command), "missing {command}");
         }

@@ -3,7 +3,9 @@
 //! Two jobs, neither of them on the critical path of a scan:
 //!
 //! - **Forwarding.** Change events reach the user's chat when the six Settings
-//!   categories allow it. A scan hands the events over and moves on; a slow or
+//!   categories allow it. Each one is sent as the file itself, downloaded at P0
+//!   if the mirror does not have it yet, so the chat gets the material and not a
+//!   link to it. A scan hands the events over and moves on; a slow or
 //!   unreachable Telegram never delays monitoring.
 //! - **Commands.** A long poll answers `/search`, `/get`, `/status` and `/help`
 //!   from the configured chat only. `/get` waits for the local mirror, so the
@@ -184,7 +186,16 @@ async fn send_file(app: &AppHandle, client: &TelegramClient, chat: &str, argumen
     }
 }
 
+/// How long a forwarded file waits for the mirror. Longer than an interactive
+/// `/get`: nobody is watching a forward, and the alternative after a timeout is
+/// the link the user asked not to receive.
+const FORWARD_TIMEOUT: Duration = Duration::from_secs(300);
+
 /// Forward change events to the configured chat. Fire-and-forget.
+///
+/// Each event is sent as the file itself when the mirror has one (downloading it
+/// at P0 first), and as plain text only when there is nothing to attach: an
+/// external link, a download that failed, or a file Telegram will not accept.
 pub fn forward(app: &AppHandle, events: Vec<ChangeEvent>) {
     let settings = app.state::<AppState>().settings();
     let (Some(token), Some(chat)) = (
@@ -193,17 +204,66 @@ pub fn forward(app: &AppHandle, events: Vec<ChangeEvent>) {
     ) else {
         return;
     };
+    let handle = app.clone();
     tauri::async_runtime::spawn(async move {
         let Ok(client) = TelegramClient::new(&token) else {
             return;
         };
         for event in &events {
-            let text = telegram::event_message(event);
-            if let Err(error) = client.send_message(&chat, &text).await {
-                tracing::warn!("telegram forward failed: {error}");
-            }
+            forward_event(&handle, &client, &chat, event).await;
         }
     });
+}
+
+async fn forward_event(
+    app: &AppHandle,
+    client: &TelegramClient,
+    chat: &str,
+    event: &ChangeEvent,
+) {
+    if let Some(path) = file_for(app, event).await {
+        let caption = telegram::event_caption(event);
+        match client.send_document(chat, Path::new(&path), &caption).await {
+            Ok(()) => return,
+            // A rejected upload must still reach the user, as the text below.
+            Err(error) => tracing::warn!("telegram document send failed: {error}"),
+        }
+    }
+    if let Err(error) = client.send_message(chat, &telegram::event_message(event)).await {
+        tracing::warn!("telegram forward failed: {error}");
+    }
+}
+
+/// The local copy of an event's resource, waiting for the mirror if needed.
+///
+/// `None` means "send the text instead": no resource behind the event, an
+/// external link (whose target Pulse never mirrors), an over-limit file, or a
+/// download that did not arrive in time.
+async fn file_for(app: &AppHandle, event: &ChangeEvent) -> Option<String> {
+    let resource_id = event.resource_id?;
+    let mirrorable = {
+        let state = app.state::<AppState>();
+        let conn = state.conn();
+        db::get_resource_by_id(&conn, resource_id)
+            .map(|resource| !resource.is_external)
+            .unwrap_or(false)
+    };
+    if !mirrorable {
+        return None;
+    }
+
+    let state = app.state::<AppState>();
+    let ctx = state.mirror_ctx();
+    match state.mirror.ensure_local(&ctx, resource_id, FORWARD_TIMEOUT).await {
+        Ok(file) if u64::try_from(file.size_bytes).unwrap_or(u64::MAX) <= MAX_UPLOAD_BYTES => {
+            Some(file.path)
+        }
+        Ok(_) => None,
+        Err(error) => {
+            tracing::debug!(resource_id, error = %error, "telegram forward: no local copy");
+            None
+        }
+    }
 }
 
 /// Forward one line of plain text, for the messages that are not change events.

@@ -316,7 +316,7 @@ Moodle answers an expired session with HTTP 200 and its login page. `stream_to` 
 
 Nothing in the mirror writes a `change_events` row and the baseline-scan rule is untouched: mirroring is not a content change.
 
-The mirror is also what Telegram serves. `/get <id>` waits on `ensure_local` (60 s) and uploads the local copy, so the bot never makes Quanta fetch a file twice, and it works with the network down. `core/text.rs::local_text` likewise reads the copy, which is how a preview of an already-mirrored page renders offline.
+The mirror is also what Telegram serves. `/get <id>` waits on `ensure_local` (60 s) and uploads the local copy, so the bot never makes Quanta fetch a file twice, and it works with the network down. A category event that is forwarded arrives as the file itself (`ensure_local` at P0, 300 s), with a link message only when there is nothing to attach — an external link, a file over Telegram's 50 MB limit, or a failed download. `core/text.rs::local_text` likewise reads the copy, which is how a preview of an already-mirrored page renders offline.
 
 ## 7. Screens
 

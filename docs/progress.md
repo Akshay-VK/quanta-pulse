@@ -228,6 +228,10 @@ mirror. Nothing contacts a host other than `api.telegram.org`.
 - [x] Tests: 10 `core::telegram`, 4 `core::search`, 4 `Settings` (defaults,
       malformed token/chat, missing-field tolerance) and 1 redaction. 150 Rust
       tests pass; `reqwest` gained the `multipart` feature (no new crate).
+- [x] Forwarding sends the **file**, not a link: `forward` waits on
+      `ensure_local` (P0, 300 s) and uploads the local copy, with the text
+      message as the fallback for an external link, an over-limit file or a
+      failed download. The caption omits the URL and is clipped to 1000 chars.
 - [x] UI (Part 4): a `Telegram` section between Notifications and Monitoring —
       forwarding switch, the token as a password field, the chat id, the live
       `getMe` status ('Connected as @…', 'Off', or the API's error) and

@@ -346,7 +346,14 @@ uploads that file, so bytes come from this computer and Quanta is never fetched
 twice; `/status` reports the mirror. Forwarding is per category and reuses the
 *six* Settings switches through `notify::category_enabled` — the bot has no
 second, hidden filter set — and `notify::dispatch` forwards alongside the native
-banner, marking an event notified once either transport takes it. The token is
+banner, marking an event notified once either transport takes it. **A forwarded
+event is the file, not a link**: `telegram_worker::forward` calls
+`ensure_local` (P0, 300 s) and uploads the copy, so the chat holds the material
+itself and works offline. Text with the link is the fallback, used only when
+there is nothing to attach — an external link Pulse never mirrors, a file over
+Telegram's 50 MB limit, or a download that failed. The caption drops the URL on
+purpose and is clipped to 1000 characters, under Telegram's 1024 limit. The token
+is
 the only secret: it is redacted from logs (`api.telegram.org`,
 `telegram_bot_token`), and every `reqwest` error goes through `without_url()`
 because the request URL embeds it. A token or chat id that does not parse is

@@ -532,7 +532,7 @@ export default function SettingsView({
           <h2 className="settings-group-title">Telegram</h2>
           <SettingRow
             title="Forward to Telegram"
-            description="Send new material to your own bot chat. The categories below Notifications decide which events go out."
+            description="Send new material to your own bot chat as the file itself, not a link. The six categories under Notifications decide which events go out."
           >
             <Switch
               checked={draft.telegramEnabled}
