@@ -1,6 +1,6 @@
 [package]
 name = "quanta-pulse"
-version = "0.1.0"
+version = "0.2.0"
 description = "Minimal tracker for BITS Pilani Quanta LMS"
 authors = ["Quanta Pulse"]
 edition = "2021"
