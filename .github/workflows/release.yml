@@ -41,8 +41,11 @@ jobs:
 
       - name: Extract release notes from CHANGELOG.md
         id: notes
+        shell: bash
         run: |
-          python3 - <<'PY'
+          # `python3` on Linux/macOS, `python` on the Windows runner.
+          if command -v python >/dev/null 2>&1; then PYTHON=python; else PYTHON=python3; fi
+          "$PYTHON" - <<'PY'
           import re
           tag = "${{ github.ref_name }}"
           version = tag[1:] if tag.startswith("v") else tag

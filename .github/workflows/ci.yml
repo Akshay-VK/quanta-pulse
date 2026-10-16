@@ -15,6 +15,11 @@ jobs:
   frontend:
     name: Frontend (node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
+    env:
+      # The date/month assertions are written against IST. Pin the runner so the
+      # suite does not depend on the machine timezone (a UTC runner otherwise
+      # formats in UTC and the month labels shift).
+      TZ: Asia/Kolkata
     strategy:
       fail-fast: false
       matrix:
@@ -38,19 +43,14 @@ jobs:
         run: npx vite build
 
   rust:
-    name: Rust (cargo)
-    runs-on: ubuntu-latest
+    name: Rust (cargo, windows)
+    # Windows matches the shipped target. Building the stack on Linux would
+    # need webkit2gtk/glib system packages the product does not use.
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - name: Install frontend deps
-        run: npm ci
       - name: Cargo check
         run: cargo check --all-targets
         working-directory: src-tauri

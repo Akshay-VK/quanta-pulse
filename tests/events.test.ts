@@ -1,9 +1,3 @@
-// Deterministic timezone for midnight/month-boundary grouping checks.
-// Settings at process startup (before test bodies) so `Date` uses India local
-// time — the same +05:30 offset the original failure report was filed under.
-declare const process: { env: Record<string, string | undefined> };
-process.env.TZ = "Asia/Kolkata";
-
 import { describe, expect, it } from "vitest";
 import {
   addMonths,
