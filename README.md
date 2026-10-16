@@ -11,6 +11,43 @@ in memory for the current run. There is no server, no analytics, and no telemetr
 
 ---
 
+## Install
+
+Pre-built installers are published on the GitHub Releases page of this
+repository: <https://github.com/Akshay-VK/quanta-pulse/releases>.
+
+1. Download the latest `*-setup.exe` (NSIS, per-user) installer.
+2. Windows SmartScreen may warn the first time: click **More info**, then
+   **Run anyway**.
+3. The installer drops Quanta Pulse into your user profile. No admin rights
+   are required and no global install happens.
+
+### What stays on your PC
+
+User data never leaves the machine and lives under
+`%APPDATA%\\com.quantapulse.desktop` on Windows
+(`~/Library/Application Support/com.quantapulse.desktop` on macOS):
+
+- `quanta-pulse.sqlite` — courses, resources and change history
+- `logs/quanta-pulse.log` — redacted troubleshooting log
+- `backups/quanta-pulse-<version>-<timestamp>.db` — pre-upgrade snapshots
+- the mirror folder (under Documents) holding the local copies
+
+Session cookies are kept in memory for the current run only and are never
+written to disk. There is no server, account, analytics or telemetry.
+
+### How updates work
+
+Installed builds (from 0.2.0 onward) check GitHub Releases roughly 30 seconds
+after launch and then every 6 hours, verifying each bundle with the public
+key baked into the app before installing. The first updater-enabled build
+must be installed manually; every later release can be applied from
+Settings > About with "Restart to update". In-app, the check can be run
+manually and updates are shown as a toast/banner with "Restart to update",
+"Release notes" and "Later".
+
+---
+
 ## Installation and build (quick start)
 
 Choose the instructions for your operating system. These steps build the app from source; a prebuilt installer is not currently provided here.

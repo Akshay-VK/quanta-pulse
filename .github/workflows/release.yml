@@ -1,0 +1,89 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            # Add a macOS entry here later (os: macos-latest) without code changes.
+    env:
+      # Never echoed: GitHub Actions masks these in logs, and they are only
+      # passed to the Tauri CLI, never printed here.
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify the tag is on main
+        run: |
+          git fetch origin main --quiet
+          if ! git merge-base --is-ancestor ${{ github.sha }} origin/main; then
+            echo "Tagged commit ${{ github.sha }} is not reachable from main" >&2
+            exit 1
+          fi
+
+      - name: Extract release notes from CHANGELOG.md
+        id: notes
+        run: |
+          python3 - <<'PY'
+          import re
+          tag = "${{ github.ref_name }}"
+          version = tag[1:] if tag.startswith("v") else tag
+          src = open("CHANGELOG.md", encoding="utf-8").read()
+          m = re.search(r"^## \[" + re.escape(version) + r"\].*?(?=^## |\Z)", src, re.M | re.S)
+          body = m.group(0).strip() if m else ""
+          import os
+          out = os.environ["GITHUB_OUTPUT"]
+          with open(out, "a", encoding="utf-8") as f:
+              f.write("body<<EOF\n")
+              f.write(body + "\n")
+              f.write("EOF\n")
+          PY
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Verify version agrees with the tag
+        run: npm run version:check -- ${{ github.ref_name }}
+
+      - name: Verify release config
+        run: npm run release:config:check
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build and create draft release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: src-tauri
+          args: --bundles nsis
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Quanta Pulse ${{ github.ref_name }}'
+          releaseDraft: true
+          releaseBody: ${{ steps.notes.outputs.body }}
+          includeUpdaterJson: true
