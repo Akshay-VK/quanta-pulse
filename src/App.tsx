@@ -802,10 +802,12 @@ function AppShell() {
               {route.view === "calendar" && (
                 <CalendarView
                   courses={courses}
+                  resources={resources}
                   onOpen={(url) => void open(url)}
                   onOpenLocal={(resourceId) => void openLocal(resourceId)}
                   onOpenScan={() => navigate("history")}
                   onOpenCourse={navigateToCourse}
+                  details={detailsAdapters.calendar}
                 />
               )}
               {route.view === "library" && (
@@ -816,6 +818,10 @@ function AppShell() {
                   folderPath={route.folderPath}
                   onNavigate={navigateToCourse}
                   unreadByCourse={unreadByCourse}
+                  details={detailsAdapters.library}
+                  loading={loading}
+                  error={loadError}
+                  onRetry={() => void refresh()}
                   onChanged={() => void refresh()}
                   onOpen={(url) => void open(url)}
                   onSyncNow={() => void handleSync()}
@@ -826,6 +832,11 @@ function AppShell() {
                   courses={courses}
                   scans={scans}
                   events={historyEvents}
+                  resources={resources}
+                  details={detailsAdapters.history}
+                  loading={loading}
+                  error={loadError}
+                  onRetry={() => void refresh()}
                   onOpen={(url) => void open(url)}
                   onOpenLocal={(resourceId) => void openLocal(resourceId)}
                   onMarkAllRead={markHistoryRead}

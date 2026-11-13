@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { Digest } from "../src/lib/types";
+import type { DetailsAdapter } from "../src/lib/details";
 
 vi.mock("../src/lib/api", () => ({
   api: {
@@ -44,6 +45,7 @@ function emptyDigest(date: string): Digest {
 
 let container: HTMLDivElement;
 let root: Root;
+const details: DetailsAdapter = { selected: null, selectResource: vi.fn(), selectChange: vi.fn(), selectScan: vi.fn(), clear: vi.fn() };
 
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -74,7 +76,7 @@ async function renderCalendar() {
   await act(async () => {
     root.render(
       <TooltipProvider>
-        <CalendarView courses={[]} onOpen={() => {}} onOpenScan={() => {}} />
+        <CalendarView courses={[]} onOpen={() => {}} onOpenScan={() => {}} details={details} />
       </TooltipProvider>,
     );
   });

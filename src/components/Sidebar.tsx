@@ -152,10 +152,9 @@ export default function Sidebar({
 }) {
   const topCourses = [...courses]
     .sort((a, b) => {
-      const ua = unreadByCourse.get(a.id) ?? 0;
-      const ub = unreadByCourse.get(b.id) ?? 0;
-      if (ub !== ua) return ub - ua;
-      return (a.shortName || a.name).localeCompare(b.shortName || b.name);
+      const code = (course: Course) => courseLabel(course.id)?.name ?? course.shortName ?? course.name;
+      const byCode = code(a).localeCompare(code(b), undefined, { sensitivity: "base", numeric: true });
+      return byCode || a.id - b.id;
     })
     .slice(0, 8);
 
