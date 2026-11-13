@@ -110,12 +110,31 @@ export function changePresentation(event: ChangeEvent): DetailPresentation {
   };
 }
 
-/** Same recorded scan fields as legacy History; that view migrates in ticket 05. */
+interface ScanStatusMeta {
+  kind: StatusKind;
+  label: string;
+  running?: boolean;
+}
+
+/** Recorded scan status shared by the History row and its details. */
+export function scanStatusMeta(status: string): ScanStatusMeta {
+  switch (status) {
+    case "running":
+      return { kind: "new", label: "Running", running: true };
+    case "ok":
+      return { kind: "restored", label: "Completed" };
+    case "partial":
+      return { kind: "updated", label: "Completed with errors" };
+    case "cancelled":
+      return { kind: "deadline", label: "Failed" };
+    default:
+      return { kind: "deadline", label: status };
+  }
+}
+
+/** Recorded scan properties displayed by the shared details panel. */
 export function scanPresentation(scan: ScanRun): DetailPresentation {
-  const status = scan.status === "running" ? "Running"
-    : scan.status === "ok" ? "Completed"
-    : scan.status === "partial" ? "Completed with errors"
-    : scan.status === "cancelled" ? "Failed" : scan.status;
+  const { label: status } = scanStatusMeta(scan.status);
   return {
     title: `Scan of ${formatCompact(scan.startedAt)}`,
     properties: [

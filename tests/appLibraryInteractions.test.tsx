@@ -1,6 +1,6 @@
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { appApi, button, change, click, emitAppEvent, renderApp, setupApp } from "./helpers/renderApp";
+import { appApi, button, change, click, emitAppEvent, escape, renderApp, setupApp } from "./helpers/renderApp";
 import { course } from "./helpers/data";
 
 let app: Awaited<ReturnType<typeof renderApp>>;
@@ -28,6 +28,47 @@ describe("App Library interactions", () => {
     expect(document.querySelector(".peek-title")?.textContent).toBe("Lecture 4");
     expect(appApi.mirrorLocalFile).toHaveBeenCalledWith(1);
     expect(appApi.openExternal).not.toHaveBeenCalled();
+  });
+
+  it("offers a keyboard-reachable All files details button and restores it on Escape", async () => {
+    app = await renderApp();
+    await click(button("Library"));
+    await click(button("All files"));
+    const origin = button("Show details for Lecture 4");
+    origin.focus();
+    expect(origin.tabIndex).toBe(0);
+    // Native button activation is synthesized by browsers, not jsdom.
+    await click(origin);
+    expect(document.querySelector(".peek-title")?.textContent).toBe("Lecture 4");
+    expect(appApi.openExternal).not.toHaveBeenCalled();
+    expect(appApi.markRead).not.toHaveBeenCalled();
+    await escape();
+    expect(document.activeElement).toBe(origin);
+  });
+
+  it("clears All files details when its tab disappears", async () => {
+    app = await renderApp();
+    await click(button("Library"));
+    await click(button("All files"));
+    await click(button("Show details for Lecture 4"));
+    await click(button("Courses"));
+    expect(document.querySelector(".peek")).toBeNull();
+    expect(document.activeElement).toBe(document.querySelector("main h1"));
+  });
+
+  it("clears course details when changing between Contents and Activity", async () => {
+    appApi.eventsRange.mockResolvedValue([change({ title: "Course activity", resourceTitle: "Course activity" })]);
+    app = await renderApp();
+    await click(button("MATH F111"));
+    await click(document.querySelector<HTMLElement>('[role="treeitem"]:not([aria-expanded])')!);
+    expect(document.querySelector(".peek")).toBeTruthy();
+    await click(button("Activity"));
+    expect(document.querySelector(".peek")).toBeNull();
+    expect(document.activeElement).toBe(document.querySelector("main h1"));
+    await click(button("Show details for Course activity"));
+    await click(button("Contents"));
+    expect(document.querySelector(".peek")).toBeNull();
+    expect(document.activeElement).toBe(document.querySelector("main h1"));
   });
 
   it("shows a retryable Library error instead of an empty course list", async () => {

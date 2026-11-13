@@ -16,10 +16,12 @@ export function useHotkey(bindings: HotkeyMap, enabled = true): void {
     const keybindings = Object.fromEntries(entries);
     const handler = createKeybindingsHandler(keybindings, {
       ignore: (event) => {
-        if (event.repeat || event.isComposing || event.keyCode === 229) return true;
+        if (event.defaultPrevented || event.repeat || event.isComposing || event.keyCode === 229) return true;
         const target = event.target;
-        const editing = target instanceof Element && target.matches(
-          "input, textarea, select, [contenteditable]:not([contenteditable='false']), [role='textbox']",
+        const editor = target instanceof Element ? target.closest("[contenteditable]") : null;
+        const editing = target instanceof Element && (
+          target.closest("input, textarea, select, [role='textbox']") !== null ||
+          (editor !== null && editor.getAttribute("contenteditable") !== "false")
         );
         if (!editing) return false;
         const mod = navigator.platform.toLowerCase().includes("mac") ? event.metaKey : event.ctrlKey;

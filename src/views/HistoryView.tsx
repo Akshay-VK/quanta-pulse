@@ -11,7 +11,7 @@ import { dayKeyOf, eventKindMeta, groupEventsByDay, todayKey } from "../lib/even
 import { formatCompact, formatTimeOfDay } from "../lib/format";
 import { courseTitle } from "../lib/courseName";
 import { eventLinks, primaryUrl } from "../lib/open";
-import type { DetailsAdapter } from "../lib/details";
+import { scanStatusMeta, type DetailsAdapter } from "../lib/details";
 import PageHeader from "../components/PageHeader";
 import ResourceRow from "../components/ResourceRow";
 import { useMirror } from "../hooks/useMirror";
@@ -84,27 +84,6 @@ function dayLabel(key: string): string {
     day: "numeric",
     month: "long",
   });
-}
-
-interface ScanStatusMeta {
-  kind: StatusKind;
-  label: string;
-  running?: boolean;
-}
-
-function scanStatusMeta(status: string): ScanStatusMeta {
-  switch (status) {
-    case "running":
-      return { kind: "new", label: "Running", running: true };
-    case "ok":
-      return { kind: "restored", label: "Completed" };
-    case "partial":
-      return { kind: "updated", label: "Completed with errors" };
-    case "cancelled":
-      return { kind: "deadline", label: "Failed" };
-    default:
-      return { kind: "deadline", label: status };
-  }
 }
 
 function numberCell(value: number) {

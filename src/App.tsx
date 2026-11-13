@@ -86,6 +86,7 @@ function AppShell() {
   const [settingsNavigationState, setSettingsNavigationState] = useState({ dirty: false, valid: true, saving: false, error: null as string | null });
   const [pendingSettingsNavigation, setPendingSettingsNavigation] = useState<(() => void) | null>(null);
   const [settingsNavigationError, setSettingsNavigationError] = useState<string | null>(null);
+  const settingsNavigationGeneration = useRef(0);
   const settingsNavigationTrigger = useRef<HTMLElement | null>(null);
 
   const [sync, setSync] = useState<SyncStatus | null>(null);
@@ -139,6 +140,7 @@ function AppShell() {
       if (route.view === "settings" && settingsController.current?.dirty) {
         settingsNavigationTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
         setSettingsNavigationError(null);
+        ++settingsNavigationGeneration.current;
         setPendingSettingsNavigation(() => perform);
         return;
       }
@@ -167,6 +169,7 @@ function AppShell() {
     if (route.view === "settings" && settingsController.current?.dirty) {
       settingsNavigationTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       setSettingsNavigationError(null);
+      ++settingsNavigationGeneration.current;
       setPendingSettingsNavigation(() => perform);
       return;
     }
@@ -176,9 +179,11 @@ function AppShell() {
   const resolveSettingsNavigation = useCallback(async (choice: "save" | "discard") => {
     const target = pendingSettingsNavigation;
     if (!target) return;
+    const generation = ++settingsNavigationGeneration.current;
     const controller = settingsController.current;
     if (choice === "save") {
       const result = await controller?.save();
+      if (generation !== settingsNavigationGeneration.current) return;
       if (!result?.saved) {
         setSettingsNavigationError(result?.error ?? "Settings could not be saved. Try again.");
         return;
@@ -192,6 +197,7 @@ function AppShell() {
   }, [pendingSettingsNavigation]);
 
   const stayOnSettings = useCallback(() => {
+    ++settingsNavigationGeneration.current;
     setPendingSettingsNavigation(null);
     setSettingsNavigationError(null);
     requestAnimationFrame(() => {
@@ -489,6 +495,8 @@ function AppShell() {
     setSettings(saved);
   }, []);
 
+  const lookupLocalFile = mirror?.lookupLocalFile ?? api.mirrorLocalFile;
+
   const selectDetails = useCallback((owner: ViewId, subject: DetailSubject, origin: HTMLElement, restoreFocus?: RestoreDetailFocus) => {
     const next = { ...subject, owner, identity: detailIdentity(subject) };
     selectionRef.current = next;
@@ -502,7 +510,7 @@ function AppShell() {
       : subject.kind === "change" ? subject.resource : null;
     if (!resource || resource.isExternal) return;
     setLocalLookup("loading");
-    void api.mirrorLocalFile(resource.id).then((local) => {
+    void lookupLocalFile(resource.id).then((local) => {
       if (selectionGeneration.current === generation && localLookupGeneration.current === lookup) {
         setPeekLocal(local);
         setLocalLookup("ready");
@@ -513,7 +521,7 @@ function AppShell() {
         notify(`Could not load local copy: ${String(err)}`, true);
       }
     });
-  }, [notify]);
+  }, [notify, lookupLocalFile]);
 
   /** Opens the local copy, downloading it first when it is not on disk. */
   const openLocal = useCallback(
@@ -532,7 +540,7 @@ function AppShell() {
     async (resourceId: number) => {
       const generation = selectionGeneration.current;
       try {
-        const local = await api.ensureLocal(resourceId);
+        const local = await (mirror?.ensureLocal ?? api.ensureLocal)(resourceId);
         const selected = selectionRef.current;
         const resource = selected?.kind === "resource" ? selected.resource
           : selected?.kind === "change" ? selected.resource : null;

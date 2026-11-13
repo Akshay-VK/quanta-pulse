@@ -78,6 +78,24 @@ describe("App keyboard shortcuts", () => {
     expect(document.querySelector("main h1")?.textContent).toBe("Today");
   });
 
+  it("guards focusable descendants of contenteditable and ARIA editors", async () => {
+    app = await renderApp();
+    for (const attribute of ['contenteditable="true"', 'role="textbox"']) {
+      const editor = document.createElement("div");
+      editor.innerHTML = `<div ${attribute}><span tabindex="0">Editing</span></div>`;
+      document.querySelector("main")!.append(editor);
+      editor.querySelector<HTMLElement>("span")!.focus();
+      await act(async () => { key("2", { ctrlKey: true }); });
+      expect(document.querySelector("main h1")?.textContent).toBe("Today");
+      await act(async () => { key("k", { ctrlKey: true, isComposing: true }); });
+      expect(document.querySelector('[role="dialog"]')).toBeNull();
+      await act(async () => { key("k", { ctrlKey: true }); });
+      expect(document.querySelector('[role="dialog"]')).toBeTruthy();
+      await act(async () => { key("Escape"); });
+      editor.remove();
+    }
+  });
+
   it("sends slash to the current view search, or opens the palette when none exists", async () => {
     app = await renderApp();
     const search = document.querySelector<HTMLInputElement>('input[placeholder="Search titles…"]')!;

@@ -228,7 +228,13 @@ export default function SettingsView({
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+      const mac = navigator.platform.toLowerCase().includes("mac");
+      const mod = mac ? e.metaKey : e.ctrlKey;
+      const extraMod = mac ? e.ctrlKey : e.metaKey;
+      if (e.defaultPrevented || e.repeat || e.isComposing || e.keyCode === 229 ||
+          e.altKey || e.shiftKey || extraMod || !mod ||
+          document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], .sidebar.overlay')) return;
+      if (e.key.toLowerCase() === "s") {
         e.preventDefault();
         void save();
       }

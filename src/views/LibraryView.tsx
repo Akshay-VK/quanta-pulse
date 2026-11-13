@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import PageHeader from "../components/PageHeader";
 import PreviewDialog from "../components/PreviewDialog";
 import { SearchField } from "../components/ui/SearchField";
@@ -53,6 +53,11 @@ export default function LibraryView({
 }: LibraryViewProps) {
   // The Courses | All files choice survives navigating into a course page.
   const [tab, setTab] = useState<"courses" | "files">(courseId == null ? "courses" : "files");
+  const previousTab = useRef(tab);
+  useEffect(() => {
+    if (previousTab.current !== tab) details?.clear();
+    previousTab.current = tab;
+  }, [tab, details]);
   const [search, setSearch] = useState("");
   const [previewResource, setPreviewResource] = useState<Resource | null>(null);
 
