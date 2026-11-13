@@ -29,7 +29,10 @@ import { isLocal } from "./lib/mirrorState";
 import { useMediaQuery } from "./hooks/useMediaQuery";
 import { resolveView, NAV, type ViewId } from "./lib/nav";
 import { cx } from "./lib/cx";
-import { resourceDetails } from "./lib/details";
+import {
+  changePresentation, detailIdentity, scanPresentation, todayPresentation,
+  type DetailSelection, type DetailSubject, type DetailsAdapter, type RestoreDetailFocus,
+} from "./lib/details";
 import { canPreview } from "./lib/preview";
 import { relativeLabel } from "./lib/format";
 import { registerCourseLabels, courseLabel } from "./lib/courseName";
@@ -44,7 +47,6 @@ import type {
   Settings,
   SyncStatus,
 } from "./lib/types";
-import type { StatusKind } from "./components/ui/StatusTag";
 
 /** The one app-level navigation model: a view plus an optional course. */
 export interface Route {
@@ -66,6 +68,10 @@ export function loadCollapsed(): boolean {
 }
 
 export default function App() {
+  return <MirrorProvider><AppShell /></MirrorProvider>;
+}
+
+function AppShell() {
   const { themeMode, setThemeMode, resolved, toggle } = useTheme();
 
   const [auth, setAuth] = useState<AuthStatus | null>(null);
@@ -92,8 +98,17 @@ export default function App() {
 
   const [showLogin, setShowLogin] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [peekResource, setPeekResource] = useState<Resource | null>(null);
+  const [selection, setSelection] = useState<DetailSelection | null>(null);
+  const selectionRef = useRef<DetailSelection | null>(null);
+  const selectionGeneration = useRef(0);
+  const localLookupGeneration = useRef(0);
+  const mainRef = useRef<HTMLElement>(null);
+  const restoreRow = useRef<RestoreDetailFocus | undefined>();
+  const peekResource = selection?.kind === "resource"
+    ? selection.resource
+    : selection?.kind === "change" ? selection.resource ?? null : null;
   const [peekLocal, setPeekLocal] = useState<LocalFile | null>(null);
+  const [localLookup, setLocalLookup] = useState<"loading" | "ready" | "error">("ready");
   const mirror = useMirror();
   const [previewResource, setPreviewResource] = useState<Resource | null>(null);
   const lastRow = useRef<HTMLElement | null>(null);
@@ -413,15 +428,31 @@ export default function App() {
     setSettings(saved);
   }, []);
 
-  const openPeek = useCallback((resource: Resource) => {
-    lastRow.current = document.activeElement as HTMLElement | null;
-    setPeekResource(resource);
+  const selectDetails = useCallback((owner: ViewId, subject: DetailSubject, origin: HTMLElement, restoreFocus?: RestoreDetailFocus) => {
+    const next = { ...subject, owner, identity: detailIdentity(subject) };
+    selectionRef.current = next;
+    const generation = ++selectionGeneration.current;
+    const lookup = ++localLookupGeneration.current;
+    lastRow.current = origin;
+    restoreRow.current = restoreFocus;
+    setSelection(next);
     setPeekLocal(null);
-    void api
-      .mirrorLocalFile(resource.id)
-      .then(setPeekLocal)
-      .catch(() => setPeekLocal(null));
-  }, []);
+    const resource = subject.kind === "resource" ? subject.resource
+      : subject.kind === "change" ? subject.resource : null;
+    if (!resource || resource.isExternal) return;
+    setLocalLookup("loading");
+    void api.mirrorLocalFile(resource.id).then((local) => {
+      if (selectionGeneration.current === generation && localLookupGeneration.current === lookup) {
+        setPeekLocal(local);
+        setLocalLookup("ready");
+      }
+    }).catch((err) => {
+      if (selectionGeneration.current === generation && localLookupGeneration.current === lookup) {
+        setLocalLookup("error");
+        notify(`Could not load local copy: ${String(err)}`, true);
+      }
+    });
+  }, [notify]);
 
   /** Opens the local copy, downloading it first when it is not on disk. */
   const openLocal = useCallback(
@@ -438,15 +469,35 @@ export default function App() {
   /** Download on demand (P0) and tell the user what happened. */
   const ensureLocal = useCallback(
     async (resourceId: number) => {
+      const generation = selectionGeneration.current;
       try {
-        await api.ensureLocal(resourceId);
+        const local = await api.ensureLocal(resourceId);
+        const selected = selectionRef.current;
+        const resource = selected?.kind === "resource" ? selected.resource
+          : selected?.kind === "change" ? selected.resource : null;
+        if (generation === selectionGeneration.current && resource?.id === resourceId) {
+          // A lookup started before this download cannot replace its result.
+          ++localLookupGeneration.current;
+          setPeekLocal(local);
+          setLocalLookup("ready");
+        }
+        void mirror?.refresh();
         notify("Saved to this computer.");
       } catch (err) {
         notify(String(err), true);
       }
     },
-    [notify],
+    [notify, mirror],
   );
+
+  const copyText = useCallback(async (text: string, success: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      notify(success);
+    } catch {
+      notify("Could not copy to the clipboard.", true);
+    }
+  }, [notify]);
 
   const copyLocalPath = useCallback(
     (path: string | null | undefined) => {
@@ -454,45 +505,68 @@ export default function App() {
         notify("No local copy yet.", true);
         return;
       }
-      void navigator.clipboard?.writeText(path).then(
-        () => notify("Path copied."),
-        () => notify("Could not copy the path.", true),
-      );
+      void copyText(path, "Path copied.");
     },
-    [notify],
+    [notify, copyText],
   );
 
   const closePeek = useCallback(() => {
-    setPeekResource(null);
-    lastRow.current?.focus();
+    if (!selectionRef.current) return;
+    selectionRef.current = null;
+    ++selectionGeneration.current;
+    setSelection(null);
+    setPeekLocal(null);
+    const origin = lastRow.current;
+    const visible = (element: HTMLElement) =>
+      element.isConnected &&
+      !element.closest('[hidden], [inert], [aria-hidden="true"]') &&
+      getComputedStyle(element).visibility !== "hidden" &&
+      getComputedStyle(element).display !== "none" &&
+      element.getClientRects().length > 0;
+    if (origin && visible(origin)) origin.focus();
+    else if (!restoreRow.current?.()) {
+      const heading = mainRef.current?.querySelector<HTMLElement>("h1");
+      heading?.setAttribute("tabindex", "-1");
+      heading?.focus();
+    }
   }, []);
 
+  const adapterCallbacks = useMemo(() => Object.fromEntries(NAV.map(({ id: owner }) => [owner, {
+    selectResource: (resource: Resource, origin: HTMLElement, restore?: RestoreDetailFocus) => selectDetails(owner, { kind: "resource", resource }, origin, restore),
+    selectChange: (change: ChangeEvent, origin: HTMLElement, resource?: Resource | null, restore?: RestoreDetailFocus) => selectDetails(owner, { kind: "change", change, resource }, origin, restore),
+    selectScan: (scan: ScanRun, origin: HTMLElement, restore?: RestoreDetailFocus) => selectDetails(owner, { kind: "scan", scan }, origin, restore),
+    clear: () => { if (selectionRef.current?.owner === owner) closePeek(); },
+  }])) as Record<ViewId, Omit<DetailsAdapter, "selected">>, [selectDetails, closePeek]);
+  const detailsAdapters = useMemo(() => Object.fromEntries(NAV.map(({ id }) => [id, {
+    ...adapterCallbacks[id], selected: selection?.owner === id ? selection : null,
+  }])) as Record<ViewId, DetailsAdapter>, [adapterCallbacks, selection]);
+
+  useEffect(() => () => { ++selectionGeneration.current; }, []);
+
+  // Runs after the next view has committed, so the fallback heading is current.
+  useEffect(() => { closePeek(); }, [route, closePeek]);
+
   const peekDetails: PeekDetails | null = useMemo(() => {
-    if (!peekResource) return null;
-    const kinds = eventKinds.get(peekResource.id);
-    let statusTag: { kind: StatusKind; label: string } | null = null;
-    if (peekResource.availabilityStatus !== "available") {
-      statusTag = { kind: "unavailable", label: "Unavailable" };
-    } else if (kinds?.has("announcement")) {
-      statusTag = { kind: "note", label: "Announcement" };
-    } else if (kinds?.has("updated")) {
-      statusTag = { kind: "updated", label: "Updated" };
-    } else if (kinds?.has("new")) {
-      statusTag = { kind: "new", label: "New" };
+    if (selection?.kind === "change" && !peekResource) {
+      const event = selection.change;
+      const fileUrl = event.resourceUrl;
+      const pageUrl = event.sourcePageUrl;
+      return {
+        ...changePresentation(event),
+        primaryAction: fileUrl ? { label: "Open file", onClick: () => void open(fileUrl) } : null,
+        secondaryAction: pageUrl ? { label: "Open Quanta page", onClick: () => void open(pageUrl) } : null,
+      };
     }
+    if (selection?.kind === "scan") return scanPresentation(selection.scan);
+    if (!peekResource) return null;
     const previewable = canPreview(peekResource.resourceType, peekResource.url);
     const local = peekLocal && peekLocal.resourceId === peekResource.id ? peekLocal : null;
     const localStatus = peekResource.isExternal
       ? undefined
-      : mirror?.statusOf(peekResource.id) ?? null;
+      : mirror?.statusOf(peekResource.id) ?? local;
     return {
-      statusTag,
-      title: peekResource.title,
-      properties: resourceDetails(peekResource),
-      note:
-        peekResource.availabilityStatus !== "available"
-          ? "Missing for 2 scans in a row. It may come back."
-          : null,
+      ...todayPresentation(peekResource, eventKinds.get(peekResource.id)),
+      ...(selection?.kind === "change" ? changePresentation(selection.change) : {}),
       primaryAction:
         localStatus && isLocal(localStatus)
           ? { label: "Open local copy", onClick: () => void openLocal(peekResource.id) }
@@ -501,14 +575,14 @@ export default function App() {
         localStatus === undefined
           ? undefined
           : {
-              status: localStatus?.status ?? "queued",
+              status: localStatus?.status ?? (localLookup === "loading" ? "Loading local copy…" : localLookup === "error" ? "Local copy unavailable" : "No local copy yet"),
               error: localStatus?.error ?? null,
               sizeBytes: local?.sizeBytes ?? null,
               path: local?.path ?? null,
             },
       onOpenLocal: () => void openLocal(peekResource.id),
-      onRevealLocal: () =>
-        void api.revealLocalFile(peekResource.id).catch((err) => notify(String(err), true)),
+      onRevealLocal: local && isLocal(localStatus) ? () =>
+        void api.revealLocalFile(peekResource.id).catch((err) => notify(String(err), true)) : undefined,
       onCopyLocalPath: () => void copyLocalPath(local?.path),
       onDownloadNow: () => void ensureLocal(peekResource.id),
       onRedownload: () => void ensureLocal(peekResource.id),
@@ -529,18 +603,16 @@ export default function App() {
           id: "copy",
           label: "Copy link",
           onSelect: () =>
-            void navigator.clipboard?.writeText(
-              peekResource.sourcePageUrl ?? peekResource.url,
-            ),
+            void copyText(peekResource.sourcePageUrl ?? peekResource.url, "Link copied."),
         },
-        {
+        ...(selection?.kind === "resource" ? [{
           id: "read",
           label: unreadIds.has(peekResource.id) ? "Mark as read" : "Mark as unread",
           onSelect: () => void toggleResourceRead(peekResource),
-        },
+        }] : []),
       ],
     };
-  }, [peekResource, peekLocal, mirror, eventKinds, unreadIds, open, openLocal, notify, toggleResourceRead]);
+  }, [selection, peekResource, peekLocal, localLookup, mirror, eventKinds, unreadIds, open, openLocal, ensureLocal, copyLocalPath, copyText, notify, toggleResourceRead]);
 
   const paletteActions: PaletteAction[] = useMemo(
     () => [
@@ -575,9 +647,12 @@ export default function App() {
         else toggleSidebar();
       },
       "$mod+ArrowLeft": () => goBack(),
-      Escape: () => {
+      Escape: (event) => {
+        // Radix owns modal/menu dismissal at document level. Its surface may
+        // still be mounted until this event finishes bubbling to window.
+        if (event.defaultPrevented || previewResource || document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]')) return;
         if (drawerOpen) setDrawerOpen(false);
-        else if (peekResource) closePeek();
+        else if (selection) closePeek();
       },
     },
     !paletteOpen && !showLogin,
@@ -628,8 +703,7 @@ export default function App() {
     : { items: [], current: currentLabel };
 
   return (
-    <MirrorProvider>
-      <TooltipProvider>
+    <TooltipProvider>
       <div className={cx("app", collapsed && "rail", drawerOpen && "drawer-open")}>
         {narrow && drawerOpen && (
           <div
@@ -680,7 +754,7 @@ export default function App() {
 
           <SyncProgress running={Boolean(sync?.running)} progress={sync?.progress ?? 0} />
 
-          <main className="app-main">
+          <main className="app-main" ref={mainRef}>
             <div className="page">
               {route.view === "today" && (
                 <TodayView
@@ -694,7 +768,8 @@ export default function App() {
                   error={loadError}
                   onRetry={() => void refresh()}
                   selectedId={peekResource?.id ?? null}
-                  onSelect={openPeek}
+                  onSelect={detailsAdapters.today.selectResource}
+                  onSelectionRemoved={detailsAdapters.today.clear}
                   onOpen={(url) => void open(url)}
                   onOpenLocal={(resourceId) => void openLocal(resourceId)}
                   onPreview={setPreviewResource}
@@ -756,7 +831,13 @@ export default function App() {
           </main>
         </div>
 
-        <PeekPanel open={Boolean(peekDetails)} details={peekDetails} onClose={closePeek} />
+        <PeekPanel
+          selectionKey={selection ? `${selection.identity}:${selectionGeneration.current}` : undefined}
+          open={selection?.owner === route.view && Boolean(peekDetails)}
+          details={peekDetails}
+          onClose={closePeek}
+          onCopy={(text) => void copyText(text, "Copied.")}
+        />
 
         {previewResource && (
           <PreviewDialog
@@ -783,6 +864,5 @@ export default function App() {
         <Toaster toasts={toasts} onDismiss={dismissToast} />
       </div>
       </TooltipProvider>
-    </MirrorProvider>
   );
 }

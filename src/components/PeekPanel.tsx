@@ -1,5 +1,5 @@
 import { MoreHorizontal, X } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
 import { Button } from "./ui/Button";
 import { IconButton } from "./ui/IconButton";
 import { Menu, type MenuItemSpec } from "./ui/Menu";
@@ -43,20 +43,27 @@ export default function PeekPanel({
   open,
   details,
   onClose,
+  selectionKey,
+  onCopy,
 }: {
+  selectionKey?: string;
   open: boolean;
   details: PeekDetails | null;
   onClose: () => void;
+  onCopy?: (text: string) => void;
 }) {
+  const titleId = useId();
   const titleRef = useRef<HTMLHeadingElement>(null);
   const wasOpen = useRef(false);
+  const previousKey = useRef(selectionKey);
 
   useEffect(() => {
-    if (open && details && !wasOpen.current) {
+    if (open && details && (!wasOpen.current || previousKey.current !== selectionKey)) {
       titleRef.current?.focus();
     }
+    previousKey.current = selectionKey;
     wasOpen.current = open && Boolean(details);
-  }, [open, details]);
+  }, [open, details, selectionKey]);
 
   if (!open || !details) return null;
 
@@ -72,7 +79,7 @@ export default function PeekPanel({
     : null;
 
   return (
-    <aside className="peek open" aria-label="Details">
+    <aside className="peek open" aria-labelledby={titleId}>
       <div className="peek-inner peek-enter">
         <div className="peek-header">
           <span>
@@ -85,17 +92,18 @@ export default function PeekPanel({
           </IconButton>
         </div>
 
-        <h2 className="peek-title" tabIndex={-1} ref={titleRef}>
+        <h2 id={titleId} className="peek-title" tabIndex={-1} ref={titleRef}>
           {details.title}
         </h2>
 
-        <PropertyList className="peek-properties" properties={details.properties} />
+        <PropertyList className="peek-properties" properties={details.properties} onCopy={onCopy} />
 
         {details.local && (
           <>
             <h3 className="peek-group-title">Local copy</h3>
             <PropertyList
               className="peek-properties"
+              onCopy={onCopy}
               properties={[
                 { label: "Status", value: localStatusLabel(details.local) },
                 ...(details.local.sizeBytes != null
