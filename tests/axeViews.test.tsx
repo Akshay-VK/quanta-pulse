@@ -14,6 +14,7 @@ import type {
   Settings,
 } from "../src/lib/types";
 import type { ThemeMode } from "../src/lib/types";
+import type { DetailsAdapter } from "../src/lib/details";
 
 vi.mock("../src/lib/api", () => ({
   api: {
@@ -226,6 +227,14 @@ function noop(): void {
   return undefined;
 }
 
+const historyDetails: DetailsAdapter = {
+  selected: null,
+  selectResource: noop,
+  selectChange: noop,
+  selectScan: noop,
+  clear: noop,
+};
+
 interface Scenario {
   name: string;
   render: () => React.ReactElement;
@@ -283,6 +292,11 @@ const SCENARIOS: Scenario[] = [
         courses={courses()}
         events={changeEvents()}
         scans={[event()]}
+        resources={resources()}
+        details={historyDetails}
+        loading={false}
+        error={null}
+        onRetry={noop}
         onOpen={noop}
         onMarkAllRead={() => Promise.resolve()}
         onClearAll={() => Promise.resolve()}

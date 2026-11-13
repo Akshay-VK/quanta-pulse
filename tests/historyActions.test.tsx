@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import HistoryView from "../src/views/HistoryView";
 import { TooltipProvider } from "../src/components/ui/Tooltip";
 import type { ChangeEvent } from "../src/lib/types";
+import type { DetailsAdapter } from "../src/lib/details";
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;
@@ -26,6 +27,14 @@ const event = (id: number, read: boolean): ChangeEvent => ({
   detectedAt: "2026-10-12T10:00:00Z",
   read,
 });
+
+const details = {
+  selected: null,
+  selectResource: vi.fn(),
+  selectChange: vi.fn(),
+  selectScan: vi.fn(),
+  clear: vi.fn(),
+} satisfies DetailsAdapter;
 
 let container: HTMLDivElement;
 let root: Root;
@@ -53,6 +62,11 @@ function Harness({ onMarkAllRead }: { onMarkAllRead: () => Promise<void> }) {
         courses={[]}
         events={events}
         scans={[]}
+        resources={[]}
+        details={details}
+        loading={false}
+        error={null}
+        onRetry={() => undefined}
         onOpen={() => undefined}
         onMarkAllRead={async () => {
           setEvents((current) => current.map((item) => ({ ...item, read: true })));

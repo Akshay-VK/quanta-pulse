@@ -807,6 +807,11 @@ function AppShell() {
                   courses={courses}
                   scans={scans}
                   events={historyEvents}
+                  resources={resources}
+                  details={detailsAdapters.history}
+                  loading={loading}
+                  error={loadError}
+                  onRetry={() => void refresh()}
                   onOpen={(url) => void open(url)}
                   onOpenLocal={(resourceId) => void openLocal(resourceId)}
                   onMarkAllRead={markHistoryRead}
