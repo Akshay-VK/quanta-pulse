@@ -4,6 +4,9 @@ import PreviewDialog from "../components/PreviewDialog";
 import { SearchField } from "../components/ui/SearchField";
 import { ToggleGroup } from "../components/ui/ToggleGroup";
 import type { Course, Resource } from "../lib/types";
+import type { DetailsAdapter } from "../lib/details";
+import { Banner } from "../components/ui/Banner";
+import { Skeleton } from "../components/ui/Skeleton";
 import AllFiles from "./library/AllFiles";
 import CourseList from "./library/CourseList";
 import CoursePage from "./library/CoursePage";
@@ -23,6 +26,10 @@ export interface LibraryViewProps {
   onSyncNow?: () => void;
   /** courseId -> unread change count, for the course list badges. */
   unreadByCourse?: Map<number, number> | null;
+  details?: DetailsAdapter;
+  loading?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
 }
 
 function plural(n: number, word: string): string {
@@ -39,6 +46,10 @@ export default function LibraryView({
   onOpen,
   onSyncNow,
   unreadByCourse,
+  details,
+  loading = false,
+  error = null,
+  onRetry,
 }: LibraryViewProps) {
   // The Courses | All files choice survives navigating into a course page.
   const [tab, setTab] = useState<"courses" | "files">(courseId == null ? "courses" : "files");
@@ -56,6 +67,7 @@ export default function LibraryView({
           onPreview={setPreviewResource}
           onChanged={onChanged}
           onSyncNow={onSyncNow}
+          details={details}
         />
         <PreviewDialog
           resource={previewResource}
@@ -94,7 +106,14 @@ export default function LibraryView({
           </div>
         }
       />
-      {tab === "courses" ? (
+      {error && (
+        <Banner kind="error" action={onRetry ? { label: "Retry", onClick: onRetry } : undefined}>
+          {error}
+        </Banner>
+      )}
+      {loading && courses.length === 0 && resources.length === 0 ? (
+        <Skeleton rows={8} />
+      ) : error && courses.length === 0 && resources.length === 0 ? null : tab === "courses" ? (
         <CourseList
           courses={courses}
           resources={resources}
@@ -112,6 +131,8 @@ export default function LibraryView({
           search={search}
           onOpen={onOpen}
           onPreview={setPreviewResource}
+          details={details}
+          onClearSearch={() => setSearch("")}
         />
       )}
 

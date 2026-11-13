@@ -14,6 +14,7 @@ import type {
   Settings,
 } from "../src/lib/types";
 import type { ThemeMode } from "../src/lib/types";
+import type { DetailsAdapter } from "../src/lib/details";
 
 vi.mock("../src/lib/api", () => ({
   api: {
@@ -225,6 +226,15 @@ function changeEvents() {
 function noop(): void {
   return undefined;
 }
+const calendarDetails: DetailsAdapter = { selected: null, selectResource: noop, selectChange: noop, selectScan: noop, clear: noop };
+
+const historyDetails: DetailsAdapter = {
+  selected: null,
+  selectResource: noop,
+  selectChange: noop,
+  selectScan: noop,
+  clear: noop,
+};
 
 interface Scenario {
   name: string;
@@ -260,7 +270,7 @@ const SCENARIOS: Scenario[] = [
   },
   {
     name: "Calendar",
-    render: () => <CalendarView courses={courses()} onOpen={noop} onOpenScan={noop} />,
+    render: () => <CalendarView courses={courses()} onOpen={noop} onOpenScan={noop} details={calendarDetails} />,
   },
   {
     name: "Library",
@@ -283,6 +293,11 @@ const SCENARIOS: Scenario[] = [
         courses={courses()}
         events={changeEvents()}
         scans={[event()]}
+        resources={resources()}
+        details={historyDetails}
+        loading={false}
+        error={null}
+        onRetry={noop}
         onOpen={noop}
         onMarkAllRead={() => Promise.resolve()}
         onClearAll={() => Promise.resolve()}
