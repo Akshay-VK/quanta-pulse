@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Copy, ExternalLink, MailOpen, X } from "lucide-react";
 import PageHeader from "../components/PageHeader";
 import ResourceRow from "../components/ResourceRow";
@@ -101,6 +101,7 @@ export default function TodayView({
   onRetry,
   selectedId,
   onSelect,
+  onSelectionRemoved,
   onOpen,
   onPreview,
   onOpenLocal,
@@ -120,7 +121,8 @@ export default function TodayView({
   error: string | null;
   onRetry: () => void;
   selectedId: number | null;
-  onSelect: (resource: Resource) => void;
+  onSelectionRemoved?: () => void;
+  onSelect: (resource: Resource, origin: HTMLElement) => void;
   onOpen: (url: string) => void;
   onOpenLocal: (resourceId: number) => void;
   onPreview: (resource: Resource) => void;
@@ -178,6 +180,9 @@ export default function TodayView({
     [events, kind, courseFilter, search, eventKinds],
   );
   const groups = useMemo(() => groupByDate(filtered), [filtered]);
+  useEffect(() => {
+    if (selectedId != null && !filtered.some((resource) => resource.id === selectedId)) onSelectionRemoved?.();
+  }, [filtered, selectedId, onSelectionRemoved]);
 
   const summary = useMemo(() => {
     const hasKinds = (r: Resource, k: string) => Boolean(eventKinds.get(r.id)?.has(k));
@@ -326,7 +331,7 @@ export default function TodayView({
                 openLabel={openLabel(resource, eventKinds)}
                 previewAvailable={canPreview(resource.resourceType, resource.url)}
                 local={resource.isExternal ? undefined : mirror?.statusOf(resource.id)}
-                onSelect={() => onSelect(resource)}
+                onSelect={(origin) => onSelect(resource, origin)}
                 onCourse={
                   resource.courseId != null
                     ? () => onOpenCourse(resource.courseId as number)

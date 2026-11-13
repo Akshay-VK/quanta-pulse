@@ -96,7 +96,7 @@ export default function ResourceRow({
   local?: LocalFileStatus | null;
   /** Opens the local copy through the Shell ('Open local copy'). */
   onOpenLocal?: () => void;
-  onSelect: () => void;
+  onSelect: (origin: HTMLButtonElement) => void;
   onOpen?: () => void;
   onPreview?: () => void;
   /** Opens the course this row belongs to; the course pill becomes a button. */
@@ -125,7 +125,7 @@ export default function ResourceRow({
         type="button"
         className="row-select"
         aria-label={`Show details for ${title}`}
-        onClick={onSelect}
+        onClick={(event) => onSelect(event.currentTarget)}
       >
         <UnreadDot unread={unread} />
         <FileTypeIcon type={type} />

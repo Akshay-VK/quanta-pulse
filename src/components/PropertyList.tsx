@@ -6,9 +6,11 @@ import type { DetailProperty } from "../lib/details";
 export default function PropertyList({
   properties,
   className,
+  onCopy,
 }: {
   properties: DetailProperty[];
   className?: string;
+  onCopy?: (text: string) => void;
 }) {
   return (
     <dl className={className ? `properties ${className}` : "properties"}>
@@ -22,7 +24,9 @@ export default function PropertyList({
                 label={`Copy ${prop.label.toLowerCase()}`}
                 size={28}
                 tooltip={false}
-                onClick={() => void navigator.clipboard?.writeText(prop.copy ?? "")}
+                onClick={() => onCopy
+                  ? onCopy(prop.copy ?? "")
+                  : void navigator.clipboard?.writeText(prop.copy ?? "")}
               >
                 <Copy aria-hidden="true" />
               </IconButton>

@@ -1,5 +1,5 @@
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import type { ReactNode, RefObject } from "react";
+import { useRef, type ReactNode, type RefObject } from "react";
 import { cx } from "../../lib/cx";
 
 interface DialogProps {
@@ -35,6 +35,7 @@ export function Dialog({
   onCloseAutoFocus,
   children,
 }: DialogProps) {
+  const returnFocus = useRef<HTMLElement | null>(null);
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
@@ -45,15 +46,21 @@ export function Dialog({
           aria-label={label}
           aria-labelledby={labelledBy}
           aria-describedby={describedBy}
-          onOpenAutoFocus={
-            initialFocusRef
-              ? (event) => {
-                  event.preventDefault();
-                  initialFocusRef.current?.focus();
-                }
-              : undefined
-          }
-          onCloseAutoFocus={onCloseAutoFocus}
+          onOpenAutoFocus={(event) => {
+            returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+            if (initialFocusRef) {
+              event.preventDefault();
+              initialFocusRef.current?.focus();
+            }
+          }}
+          onCloseAutoFocus={(event) => {
+            if (onCloseAutoFocus) onCloseAutoFocus(event);
+            else if (returnFocus.current?.isConnected) {
+              // Controlled dialogs (e.g. Preview) have no Radix Trigger.
+              event.preventDefault();
+              returnFocus.current.focus();
+            }
+          }}
         >
           {children}
           {!describedBy && (
