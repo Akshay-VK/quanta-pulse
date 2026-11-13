@@ -21,3 +21,7 @@ The protected parent checkout remains at `967333bb585bff478810f453be1c6ba2c2c96c
 ## Remaining work
 
 Tickets 06 (keyboard and palette) and 07 (Settings feedback) are in progress on separate workers and are not integrated. Ticket 08 acceptance remains pending until the remaining implementation is complete. Draft PR 10 and its issues remain open during implementation.
+
+## 2026-11-13 ticket 06 integrated
+
+Ticket 06 (keyboard navigation and palette hints) merged fast-forward at `fd1b604b70aac3511f181fd93f3ea0cc08b7086d` (worker commit `42b9008`). Integration gates: lint pass, tests 286/36, build pass, diff-check pass. Ticket 07 (Settings) and ticket 08 acceptance remain pending; Mod+S save belongs to ticket 07 and is not claimed here.
