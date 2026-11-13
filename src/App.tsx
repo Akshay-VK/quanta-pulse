@@ -14,6 +14,8 @@ import LoginScreen from "./components/LoginScreen";
 import PreviewDialog from "./components/PreviewDialog";
 import SyncProgress from "./components/SyncProgress";
 import { IconButton } from "./components/ui/IconButton";
+import { Button } from "./components/ui/Button";
+import { Dialog } from "./components/ui/Dialog";
 import { TooltipProvider } from "./components/ui/Tooltip";
 import { Toaster, type ToastItem } from "./components/ui/Toast";
 import TodayView from "./views/TodayView";
@@ -21,6 +23,7 @@ import CalendarView from "./views/CalendarView";
 import LibraryView from "./views/LibraryView";
 import HistoryView from "./views/HistoryView";
 import SettingsView from "./views/SettingsView";
+import type { SettingsNavigationController } from "./views/SettingsView";
 import { api } from "./lib/api";
 import { useTheme } from "./hooks/useTheme";
 import { useHotkey } from "./hooks/useHotkey";
@@ -79,6 +82,11 @@ function AppShell() {
   const [route, setRoute] = useState<Route>(START);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(loadCollapsed);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const settingsController = useRef<SettingsNavigationController | null>(null);
+  const [settingsNavigationState, setSettingsNavigationState] = useState({ dirty: false, valid: true, saving: false, error: null as string | null });
+  const [pendingSettingsNavigation, setPendingSettingsNavigation] = useState<(() => void) | null>(null);
+  const [settingsNavigationError, setSettingsNavigationError] = useState<string | null>(null);
+  const settingsNavigationTrigger = useRef<HTMLElement | null>(null);
 
   const [sync, setSync] = useState<SyncStatus | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -122,12 +130,21 @@ function AppShell() {
   /** Every navigation goes through here, so Alt+Left has something to undo. */
   const go = useCallback(
     (next: Route) => {
+      const perform = () => {
       setRoute((prev) => {
         backStack.current = [...backStack.current, prev].slice(-25);
         return next;
       });
+      };
+      if (route.view === "settings" && settingsController.current?.dirty) {
+        settingsNavigationTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        setSettingsNavigationError(null);
+        setPendingSettingsNavigation(() => perform);
+        return;
+      }
+      perform();
     },
-    [],
+    [route.view],
   );
 
   const navigate = useCallback(
@@ -142,8 +159,52 @@ function AppShell() {
   );
 
   const goBack = useCallback(() => {
-    const prev = backStack.current.pop();
-    if (prev) setRoute(prev);
+    if (backStack.current.length === 0) return;
+    const perform = () => {
+      const prev = backStack.current.pop();
+      if (prev) setRoute(prev);
+    };
+    if (route.view === "settings" && settingsController.current?.dirty) {
+      settingsNavigationTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      setSettingsNavigationError(null);
+      setPendingSettingsNavigation(() => perform);
+      return;
+    }
+    perform();
+  }, [route.view]);
+
+  const resolveSettingsNavigation = useCallback(async (choice: "save" | "discard") => {
+    const target = pendingSettingsNavigation;
+    if (!target) return;
+    const controller = settingsController.current;
+    if (choice === "save") {
+      const result = await controller?.save();
+      if (!result?.saved) {
+        setSettingsNavigationError(result?.error ?? "Settings could not be saved. Try again.");
+        return;
+      }
+    } else {
+      controller?.discard();
+    }
+    setPendingSettingsNavigation(null);
+    setSettingsNavigationError(null);
+    target();
+  }, [pendingSettingsNavigation]);
+
+  const stayOnSettings = useCallback(() => {
+    setPendingSettingsNavigation(null);
+    setSettingsNavigationError(null);
+    requestAnimationFrame(() => {
+      if (settingsNavigationTrigger.current?.isConnected) settingsNavigationTrigger.current.focus();
+    });
+  }, []);
+
+  const registerSettingsController = useCallback((controller: SettingsNavigationController | null) => {
+    settingsController.current = controller;
+    const next = controller
+      ? { dirty: controller.dirty, valid: controller.valid, saving: controller.saving, error: controller.error }
+      : { dirty: false, valid: true, saving: false, error: null };
+    setSettingsNavigationState((current) => current.dirty === next.dirty && current.valid === next.valid && current.saving === next.saving && current.error === next.error ? current : next);
   }, []);
 
   const toggleSidebar = useCallback(() => {
@@ -825,6 +886,7 @@ function AppShell() {
                   onRefresh={() => void refresh()}
                   themeMode={themeMode}
                   onThemeMode={setThemeMode}
+                  onController={registerSettingsController}
                 />
               )}
             </div>
@@ -860,6 +922,28 @@ function AppShell() {
           onOpenResource={(url) => void open(url)}
           actions={paletteActions}
         />
+
+        <Dialog
+          open={Boolean(pendingSettingsNavigation)}
+          onOpenChange={(open) => { if (!open) stayOnSettings(); }}
+          label="Unsaved settings"
+          role="alertdialog"
+          className="dialog-confirm"
+        >
+          <h2 className="dialog-title">Unsaved settings</h2>
+          <p className="dialog-body">Save your changes before leaving Settings?</p>
+          {settingsNavigationError && <p className="dialog-body" role="alert">{settingsNavigationError}</p>}
+          <div className="dialog-footer">
+            <Button variant="ghost" onClick={stayOnSettings}>Stay</Button>
+            <Button variant="danger" onClick={() => void resolveSettingsNavigation("discard")}>Discard</Button>
+            <Button
+              variant="primary"
+              disabled={!settingsNavigationState.valid || settingsNavigationState.saving}
+              loading={settingsNavigationState.saving}
+              onClick={() => void resolveSettingsNavigation("save")}
+            >Save</Button>
+          </div>
+        </Dialog>
 
         <Toaster toasts={toasts} onDismiss={dismissToast} />
       </div>
