@@ -1,17 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { act } from "react";
 import type { Settings } from "../src/lib/types";
-import { appApi, button, click, deferred, emitAppEvent, flushApp, renderApp, setupApp } from "./helpers/renderApp";
+import { appApi, button, click, deferred, emitAppEvent, escape, flushApp, renderApp, setupApp } from "./helpers/renderApp";
 import { settings } from "./helpers/data";
 
 let app: Awaited<ReturnType<typeof renderApp>>;
 beforeEach(() => setupApp());
 afterEach(() => app?.unmount());
 
-async function editInterval() {
+async function editInterval(label = "60 min") {
   await click(button("Sync interval"));
-  const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((node) => node.textContent?.trim() === "60 min");
-  if (!option) throw new Error("Missing 60 minute option");
+  const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((node) => node.textContent?.trim() === label);
+  if (!option) throw new Error(`Missing ${label} option`);
   await click(option);
 }
 
@@ -60,6 +60,75 @@ describe("Settings save and navigation in the real application", () => {
     expect(appApi.setSettings).not.toHaveBeenCalled();
   });
 
+  it.each(["Stay", "Escape"])("cancels pending save navigation with %s while allowing persistence to finish", async (dismiss) => {
+    const pending = deferred<Settings>();
+    appApi.setSettings.mockReturnValueOnce(pending.promise);
+    app = await renderApp();
+    await openSettings();
+    await editInterval();
+    await click(button("Today"));
+    await click(button("Save", document.querySelector('[role="alertdialog"]')!));
+    if (dismiss === "Escape") await escape();
+    else await click(button("Stay"));
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(document.querySelector('[aria-label="Sync interval"]')?.textContent).toContain("60 min");
+    await act(async () => pending.resolve({ ...settings, syncIntervalMinutes: 60 }));
+    await flushApp();
+    expect(document.querySelector("main h1")?.textContent).toBe("Settings");
+    expect(document.querySelector('[aria-label="Sync interval"]')?.textContent).toContain("60 min");
+    expect(appApi.setSettings).toHaveBeenCalledTimes(1);
+    await emitAppEvent("ui:navigate", "history");
+    expect(document.querySelector("main h1")?.textContent).toBe("History");
+  });
+
+  it.each(["course", "palette", "back"])("cancels pending %s navigation without losing a newer draft edit", async (intent) => {
+    const pending = deferred<Settings>();
+    appApi.setSettings.mockReturnValueOnce(pending.promise);
+    app = await renderApp();
+    await openSettings();
+    await editInterval();
+    if (intent === "course") await click(document.querySelector<HTMLButtonElement>(".course-nav-item")!);
+    else if (intent === "palette") {
+      await click(document.querySelector<HTMLButtonElement>(".search-trigger")!);
+      const target = [...document.querySelectorAll<HTMLElement>(".palette-item")].find((node) => node.textContent?.startsWith("History"))!;
+      await click(target);
+    } else {
+      await act(async () => {
+        const event = new KeyboardEvent("keydown", { key: "ArrowLeft", code: "ArrowLeft", ctrlKey: true, bubbles: true, cancelable: true });
+        Object.defineProperty(event, "getModifierState", { value: (modifier: string) => modifier === "Control" });
+        document.body.dispatchEvent(event);
+      });
+    }
+    expect(document.querySelector('[role="alertdialog"]')).toBeTruthy();
+    await click(button("Save"));
+    await click(button("Stay"));
+    await editInterval("2 h");
+    await act(async () => pending.resolve({ ...settings, syncIntervalMinutes: 60 }));
+    await flushApp();
+    expect(document.querySelector("main h1")?.textContent).toBe("Settings");
+    expect(document.querySelector('[aria-label="Sync interval"]')?.textContent).toContain("2 h");
+    await click(button("Save settings"));
+    expect(appApi.setSettings).toHaveBeenLastCalledWith(expect.objectContaining({ syncIntervalMinutes: 120 }));
+  });
+
+  it("does not let an older save consume a replacement navigation intent", async () => {
+    const pending = deferred<Settings>();
+    appApi.setSettings.mockReturnValueOnce(pending.promise);
+    app = await renderApp();
+    await openSettings();
+    await editInterval();
+    await click(button("Today"));
+    await click(button("Save"));
+    await click(button("Stay"));
+    await emitAppEvent("ui:navigate", "history");
+    await act(async () => pending.resolve({ ...settings, syncIntervalMinutes: 60 }));
+    await flushApp();
+    expect(document.querySelector("main h1")?.textContent).toBe("Settings");
+    expect(document.querySelector('[role="alertdialog"]')).toBeTruthy();
+    await click(button("Discard"));
+    expect(document.querySelector("main h1")?.textContent).toBe("History");
+  });
+
   it("does not replace an unsaved draft when the app refreshes settings", async () => {
     app = await renderApp();
     await openSettings();
@@ -94,6 +163,68 @@ describe("Settings save and navigation in the real application", () => {
     await act(async () => {
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "s", ctrlKey: true, bubbles: true, cancelable: true }));
       await Promise.resolve();
+    });
+    expect(appApi.setSettings).toHaveBeenCalledTimes(1);
+    expect(document.querySelector("main h1")?.textContent).toBe("Settings");
+  });
+
+  it.each([
+    ["sync shortcut", { ctrlKey: true, shiftKey: true }],
+    ["Alt modifier", { ctrlKey: true, altKey: true }],
+    ["composition", { ctrlKey: true, isComposing: true }],
+    ["legacy composition", { ctrlKey: true, keyCode: 229 }],
+    ["repeat", { ctrlKey: true, repeat: true }],
+  ] as const)("does not save Settings for %s", async (_label, options) => {
+    app = await renderApp();
+    await openSettings();
+    await editInterval();
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "s", code: "KeyS", bubbles: true, cancelable: true, ...options }));
+    });
+    expect(appApi.setSettings).not.toHaveBeenCalled();
+    expect(document.querySelector('[aria-label="Sync interval"]')?.textContent).toContain("60 min");
+  });
+
+  it.each(["navigation", "discard", "palette"])("does not save beneath the %s modal", async (surface) => {
+    app = await renderApp();
+    await openSettings();
+    await editInterval();
+    if (surface === "navigation") await click(button("Today"));
+    else if (surface === "discard") await click(button("Discard"));
+    else await click(document.querySelector<HTMLButtonElement>(".search-trigger")!);
+    expect(document.querySelector('[role="dialog"], [role="alertdialog"]')).toBeTruthy();
+    await act(async () => {
+      (document.activeElement ?? document).dispatchEvent(new KeyboardEvent("keydown", { key: "s", ctrlKey: true, bubbles: true, cancelable: true }));
+    });
+    expect(appApi.setSettings).not.toHaveBeenCalled();
+    await escape();
+    expect(document.querySelector('[aria-label="Sync interval"]')?.textContent).toContain("60 min");
+  });
+
+  it("does not save Settings while the narrow sidebar drawer is open", async () => {
+    setupApp({ width: 820 });
+    app = await renderApp();
+    await openSettings();
+    await editInterval();
+    await click(document.querySelector<HTMLButtonElement>(".sidebar-brand")!);
+    expect(document.querySelector(".sidebar.overlay")).toBeTruthy();
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "s", ctrlKey: true, bubbles: true, cancelable: true }));
+    });
+    expect(appApi.setSettings).not.toHaveBeenCalled();
+    await escape();
+    expect(document.querySelector('[aria-label="Sync interval"]')?.textContent).toContain("60 min");
+  });
+
+  it.each(["Linux", "MacIntel"])("accepts the normal save modifier in a Settings input on %s", async (platform) => {
+    setupApp({ platform });
+    app = await renderApp();
+    await openSettings();
+    await editInterval();
+    const input = document.querySelector<HTMLInputElement>('[aria-label="Quiet hours start"]')!;
+    input.focus();
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "s", ctrlKey: platform === "Linux", metaKey: platform === "MacIntel", bubbles: true, cancelable: true }));
     });
     expect(appApi.setSettings).toHaveBeenCalledTimes(1);
     expect(document.querySelector("main h1")?.textContent).toBe("Settings");

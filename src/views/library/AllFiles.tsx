@@ -191,10 +191,19 @@ export default function AllFiles({
       cell: (resource) => {
         const size = resource.sizeBytes ? formatBytes(resource.sizeBytes) : "";
         return (
-          <div className="cell-title" data-resource-id={resource.id}>
+          <button
+            type="button"
+            className="cell-title"
+            data-resource-id={resource.id}
+            aria-label={`Show details for ${resource.title}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              details?.selectResource(resource, event.currentTarget);
+            }}
+          >
             <span className="cell-title-main">{resource.title}</span>
             {size && <span className="cell-title-sub">{size}</span>}
-          </div>
+          </button>
         );
       },
     },

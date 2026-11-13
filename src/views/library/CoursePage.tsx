@@ -128,6 +128,11 @@ export default function CoursePage({
   const [confirmRebaseline, setConfirmRebaseline] = useState(false);
 
   const [tab, setTab] = useState<"contents" | "activity">("contents");
+  const previousTab = useRef(tab);
+  useEffect(() => {
+    if (previousTab.current !== tab) details?.clear();
+    previousTab.current = tab;
+  }, [tab, details]);
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<ResourceSort>("newest");
   const [type, setType] = useState("all");
@@ -394,6 +399,7 @@ export default function CoursePage({
         else if (current?.kind === "file") {
           const origin = scrollRef.current?.querySelector<HTMLElement>(`[role="treeitem"][data-index="${activeIndex}"]`);
           if (origin) details?.selectResource(current.resource, origin, () => {
+            if (!scrollRef.current) return false;
             move(activeIndex);
             return true;
           });
@@ -516,7 +522,7 @@ export default function CoursePage({
                     onPreview={onPreview}
                     onActivate={setActiveIndex}
                     selected={isSelectedResourceRow(rows[item.index])}
-                    onSelect={(resource, origin) => details?.selectResource(resource, origin, () => { move(item.index); return true; })}
+                    onSelect={(resource, origin) => details?.selectResource(resource, origin, () => { if (!scrollRef.current) return false; move(item.index); return true; })}
                   />
                 </div>
               ))}
@@ -534,7 +540,7 @@ export default function CoursePage({
                 onPreview={onPreview}
                 onActivate={setActiveIndex}
                 selected={row.kind === "file" && selectedResourceId === row.resource.id}
-                onSelect={(resource, origin) => details?.selectResource(resource, origin, () => { move(index); return true; })}
+                onSelect={(resource, origin) => details?.selectResource(resource, origin, () => { if (!scrollRef.current) return false; move(index); return true; })}
               />
             ))
           )}

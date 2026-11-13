@@ -1,5 +1,5 @@
 import { act } from "react";
-import type { LocalFile } from "../src/lib/types";
+import type { LocalFile, LocalFileStatus } from "../src/lib/types";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { appApi, appClipboard, button, change, click, deferred, emitAppEvent, escape, flushApp, renderApp, resource, setupApp } from "./helpers/renderApp";
 
@@ -257,6 +257,64 @@ describe("App details lifecycle", () => {
     await click(button("Download now", document.querySelector(".peek")!));
     await act(async () => lookup.resolve(null));
     expect(document.querySelector(".peek")?.textContent).toContain("/files/new.pdf");
+  });
+
+  it("keeps a newer mirror file event when an older status snapshot resolves", async () => {
+    const snapshot = deferred<LocalFileStatus[]>();
+    appApi.mirrorLocalFiles.mockReturnValueOnce(snapshot.promise);
+    app = await renderApp();
+    await click(button("Show details for Lecture 4"));
+    await emitAppEvent("mirror:file", { resourceId: 1, status: "ok", error: null });
+    expect(button("Open local copy", document.querySelector(".peek")!)).toBeTruthy();
+    await act(async () => snapshot.resolve([{ resourceId: 1, status: "failed", error: "Old failure" }]));
+    await flushApp();
+    expect(button("Open local copy", document.querySelector(".peek")!)).toBeTruthy();
+    expect(document.querySelector(".peek")?.textContent).not.toContain("Old failure");
+  });
+
+  it("replaces an older queued snapshot with the selected file's successful lookup", async () => {
+    appApi.mirrorLocalFiles.mockResolvedValue([{ resourceId: 1, status: "queued", error: null }]);
+    appApi.mirrorLocalFile.mockResolvedValue({ resourceId: 1, relPath: "a.pdf", path: "/files/a.pdf", sizeBytes: 42, mime: null, sha256: null, status: "ok", error: null });
+    app = await renderApp();
+    await click(button("Show details for Lecture 4"));
+    expect(button("Open local copy", document.querySelector(".peek")!)).toBeTruthy();
+    expect(document.querySelector(".peek")?.textContent).toContain("/files/a.pdf");
+  });
+
+  it("does not let a delayed lookup replace a newer failed mirror event", async () => {
+    const lookup = deferred<LocalFile | null>();
+    appApi.mirrorLocalFile.mockReturnValueOnce(lookup.promise);
+    app = await renderApp();
+    await click(button("Show details for Lecture 4"));
+    await emitAppEvent("mirror:file", { resourceId: 1, status: "failed", error: "New failure" });
+    await act(async () => lookup.resolve({ resourceId: 1, relPath: "a.pdf", path: "/files/a.pdf", sizeBytes: 42, mime: null, sha256: null, status: "ok", error: null }));
+    expect(document.querySelector(".peek")?.textContent).toContain("New failure");
+    expect(button("Download now", document.querySelector(".peek")!)).toBeTruthy();
+  });
+
+  it("uses a completed download before the mirror refresh finishes", async () => {
+    appApi.mirrorLocalFile.mockResolvedValue({ resourceId: 1, relPath: "a.pdf", path: "/files/a.pdf", sizeBytes: 0, mime: null, sha256: null, status: "queued", error: null });
+    appApi.ensureLocal.mockResolvedValue({ resourceId: 1, relPath: "a.pdf", path: "/files/a.pdf", sizeBytes: 42, mime: null, sha256: null, status: "ok", error: null });
+    appApi.mirrorLocalFiles.mockResolvedValueOnce([]).mockReturnValueOnce(deferred<LocalFileStatus[]>().promise);
+    app = await renderApp();
+    await click(button("Show details for Lecture 4"));
+    await click(button("Download now", document.querySelector(".peek")!));
+    expect(button("Open local copy", document.querySelector(".peek")!)).toBeTruthy();
+    expect(document.querySelector(".peek")?.textContent).toContain("/files/a.pdf");
+  });
+
+  it("lets the latest same-file lookup win even when an older lookup finishes first", async () => {
+    const old = deferred<LocalFile | null>();
+    const current = deferred<LocalFile | null>();
+    appApi.mirrorLocalFile.mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise);
+    app = await renderApp();
+    const row = button("Show details for Lecture 4");
+    await click(row);
+    await click(row);
+    await act(async () => old.resolve({ resourceId: 1, relPath: "a.pdf", path: "/files/a.pdf", sizeBytes: 0, mime: null, sha256: null, status: "failed", error: "Old failure" }));
+    await act(async () => current.resolve({ resourceId: 1, relPath: "a.pdf", path: "/files/a.pdf", sizeBytes: 42, mime: null, sha256: null, status: "ok", error: null }));
+    expect(button("Open local copy", document.querySelector(".peek")!)).toBeTruthy();
+    expect(document.querySelector(".peek")?.textContent).not.toContain("Old failure");
   });
 
 });

@@ -188,6 +188,15 @@ export default function CalendarView({
     }
   }, [cursor, selected, details]);
 
+  useEffect(() => {
+    const selection = details.selected;
+    if (!dayPending && !dayError && digest?.date === selected &&
+        selection?.kind === "change" &&
+        !digest.items.some((event) => event.id === selection.change.id)) {
+      details.clear();
+    }
+  }, [dayPending, dayError, digest, selected, details]);
+
   const byDay = useMemo(() => groupEventsByDay(monthEvents ?? []), [monthEvents]);
   const weeks = useMemo(() => buildMonthGrid(cursor), [cursor]);
   const today = todayKey();
@@ -435,7 +444,7 @@ export default function CalendarView({
                       courseCode={courseTitle(e.courseId, course?.shortName ?? e.courseName ?? course?.name)}
                       courseName={e.courseName}
                       unread={!e.read}
-                      selected={false}
+                      selected={details.selected?.identity === `change:${e.id}`}
                       unavailable={e.changeType === "unavailable"}
                       status={{ kind: STATUS_KIND[e.changeType] ?? "new", label: meta.label }}
                       timeLabel={formatTimeOfDay(e.detectedAt)}
