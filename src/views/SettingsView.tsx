@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { api } from "../lib/api";
 import { cx } from "../lib/cx";
@@ -27,7 +27,16 @@ interface Props {
   onRefresh: () => void | Promise<void>;
   themeMode: ThemeMode;
   onThemeMode: (mode: ThemeMode) => void;
-  onDirtyChange?: (dirty: boolean) => void;
+  onController?: (controller: SettingsNavigationController | null) => void;
+}
+
+export interface SettingsNavigationController {
+  dirty: boolean;
+  valid: boolean;
+  saving: boolean;
+  error: string | null;
+  save: () => Promise<{ saved: boolean; error: string | null }>;
+  discard: () => void;
 }
 
 const THEME_OPTIONS = [
@@ -101,12 +110,15 @@ export default function SettingsView({
   onRefresh,
   themeMode,
   onThemeMode,
-  onDirtyChange,
+  onController,
 }: Props) {
   const [draft, setDraft] = useState<Settings>(settings);
   const [permission, setPermission] = useState<string>("unknown");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const savingRef = useRef(false);
+  const dirtyRef = useRef(false);
   const [showDiscard, setShowDiscard] = useState(false);
   const [showSignOut, setShowSignOut] = useState(false);
   const [showRebaseline, setShowRebaseline] = useState(false);
@@ -120,6 +132,7 @@ export default function SettingsView({
   const [telegram, setTelegram] = useState<TelegramStatus | null>(null);
   const [testingTelegram, setTestingTelegram] = useState(false);
   const [telegramTest, setTelegramTest] = useState<string | null>(null);
+  const [operationFeedback, setOperationFeedback] = useState<{ label: string; phase: "pending" | "success" | "error"; detail?: string } | null>(null);
 
   // About / updates
   const [aboutVersion, setAboutVersion] = useState<string>("");
@@ -127,11 +140,14 @@ export default function SettingsView({
   const [updateVersion, setUpdateVersion] = useState<string | null>(null);
   const [updateNotes, setUpdateNotes] = useState<string | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
+  const [savingAutoUpdate, setSavingAutoUpdate] = useState(false);
   const [lastUpdateCheck, setLastUpdateCheck] = useState<string | null>(() => {
     try { return localStorage.getItem("quanta-pulse-update-last-checked"); } catch { return null; }
   });
 
-  useEffect(() => setDraft(settings), [settings]);
+  useEffect(() => {
+    if (!dirtyRef.current) setDraft(settings);
+  }, [settings]);
 
   useEffect(() => {
     // Cache occupancy is page-local and changes on scan, so it is fetched here
@@ -196,13 +212,29 @@ export default function SettingsView({
   const errors = useMemo(() => validateSettingsDraft(draft), [draft]);
   const dirty = useMemo(() => isSettingsDirty(draft, settings), [draft, settings]);
 
-  useEffect(() => {
-    onDirtyChange?.(dirty);
-  }, [dirty, onDirtyChange]);
+  dirtyRef.current = dirty;
+
+  async function runOperation(label: string, operation: () => Promise<void>) {
+    setOperationFeedback({ label, phase: "pending" });
+    try {
+      await operation();
+      setOperationFeedback({ label, phase: "success" });
+      return true;
+    } catch (error) {
+      setOperationFeedback({ label, phase: "error", detail: String(error) });
+      return false;
+    }
+  }
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+      const mac = navigator.platform.toLowerCase().includes("mac");
+      const mod = mac ? e.metaKey : e.ctrlKey;
+      const extraMod = mac ? e.ctrlKey : e.metaKey;
+      if (e.defaultPrevented || e.repeat || e.isComposing || e.keyCode === 229 ||
+          e.altKey || e.shiftKey || extraMod || !mod ||
+          document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], .sidebar.overlay')) return;
+      if (e.key.toLowerCase() === "s") {
         e.preventDefault();
         void save();
       }
@@ -214,6 +246,7 @@ export default function SettingsView({
   function set<K extends keyof Settings>(key: K, value: Settings[K]) {
     setDraft((d) => ({ ...d, [key]: value }));
     setSaved(false);
+    setSaveError(null);
   }
 
   async function checkForUpdate() {
@@ -257,16 +290,46 @@ export default function SettingsView({
   }
 
   async function save() {
-    if (saving || !dirty || hasValidationErrors(errors)) return;
+    if (savingRef.current || !dirty || hasValidationErrors(errors)) return { saved: false, error: saveError };
+    savingRef.current = true;
     setSaving(true);
+    setSaveError(null);
     try {
       await onSave(draft);
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
+      return { saved: true, error: null };
+    } catch (error) {
+      setSaved(false);
+      const message = `Could not save settings: ${String(error)}`;
+      setSaveError(message);
+      return { saved: false, error: message };
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }
+
+  async function changeAutoUpdate(value: boolean) {
+    const previous = draft.updateAutoCheck ?? settings.updateAutoCheck ?? true;
+    setDraft((current) => ({ ...current, updateAutoCheck: value }));
+    setSavingAutoUpdate(true);
+    const succeeded = await runOperation("Automatic update preference", () => onSave({ ...settings, updateAutoCheck: value }));
+    if (!succeeded) setDraft((current) => ({ ...current, updateAutoCheck: previous }));
+    setSavingAutoUpdate(false);
+  }
+
+  const discard = () => {
+    setDraft(settings);
+    setSaved(false);
+    setSaveError(null);
+  };
+
+  useEffect(() => {
+    onController?.({ dirty, valid: !hasValidationErrors(errors), saving, error: saveError, save, discard });
+  });
+
+  useEffect(() => () => onController?.(null), [onController]);
 
   async function askPermission() {
     try {
@@ -295,7 +358,7 @@ export default function SettingsView({
   async function clearCache() {
     setClearingCache(true);
     try {
-      setCacheStats(await api.clearFileCache());
+      await runOperation("Clear cached files", async () => { setCacheStats(await api.clearFileCache()); });
     } finally {
       setClearingCache(false);
     }
@@ -303,78 +366,48 @@ export default function SettingsView({
 
   async function pickMirrorRoot() {
     setChangingMirrorRoot(true);
-    try {
+    const succeeded = await runOperation("Change mirror folder", async () => {
       await api.pickMirrorRoot();
       await api.mirrorStats().then(setMirrorStats);
-    } catch {
-      // Error handled by toast in app shell.
-    }
+    });
+    if (!succeeded) setChangingMirrorRoot(false);
   }
 
   async function openMirrorFolder() {
-    try {
-      await api.openAppFolder("mirror", false);
-    } catch {
-      // Error handled by toast in app shell.
-    }
+    await runOperation("Open mirror folder", () => api.openAppFolder("mirror", false));
   }
 
   async function moveFilesToNewRoot() {
     setMovingFiles(true);
     try {
-      await api.mirrorMoveFiles();
-      setChangingMirrorRoot(false);
-      await api.mirrorStats().then(setMirrorStats);
-    } catch {
-      // Error handled by toast in app shell.
+      await runOperation("Move mirrored files", async () => {
+        await api.mirrorMoveFiles();
+        setChangingMirrorRoot(false);
+        await api.mirrorStats().then(setMirrorStats);
+      });
     } finally {
       setMovingFiles(false);
     }
   }
 
   async function startBackfill() {
-    try {
-      await api.mirrorStartBackfill();
-      await api.mirrorStats().then(setMirrorStats);
-    } catch {
-      // Error handled by toast in app shell.
-    }
+    await runOperation("Download all files", async () => { await api.mirrorStartBackfill(); await api.mirrorStats().then(setMirrorStats); });
   }
 
   async function pauseMirror() {
-    try {
-      await api.mirrorPause();
-      await api.mirrorStats().then(setMirrorStats);
-    } catch {
-      // Error handled by toast in app shell.
-    }
+    await runOperation("Pause downloads", async () => { await api.mirrorPause(); await api.mirrorStats().then(setMirrorStats); });
   }
 
   async function resumeMirror() {
-    try {
-      await api.mirrorResume();
-      await api.mirrorStats().then(setMirrorStats);
-    } catch {
-      // Error handled by toast in app shell.
-    }
+    await runOperation("Resume downloads", async () => { await api.mirrorResume(); await api.mirrorStats().then(setMirrorStats); });
   }
 
   async function retryFailed() {
-    try {
-      await api.mirrorRetryFailed();
-      await api.mirrorStats().then(setMirrorStats);
-    } catch {
-      // Error handled by toast in app shell.
-    }
+    await runOperation("Retry failed downloads", async () => { await api.mirrorRetryFailed(); await api.mirrorStats().then(setMirrorStats); });
   }
 
   async function verifyFiles() {
-    try {
-      await api.mirrorVerifyFiles();
-      await api.mirrorStats().then(setMirrorStats);
-    } catch {
-      // Error handled by toast in app shell.
-    }
+    await runOperation("Verify mirrored files", async () => { await api.mirrorVerifyFiles(); await api.mirrorStats().then(setMirrorStats); });
   }
 
   /** Send one message so a wrong token or chat id is caught here, not at the
@@ -874,10 +907,8 @@ export default function SettingsView({
           >
             <Switch
               checked={draft.updateAutoCheck ?? settings.updateAutoCheck ?? true}
-              onCheckedChange={(v) => {
-                setDraft((d) => ({ ...d, updateAutoCheck: v }));
-                void onSave({ ...settings, updateAutoCheck: v });
-              }}
+              onCheckedChange={(v) => void changeAutoUpdate(v)}
+              disabled={savingAutoUpdate}
               ariaLabel="Check for updates automatically"
             />
           </SettingRow>
@@ -930,6 +961,12 @@ export default function SettingsView({
           </p>
         </section>
 
+        {operationFeedback && (
+          <p className="settings-note" role={operationFeedback.phase === "error" ? "alert" : "status"} aria-live={operationFeedback.phase === "error" ? "assertive" : "polite"}>
+            {operationFeedback.phase === "pending" ? `${operationFeedback.label}…` : operationFeedback.phase === "success" ? `${operationFeedback.label} completed.` : `${operationFeedback.label} failed: ${operationFeedback.detail}`}
+          </p>
+        )}
+        {saveError && <Banner kind="error" role="alert">{saveError}</Banner>}
         {dirty && (
           <div className="save-bar" role="status" aria-live="polite">
             <div className="save-copy">You have unsaved changes</div>
@@ -957,8 +994,7 @@ export default function SettingsView({
         cancelLabel="Keep editing"
         destructive
         onConfirm={() => {
-          setDraft(settings);
-          setSaved(false);
+          discard();
         }}
       />
       <ConfirmDialog

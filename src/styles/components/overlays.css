@@ -40,7 +40,7 @@
   }
 
   .dialog-title {
-    font: 400 20px/26px var(--type-dialog);
+    font: 600 16px/24px var(--type-dialog);
     color: var(--ink);
   }
 
@@ -277,7 +277,7 @@
 
   .peek-title {
     margin-top: var(--sp-3);
-    font: 400 24px/29px var(--type-title);
+    font: 600 16px/24px var(--type-title);
     color: var(--ink);
     display: -webkit-box;
     -webkit-line-clamp: 3;

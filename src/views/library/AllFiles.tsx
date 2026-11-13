@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ExternalLink, MoreHorizontal } from "lucide-react";
 import { cx } from "../../lib/cx";
 import { typeOptions } from "../../lib/courseLibrary";
@@ -8,16 +8,15 @@ import { fileTone } from "../../lib/filetype";
 import { describeUpload, formatBytes, parseTimestamp } from "../../lib/format";
 import { formatSectionPath } from "../../lib/sectionPath";
 import { canPreview } from "../../lib/preview";
-import { resourceDetails } from "../../lib/details";
+import type { DetailsAdapter } from "../../lib/details";
 import type { Course, Resource } from "../../lib/types";
 import DataTable, { type DataColumn } from "../../components/DataTable";
-import PeekPanel, { type PeekDetails } from "../../components/PeekPanel";
 import { Button } from "../../components/ui/Button";
 import { IconButton } from "../../components/ui/IconButton";
 import { Select } from "../../components/ui/Select";
 import { Menu, type MenuItemSpec } from "../../components/ui/Menu";
 import { CoursePill } from "../../components/ui/CoursePill";
-import { StatusTag, type StatusKind } from "../../components/ui/StatusTag";
+import { StatusTag } from "../../components/ui/StatusTag";
 import { EmptyState } from "../../components/ui/EmptyState";
 
 interface AllFilesProps {
@@ -26,6 +25,8 @@ interface AllFilesProps {
   search: string;
   onOpen: (url: string) => void;
   onPreview: (resource: Resource) => void;
+  details?: DetailsAdapter;
+  onClearSearch?: () => void;
 }
 
 type SortId = "title" | "course" | "section" | "type" | "uploaded";
@@ -52,16 +53,6 @@ function availabilityCell(resource: Resource) {
     return <StatusTag kind="restored" label="Restored" />;
   }
   return <span className="cell-title-sub">Available</span>;
-}
-
-function availabilityTag(resource: Resource): { kind: StatusKind; label: string } | null {
-  if (resource.availabilityStatus === "unavailable") {
-    return { kind: "unavailable", label: "Unavailable" };
-  }
-  if (resource.availabilityStatus === "restored") {
-    return { kind: "restored", label: "Restored" };
-  }
-  return null;
 }
 
 function actionItems(
@@ -105,6 +96,8 @@ export default function AllFiles({
   search,
   onOpen,
   onPreview,
+  details,
+  onClearSearch,
 }: AllFilesProps) {
   const [courseFilter, setCourseFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
@@ -112,8 +105,6 @@ export default function AllFiles({
     id: "uploaded",
     dir: "desc",
   });
-  const [peek, setPeek] = useState<Resource | null>(null);
-  const lastPeek = useRef<HTMLElement | null>(null);
 
   const unique = useMemo(() => dedupeCourseResources(resources), [resources]);
   const types = useMemo(() => typeOptions(unique), [unique]);
@@ -177,47 +168,17 @@ export default function AllFiles({
   const clearFilters = () => {
     setCourseFilter("all");
     setTypeFilter("all");
+    onClearSearch?.();
   };
 
-  const openResource = (resource: Resource) => {
-    lastPeek.current = document.activeElement as HTMLElement | null;
-    setPeek(resource);
-  };
+  const selectedId = details?.selected?.kind === "resource" ? details.selected.resource.id : null;
+  const selected = details?.selected;
 
-  const peekDetails: PeekDetails | null = useMemo(() => {
-    if (!peek) return null;
-    const previewable = canPreview(peek.resourceType, peek.url);
-    return {
-      title: peek.title,
-      statusTag: availabilityTag(peek),
-      properties: resourceDetails(peek),
-      note:
-        peek.availabilityStatus !== "available"
-          ? "Missing for 2 scans in a row. It may come back."
-          : null,
-      primaryAction: { label: "Open file", onClick: () => onOpen(peek.url) },
-      secondaryAction: previewable
-        ? { label: "Preview", onClick: () => onPreview(peek) }
-        : null,
-      menu: [
-        ...(peek.sourcePageUrl
-          ? [
-              {
-                id: "page",
-                label: "Open Quanta page",
-                onSelect: () => onOpen(peek.sourcePageUrl as string),
-              },
-            ]
-          : []),
-        {
-          id: "copy",
-          label: "Copy link",
-          onSelect: () =>
-            void navigator.clipboard?.writeText(peek.sourcePageUrl ?? peek.url),
-        },
-      ],
-    };
-  }, [peek, onOpen, onPreview]);
+  useEffect(() => {
+    if (selected?.kind === "resource" && !rows.some((resource) => resource.id === selected.resource.id)) {
+      details?.clear();
+    }
+  }, [details, rows, selected]);
 
   const columns: DataColumn<Resource>[] = [
     {
@@ -230,10 +191,19 @@ export default function AllFiles({
       cell: (resource) => {
         const size = resource.sizeBytes ? formatBytes(resource.sizeBytes) : "";
         return (
-          <div className="cell-title">
+          <button
+            type="button"
+            className="cell-title"
+            data-resource-id={resource.id}
+            aria-label={`Show details for ${resource.title}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              details?.selectResource(resource, event.currentTarget);
+            }}
+          >
             <span className="cell-title-main">{resource.title}</span>
             {size && <span className="cell-title-sub">{size}</span>}
-          </div>
+          </button>
         );
       },
     },
@@ -377,8 +347,12 @@ export default function AllFiles({
         getKey={(resource) => resource.id}
         sort={sort}
         onSort={onSort}
-        onRowClick={openResource}
-        selectedKey={peek?.id ?? null}
+        onRowClick={(resource) => {
+          const row = document.querySelector<HTMLElement>(`[data-resource-id="${resource.id}"]`)?.closest("tr") ?? null;
+          if (row) row.tabIndex = -1;
+          details?.selectResource(resource, row ?? (document.activeElement as HTMLElement));
+        }}
+        selectedKey={selectedId}
         ariaLabel="All course files"
         virtual
         empty={
@@ -393,14 +367,6 @@ export default function AllFiles({
         }
       />
 
-      <PeekPanel
-        open={peek !== null}
-        details={peekDetails}
-        onClose={() => {
-          setPeek(null);
-          lastPeek.current?.focus();
-        }}
-      />
     </>
   );
 }

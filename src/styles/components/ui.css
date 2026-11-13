@@ -648,7 +648,6 @@
     font-family: var(--type-mono);
     font-size: 12px;
     font-variant-numeric: tabular-nums;
-    opacity: 0.7;
   }
 
   /* 6.5 Skeleton — shown only after a 200 ms delay; 1.4 s shimmer. */

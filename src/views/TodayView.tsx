@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Copy, ExternalLink, MailOpen, X } from "lucide-react";
 import PageHeader from "../components/PageHeader";
 import ResourceRow from "../components/ResourceRow";
@@ -101,6 +101,7 @@ export default function TodayView({
   onRetry,
   selectedId,
   onSelect,
+  onSelectionRemoved,
   onOpen,
   onPreview,
   onOpenLocal,
@@ -120,7 +121,8 @@ export default function TodayView({
   error: string | null;
   onRetry: () => void;
   selectedId: number | null;
-  onSelect: (resource: Resource) => void;
+  onSelectionRemoved?: () => void;
+  onSelect: (resource: Resource, origin: HTMLElement) => void;
   onOpen: (url: string) => void;
   onOpenLocal: (resourceId: number) => void;
   onPreview: (resource: Resource) => void;
@@ -178,8 +180,13 @@ export default function TodayView({
     [events, kind, courseFilter, search, eventKinds],
   );
   const groups = useMemo(() => groupByDate(filtered), [filtered]);
+  useEffect(() => {
+    if (selectedId != null && !filtered.some((resource) => resource.id === selectedId)) onSelectionRemoved?.();
+  }, [filtered, selectedId, onSelectionRemoved]);
 
   const summary = useMemo(() => {
+    if (error && events.length === 0) return "Activity is unavailable. Try again.";
+    if (!hasStoredResources && resources.length === 0) return "Run your first scan to track course changes.";
     const hasKinds = (r: Resource, k: string) => Boolean(eventKinds.get(r.id)?.has(k));
     return summarySentence({
       counts: {
@@ -192,7 +199,7 @@ export default function TodayView({
       nearestDeadlineDays: nearestDeadlineDays(scoped),
       lastSyncLabel,
     });
-  }, [scoped, eventKinds, lastSyncLabel]);
+  }, [scoped, eventKinds, lastSyncLabel, error, events.length, hasStoredResources, resources.length]);
 
   const courseLabelOf = (id: number | null) =>
     id == null ? null : courseTitle(id, courses.find((c) => c.id === id)?.name);
@@ -209,11 +216,16 @@ export default function TodayView({
   );
 
   let empty: { title: string; body: string; action?: { label: string; onClick: () => void } };
-  if (resources.length === 0) {
+  const filtersActive = kind !== "all" || courseFilter !== "all" || search.trim() !== "";
+  if (filtersActive) {
+    empty = { title: "No matches", body: "Try a different filter" };
+  } else if (baselineCount > 0 && events.length === 0) {
+    empty = { title: "First scan complete", body: "Known files are in Library. New uploads appear after the next scan." };
+  } else if (resources.length === 0) {
     if (!hasStoredResources) {
       empty = {
         title: "Nothing tracked yet",
-        body: "Run a scan and Pulse will list your course files here",
+        body: "Run a scan to record your known files. Later changes will appear here.",
         action: { label: "Sync now", onClick: onSyncNow },
       };
     } else {
@@ -304,7 +316,7 @@ export default function TodayView({
 
       {loading ? (
         <Skeleton rows={6} />
-      ) : filtered.length === 0 ? (
+      ) : error && filtered.length === 0 ? null : filtered.length === 0 ? (
         <EmptyState title={empty.title} body={empty.body} action={empty.action} />
       ) : (
         groups.map((group) => (
@@ -326,7 +338,7 @@ export default function TodayView({
                 openLabel={openLabel(resource, eventKinds)}
                 previewAvailable={canPreview(resource.resourceType, resource.url)}
                 local={resource.isExternal ? undefined : mirror?.statusOf(resource.id)}
-                onSelect={() => onSelect(resource)}
+                onSelect={(origin) => onSelect(resource, origin)}
                 onCourse={
                   resource.courseId != null
                     ? () => onOpenCourse(resource.courseId as number)
