@@ -783,10 +783,12 @@ function AppShell() {
               {route.view === "calendar" && (
                 <CalendarView
                   courses={courses}
+                  resources={resources}
                   onOpen={(url) => void open(url)}
                   onOpenLocal={(resourceId) => void openLocal(resourceId)}
                   onOpenScan={() => navigate("history")}
                   onOpenCourse={navigateToCourse}
+                  details={detailsAdapters.calendar}
                 />
               )}
               {route.view === "library" && (

@@ -30,7 +30,8 @@ import {
 import { formatCompact, formatTimeOfDay, relativeLabel } from "../lib/format";
 import { courseTitle } from "../lib/courseName";
 import { eventLinks, primaryUrl } from "../lib/open";
-import type { ChangeEvent, Course, Digest } from "../lib/types";
+import type { ChangeEvent, Course, Digest, Resource } from "../lib/types";
+import type { DetailsAdapter } from "../lib/details";
 import PageHeader from "../components/PageHeader";
 import ResourceRow from "../components/ResourceRow";
 import { useMirror } from "../hooks/useMirror";
@@ -44,11 +45,13 @@ import type { StatusKind } from "../components/ui/StatusTag";
 
 export interface CalendarViewProps {
   courses: Course[];
+  resources?: Resource[];
   onOpen: (url: string) => void;
   onOpenLocal?: (resourceId: number) => void;
   onOpenScan: () => void;
   /** Opens a course page from a row's course pill. */
   onOpenCourse?: (courseId: number) => void;
+  details: DetailsAdapter;
 }
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
@@ -61,10 +64,6 @@ const STATUS_KIND: Record<string, StatusKind> = {
   unavailable: "unavailable",
   restored: "restored",
 };
-
-function noop(): void {
-  return undefined;
-}
 
 function openLabel(changeType: string): string {
   if (changeType === "deadline") return "Open course";
@@ -109,10 +108,12 @@ function dayAriaLabel(key: string, events: ChangeEvent[]): string {
 
 export default function CalendarView({
   courses,
+  resources = [],
   onOpen,
   onOpenLocal,
   onOpenScan,
   onOpenCourse,
+  details,
 }: CalendarViewProps) {
   const mirror = useMirror();
   const [{ cursor, selected }, setView] = useState<ViewState>(initialView);
@@ -120,48 +121,72 @@ export default function CalendarView({
   const [digest, setDigest] = useState<Digest | null>(null);
   const [monthError, setMonthError] = useState(false);
   const [dayError, setDayError] = useState(false);
-  const [reload, setReload] = useState(0);
+  const [monthPending, setMonthPending] = useState(false);
+  const [dayPending, setDayPending] = useState(false);
+  const [monthReload, setMonthReload] = useState(0);
+  const [dayReload, setDayReload] = useState(0);
 
   const dayButtons = useRef(new Map<string, HTMLButtonElement>());
   const panelRef = useRef<HTMLHeadingElement>(null);
   const focusSelected = useRef(false);
+  const context = useRef({ selected, cursor });
 
   const courseById = useMemo(() => new Map(courses.map((c) => [c.id, c])), [courses]);
+  const resourceById = useMemo(() => new Map(resources.map((resource) => [resource.id, resource])), [resources]);
 
   useEffect(() => {
     let cancelled = false;
-    setMonthEvents(null);
+    setMonthPending(true);
     setMonthError(false);
     const { from, to } = monthBounds(cursor);
     void api
       .eventsRange(from, to)
       .then((events) => {
-        if (!cancelled) setMonthEvents(events);
+        if (!cancelled) {
+          setMonthEvents(events);
+          setMonthPending(false);
+        }
       })
       .catch(() => {
-        if (!cancelled) setMonthError(true);
+        if (!cancelled) {
+          setMonthError(true);
+          setMonthPending(false);
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [cursor, reload]);
+  }, [cursor, monthReload]);
 
   useEffect(() => {
     let cancelled = false;
-    setDigest(null);
+    setDayPending(true);
     setDayError(false);
     void api
       .dailyDigest(selected)
       .then((next) => {
-        if (!cancelled) setDigest(next);
+        if (!cancelled) {
+          setDigest(next);
+          setDayPending(false);
+        }
       })
       .catch(() => {
-        if (!cancelled) setDayError(true);
+        if (!cancelled) {
+          setDayError(true);
+          setDayPending(false);
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [selected, reload]);
+  }, [selected, dayReload]);
+
+  useEffect(() => {
+    if (context.current.selected !== selected || cursor.year !== context.current.cursor.year || cursor.month !== context.current.cursor.month) {
+      details.clear();
+      context.current = { selected, cursor };
+    }
+  }, [cursor, selected, details]);
 
   const byDay = useMemo(() => groupEventsByDay(monthEvents ?? []), [monthEvents]);
   const weeks = useMemo(() => buildMonthGrid(cursor), [cursor]);
@@ -230,11 +255,8 @@ export default function CalendarView({
           above the title read as a duplicate heading. */}
       <PageHeader title="Calendar" />
 
-      {(monthError || dayError) && (
-        <Banner kind="error" action={{ label: "Try again", onClick: () => setReload((n) => n + 1) }}>
-          Could not load calendar
-        </Banner>
-      )}
+      {monthError && <Banner kind="error" action={{ label: "Retry month", onClick: () => setMonthReload((n) => n + 1) }}>Could not load activity for this month</Banner>}
+      {dayError && <Banner kind="error" action={{ label: "Retry day", onClick: () => setDayReload((n) => n + 1) }}>Could not load activity for this day</Banner>}
 
       <div className="cal-layout">
         <section className="cal-main" aria-label="Month calendar">
@@ -259,6 +281,12 @@ export default function CalendarView({
               </div>
             ))}
           </div>
+
+          {monthEvents === null && !monthError ? (
+            <div role="status" aria-label="Loading month activity"><Skeleton rows={2} /></div>
+          ) : monthPending ? (
+            <p className="cal-sync-line" role="status">Refreshing month activity…</p>
+          ) : null}
 
           {/* Remount per month so the grid cross-fades (dot-in keyframes) on
             * change, never sliding. Reduced motion zeroes the duration. */}
@@ -362,10 +390,11 @@ export default function CalendarView({
             {longDayLabel(selected)}
           </h2>
 
-          {dayError ? null : digest === null ? (
+          {digest?.date !== selected && !dayError ? (
             <Skeleton rows={4} />
-          ) : (
+          ) : digest?.date === selected ? (
             <>
+              {dayPending && <p className="cal-sync-line" role="status">Refreshing day activity…</p>}
               <div className="stat-grid">
                 <StatBlock label="New" value={digest.newCount} />
                 <StatBlock label="Updated" value={digest.updatedCount} />
@@ -426,7 +455,12 @@ export default function CalendarView({
                           ? () => onOpenLocal(e.resourceId as number)
                           : undefined
                       }
-                      onSelect={noop}
+                      onSelect={(origin) =>
+                        details.selectChange(e, origin, e.resourceId == null ? null : resourceById.get(e.resourceId) ?? null, () => {
+                          panelRef.current?.focus();
+                          return true;
+                        })
+                      }
                       onOpen={primary ? () => onOpen(primary) : undefined}
                       menu={[
                         ...(e.resourceUrl
@@ -462,7 +496,7 @@ export default function CalendarView({
                 })
               )}
             </>
-          )}
+          ) : null}
         </section>
       </div>
     </div>

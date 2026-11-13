@@ -18,13 +18,14 @@
 
   .cal-layout {
     display: flex;
+    flex-wrap: wrap;
     align-items: flex-start;
     gap: var(--sp-6);
   }
 
   .cal-main {
-    flex: 0 1 auto;
-    min-width: 520px;
+    flex: 1 1 520px;
+    min-width: min(520px, 100%);
   }
 
   .cal-header {
@@ -35,7 +36,7 @@
   }
 
   .cal-month-title {
-    font: 400 28px/34px var(--type-display);
+    font: 600 16px/24px var(--type-display);
     margin-right: var(--sp-1);
   }
 
@@ -168,7 +169,7 @@
 
   .cal-panel {
     flex: 0 1 360px;
-    min-width: 320px;
+    min-width: min(320px, 100%);
     max-width: 420px;
     background: var(--raised);
     border-left: 1px solid var(--line);
@@ -176,7 +177,7 @@
   }
 
   .cal-panel-title {
-    font: 400 24px/29px var(--type-title);
+    font: 600 16px/24px var(--type-title);
     margin-bottom: var(--sp-4);
   }
 
