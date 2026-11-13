@@ -624,29 +624,48 @@ function AppShell() {
     [handleSync, markAllRead, toggle, toggleSidebar],
   );
 
+  const hasKeyboardModal = () => drawerOpen || Boolean(
+    document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]'),
+  );
+  const focusCurrentViewSearch = () => {
+    const search = [...document.querySelectorAll<HTMLElement>(
+      'main input[type="search"], main input[placeholder*="Search"], main [role="searchbox"]',
+    )].find((element) =>
+      !element.closest('[hidden], [aria-hidden="true"]') &&
+      getComputedStyle(element).display !== "none" &&
+      getComputedStyle(element).visibility !== "hidden",
+    );
+    return search ? (search.focus(), true) : false;
+  };
+  const whenNoModal = (action: () => void) => () => {
+    if (!hasKeyboardModal()) action();
+  };
+
   useHotkey(
     {
       "$mod+k": (e) => {
+        if (hasKeyboardModal()) return;
         e.preventDefault();
         setPaletteOpen(true);
       },
-      Slash: (e) => {
+      "[Shift]+Slash": (e) => {
+        if (hasKeyboardModal()) return;
         e.preventDefault();
-        setPaletteOpen(true);
+        if (!focusCurrentViewSearch()) setPaletteOpen(true);
       },
-      "$mod+1": () => navigate("today"),
-      "$mod+2": () => navigate("calendar"),
-      "$mod+3": () => navigate("library"),
-      "$mod+4": () => navigate("history"),
-      "$mod+5": () => navigate("settings"),
-      "Comma": () => navigate("settings"),
-      "$mod+Shift+S": () => void handleSync(),
-      "$mod+Shift+L": () => toggle(),
-      "$mod+Backslash": () => {
+      "$mod+1": whenNoModal(() => navigate("today")),
+      "$mod+2": whenNoModal(() => navigate("calendar")),
+      "$mod+3": whenNoModal(() => navigate("library")),
+      "$mod+4": whenNoModal(() => navigate("history")),
+      "$mod+5": whenNoModal(() => navigate("settings")),
+      "$mod+Comma": whenNoModal(() => navigate("settings")),
+      "$mod+Shift+S": whenNoModal(() => void handleSync()),
+      "$mod+Shift+L": whenNoModal(() => toggle()),
+      "$mod+Backslash": whenNoModal(() => {
         if (narrow) setDrawerOpen((open) => !open);
         else toggleSidebar();
-      },
-      "$mod+ArrowLeft": () => goBack(),
+      }),
+      "$mod+ArrowLeft": whenNoModal(() => goBack()),
       Escape: (event) => {
         // Radix owns modal/menu dismissal at document level. Its surface may
         // still be mounted until this event finishes bubbling to window.

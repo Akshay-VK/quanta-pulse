@@ -17,6 +17,7 @@ import { courseDotClass } from "./ui/CoursePill";
 import { IconButton } from "./ui/IconButton";
 import { courseLabel } from "../lib/courseName";
 import { Kbd } from "./ui/Kbd";
+import { formatShortcut } from "../lib/platform";
 import { Tooltip } from "./ui/Tooltip";
 import SyncStatus from "./SyncStatus";
 import SyncButton from "./SyncButton";
@@ -166,7 +167,7 @@ export default function Sidebar({
         className="sidebar-brand"
         data-tauri-drag-region
         onClick={collapsed ? onToggle : undefined}
-        aria-label={collapsed ? "Expand sidebar (Ctrl+\\)" : undefined}
+        aria-label={collapsed ? `Expand sidebar (${formatShortcut("Mod+\\")})` : undefined}
         tabIndex={collapsed ? 0 : -1}
       >
         <Activity className="brand-mark" aria-hidden="true" />
