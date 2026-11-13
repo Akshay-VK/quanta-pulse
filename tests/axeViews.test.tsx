@@ -228,6 +228,14 @@ function noop(): void {
 }
 const calendarDetails: DetailsAdapter = { selected: null, selectResource: noop, selectChange: noop, selectScan: noop, clear: noop };
 
+const historyDetails: DetailsAdapter = {
+  selected: null,
+  selectResource: noop,
+  selectChange: noop,
+  selectScan: noop,
+  clear: noop,
+};
+
 interface Scenario {
   name: string;
   render: () => React.ReactElement;
@@ -285,6 +293,11 @@ const SCENARIOS: Scenario[] = [
         courses={courses()}
         events={changeEvents()}
         scans={[event()]}
+        resources={resources()}
+        details={historyDetails}
+        loading={false}
+        error={null}
+        onRetry={noop}
         onOpen={noop}
         onMarkAllRead={() => Promise.resolve()}
         onClearAll={() => Promise.resolve()}
