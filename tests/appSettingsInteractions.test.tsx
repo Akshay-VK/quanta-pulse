@@ -98,5 +98,16 @@ describe("Settings save and navigation in the real application", () => {
     expect(appApi.setSettings).toHaveBeenCalledTimes(1);
     expect(document.querySelector("main h1")?.textContent).toBe("Settings");
   });
+
+  it("shows an immediate mirror-operation rejection without losing another draft edit", async () => {
+    appApi.mirrorStartBackfill.mockRejectedValueOnce(new Error("Mirror is unavailable"));
+    app = await renderApp();
+    await openSettings();
+    await editInterval();
+    await click(button("Download all"));
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("Mirror is unavailable");
+    expect(document.querySelector('[aria-label="Sync interval"]')?.textContent).toContain("60 min");
+    expect(appApi.setSettings).not.toHaveBeenCalled();
+  });
 });
 
