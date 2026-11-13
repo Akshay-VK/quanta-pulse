@@ -797,6 +797,10 @@ function AppShell() {
                   folderPath={route.folderPath}
                   onNavigate={navigateToCourse}
                   unreadByCourse={unreadByCourse}
+                  details={detailsAdapters.library}
+                  loading={loading}
+                  error={loadError}
+                  onRetry={() => void refresh()}
                   onChanged={() => void refresh()}
                   onOpen={(url) => void open(url)}
                   onSyncNow={() => void handleSync()}

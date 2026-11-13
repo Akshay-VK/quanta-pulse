@@ -58,6 +58,8 @@ interface TreeRowProps {
   onOpen: (url: string) => void;
   onPreview: (resource: Resource) => void;
   onActivate: (index: number) => void;
+  selected?: boolean;
+  onSelect: (resource: Resource, origin: HTMLElement) => void;
 }
 
 /**
@@ -74,12 +76,14 @@ export default function TreeRow({
   onOpen,
   onPreview,
   onActivate,
+  selected = false,
+  onSelect,
 }: TreeRowProps) {
   const shared = {
     className: cx("tree-row", focused && "focused"),
     role: "treeitem",
     "aria-level": row.depth + 1,
-    "aria-selected": focused,
+    "aria-selected": row.kind === "file" ? selected || focused : focused,
     tabIndex: focused ? 0 : -1,
     "data-index": index,
     style: { paddingLeft: indentFor(row.depth) },
@@ -131,7 +135,14 @@ export default function TreeRow({
   const missingDate = upload.source === "unavailable";
 
   return (
-    <div {...shared}>
+    <div
+      {...shared}
+      className={cx("tree-row", focused && "focused", selected && "selected")}
+      onClick={(event) => {
+        if ((event.target as HTMLElement).closest("button")) return;
+        onSelect(resource, event.currentTarget);
+      }}
+    >
       <span className="tree-toggle" aria-hidden="true" />
       <FileTypeIcon type={resource.resourceType} />
       <span className="tree-name" title={`${resource.title} — ${formatSectionPath(resource)}`}>
