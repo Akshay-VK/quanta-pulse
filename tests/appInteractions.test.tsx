@@ -21,6 +21,18 @@ describe("App details lifecycle", () => {
     await click(button("Close details"));
     expect(document.activeElement).toBe(row);
   });
+  it("focuses the details title when the same row is inspected again", async () => {
+    app = await renderApp();
+    const row = button("Show details for Lecture 4");
+    await click(row);
+    row.focus();
+    await click(row);
+    expect(document.querySelectorAll(".peek")).toHaveLength(1);
+    expect(document.activeElement).toBe(document.querySelector(".peek-title"));
+    expect(appApi.openExternal).not.toHaveBeenCalled();
+    expect(appApi.markRead).not.toHaveBeenCalled();
+  });
+
   it("ignores an older mirror lookup even after the same resource is selected again", async () => {
     const first = deferred<LocalFile | null>();
     const current = deferred<LocalFile | null>();
@@ -40,6 +52,34 @@ describe("App details lifecycle", () => {
     await flushApp();
     expect(document.querySelector(".peek")?.textContent).toContain("/new.pdf");
     expect(document.querySelector(".peek")?.textContent).not.toContain("/old.pdf");
+  });
+
+  it("clears details when refresh removes the initiating row", async () => {
+    app = await renderApp();
+    const row = button("Show details for Lecture 4");
+    await click(row);
+    appApi.listDashboardResources.mockResolvedValue([]);
+    appApi.listDashboardEvents.mockResolvedValue([]);
+    await emitAppEvent("sync:done", {});
+    expect(row.isConnected).toBe(false);
+    expect(document.querySelector(".peek")).toBeNull();
+    expect(document.activeElement).toBe(document.querySelector("main h1"));
+  });
+
+  it("keeps a previous selection's late download out of the current details", async () => {
+    const download = deferred<LocalFile>();
+    appApi.listDashboardResources.mockResolvedValue([resource(), resource({ id: 2, title: "Lecture 5" })]);
+    appApi.listDashboardEvents.mockResolvedValue([change(), change({ id: 11, resourceId: 2 })]);
+    appApi.ensureLocal.mockReturnValue(download.promise);
+    app = await renderApp();
+    await click(button("Show details for Lecture 4"));
+    await click(button("Download now", document.querySelector(".peek")!));
+    await click(button("Show details for Lecture 5"));
+    await act(async () => download.resolve({ resourceId: 1, relPath: "old.pdf", path: "/files/old.pdf", sizeBytes: 42, mime: null, sha256: null, status: "ok", error: null }));
+    await flushApp();
+    expect(document.querySelector(".peek-title")?.textContent).toBe("Lecture 5");
+    expect(document.querySelector(".peek")?.textContent).not.toContain("/files/old.pdf");
+    expect(document.activeElement).toBe(document.querySelector(".peek-title"));
   });
 
   it("clears details on shell navigation and focuses the current view heading", async () => {
