@@ -25,3 +25,9 @@ Tickets 06 (keyboard and palette) and 07 (Settings feedback) are in progress on 
 ## 2026-11-13 ticket 06 integrated
 
 Ticket 06 (keyboard navigation and palette hints) merged fast-forward at `fd1b604b70aac3511f181fd93f3ea0cc08b7086d` (worker commit `42b9008`). Integration gates: lint pass, tests 286/36, build pass, diff-check pass. Ticket 07 (Settings) and ticket 08 acceptance remain pending; Mod+S save belongs to ticket 07 and is not claimed here.
+
+## 2026-11-13 ticket 07 integrated
+
+Ticket 07 (Settings save, retryable navigation, and operation feedback) merged from worker commits `430b955` and `4fc77c7b0c21f9f641deab87f8a058ad322224ba` in integration merge `cbe3ad72a60ea1f6c9ecd839a8f74c45521b877f`. The Settings navigation controller guards `go` and `goBack`, preserving the existing ticket 06 hotkey and palette entry points; `useHotkey`, `CommandPalette`, and `Sidebar` are unchanged. The real-App Settings suite covers save retry, discard, draft refresh, duplicate submission, invalid saves, Mod+S, and immediate operation failure.
+
+Integration gates: `npm run lint` pass, `npm test` pass (37 files, 292 tests), `npm run build` pass, and `git diff --check` pass after trimming the test file's trailing blank line. Existing release-script diagnostics and jsdom warnings were emitted by passing tests. No packaged app or visual preview was run. Tickets 01–07 are integrated; ticket 08 complete-workflow final review remains pending. PR 10 remains draft; no issue was closed.
