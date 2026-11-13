@@ -10,6 +10,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { api } from "../../lib/api";
+import type { DetailsAdapter } from "../../lib/details";
 import { cx } from "../../lib/cx";
 import {
   buildCourseTree,
@@ -54,6 +55,7 @@ interface CoursePageProps {
   onPreview: (resource: Resource) => void;
   onChanged: () => void;
   onSyncNow?: () => void;
+  details?: DetailsAdapter;
 }
 
 const VIRTUAL_THRESHOLD = 200;
@@ -116,6 +118,7 @@ export default function CoursePage({
   onPreview,
   onChanged,
   onSyncNow = () => {},
+  details,
 }: CoursePageProps) {
   const [items, setItems] = useState<Resource[] | null>(null);
   const [events, setEvents] = useState<ChangeEvent[] | null>(null);
@@ -146,8 +149,6 @@ export default function CoursePage({
       setEvents(courseEvents);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : String(err));
-      setItems(null);
-      setEvents(null);
     } finally {
       setLoading(false);
     }
@@ -207,6 +208,25 @@ export default function CoursePage({
     walk(tree, 0);
     return out;
   }, [searching, searchResults, tree, sort, expanded]);
+
+  const selectedResourceId = details?.selected?.kind === "resource" ? details.selected.resource.id : null;
+  const selectedDetails = details?.selected;
+  useEffect(() => {
+    if (details && selectedResourceId !== null && !rows.some((row) => row.kind === "file" && row.resource.id === selectedResourceId)) {
+      details?.clear();
+    }
+  }, [details, rows, selectedResourceId]);
+
+  useEffect(() => {
+    if (selectedDetails?.kind === "resource" && selectedDetails.owner === "library" && selectedDetails.resource.courseId !== course.id) {
+      details?.clear();
+    }
+    if (selectedDetails?.kind === "change" && selectedDetails.owner === "library" && !events?.some((event) => event.id === selectedDetails.change.id)) {
+      details?.clear();
+    }
+  }, [course.id, details, events, selectedDetails]);
+
+  const isSelectedResourceRow = (row: FlatRow) => row.kind === "file" && selectedResourceId === row.resource.id;
 
   // Open the two most recently changed sections the first time this course is
   // shown in a session, then remember whatever the user does.
@@ -371,7 +391,13 @@ export default function CoursePage({
       case "Enter":
         event.preventDefault();
         if (current?.kind === "folder") toggle(current.id);
-        else if (current?.kind === "file") onOpen(current.resource.url);
+        else if (current?.kind === "file") {
+          const origin = scrollRef.current?.querySelector<HTMLElement>(`[role="treeitem"][data-index="${activeIndex}"]`);
+          if (origin) details?.selectResource(current.resource, origin, () => {
+            move(activeIndex);
+            return true;
+          });
+        }
         break;
       default:
         if (
@@ -489,6 +515,8 @@ export default function CoursePage({
                     onOpen={onOpen}
                     onPreview={onPreview}
                     onActivate={setActiveIndex}
+                    selected={isSelectedResourceRow(rows[item.index])}
+                    onSelect={(resource, origin) => details?.selectResource(resource, origin, () => { move(item.index); return true; })}
                   />
                 </div>
               ))}
@@ -505,6 +533,8 @@ export default function CoursePage({
                 onOpen={onOpen}
                 onPreview={onPreview}
                 onActivate={setActiveIndex}
+                selected={row.kind === "file" && selectedResourceId === row.resource.id}
+                onSelect={(resource, origin) => details?.selectResource(resource, origin, () => { move(index); return true; })}
               />
             ))
           )}
@@ -611,16 +641,14 @@ export default function CoursePage({
         />
       </div>
 
-      {loadError ? (
-        <Banner
-          kind="error"
-          action={{ label: "Retry", onClick: () => void load() }}
-        >
+      {loadError && (
+        <Banner kind="error" action={{ label: "Retry", onClick: () => void load() }}>
           {loadError}
         </Banner>
-      ) : loading && items === null ? (
+      )}
+      {loading && items === null ? (
         <Skeleton rows={8} />
-      ) : total === 0 ? (
+      ) : items === null ? null : total === 0 ? (
         <EmptyState
           title="This course has not been scanned yet"
           body="Quanta Pulse has not discovered any resources here. Run a sync to check again."
@@ -723,13 +751,13 @@ export default function CoursePage({
                   courseCode={courseTitle(event.courseId, event.courseName)}
                   courseName={event.courseName}
                   unread={false}
-                  selected={false}
+                  selected={details?.selected?.kind === "change" && details.selected.change.id === event.id}
                   unavailable={event.changeType === "unavailable"}
                   status={{ kind: STATUS_KIND[event.changeType] ?? "new", label: meta.label }}
                   timeLabel={formatTimeOfDay(event.detectedAt)}
                   openLabel={meta.label}
                   showOpen={Boolean(event.resourceUrl)}
-                  onSelect={() => event.resourceUrl && onOpen(event.resourceUrl)}
+                  onSelect={(origin) => details?.selectChange(event, origin, event.resourceId == null ? null : unique.find((resource) => resource.id === event.resourceId) ?? null)}
                   onOpen={
                     event.resourceUrl ? () => onOpen(event.resourceUrl as string) : undefined
                   }
