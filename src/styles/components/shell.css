@@ -290,22 +290,24 @@
   .page-header {
     display: flex;
     flex-direction: column;
-    gap: var(--sp-1);
-    margin-bottom: var(--sp-6);
+    gap: var(--sp-2);
+    margin-bottom: var(--sp-4);
   }
 
   .page-header-row {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
-    gap: var(--sp-3);
+    gap: var(--sp-2);
+    flex-wrap: wrap;
   }
 
   .page-header-actions {
     display: flex;
     align-items: center;
-    gap: var(--sp-1);
-    margin-top: 4px;
+    gap: var(--sp-2);
+    margin-top: 0;
+    flex-wrap: wrap;
   }
 
   .page-caption {
@@ -314,12 +316,11 @@
   }
 
   .page-title {
-    font: 400 42px/46px var(--type-display);
-    letter-spacing: -0.01em;
+    font: 600 20px/28px var(--type-display);
   }
 
   .page-summary {
-    font: 400 15px/22px var(--type-lead);
+    font: 13px/20px var(--type-small);
     color: var(--muted);
     max-width: 70ch;
   }

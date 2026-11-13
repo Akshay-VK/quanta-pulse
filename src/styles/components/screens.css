@@ -400,15 +400,15 @@
 
   /* 7.6: a 720px content column beside a 160px sticky section list. */
   .settings-page {
-    /* Header plus the 160px nav, a 48px gap, and the 720px column, centred. */
-    max-width: calc(160px + var(--sp-12) + 720px);
+    max-width: 880px;
+    width: 100%;
     margin-inline: auto;
   }
 
   .settings-layout {
     display: grid;
-    grid-template-columns: 160px minmax(0, 720px);
-    gap: var(--sp-12);
+    grid-template-columns: 160px minmax(0, 1fr);
+    gap: var(--sp-6);
     align-items: start;
   }
 
@@ -451,7 +451,7 @@
 
   .settings-group-title {
     padding: var(--sp-10) 0 var(--sp-2);
-    font: 400 20px/26px var(--type-dialog);
+    font: 600 16px/24px var(--type-dialog);
     color: var(--ink);
   }
 

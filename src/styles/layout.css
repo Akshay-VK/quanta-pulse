@@ -97,7 +97,6 @@
   }
 
   .page {
-    max-width: var(--content-max);
     margin: 0 auto;
     width: 100%;
     min-width: 0;
@@ -221,19 +220,11 @@
     to { opacity: 1; }
   }
 
-  @media (max-width: 759px) {
+  @media (max-width: 959px) {
     .page,
     .banner-region {
-      padding-left: 24px;
-      padding-right: 24px;
-    }
-
-    @media (max-width: 619px) {
-      .page,
-      .banner-region {
-        padding-left: 16px;
-        padding-right: 16px;
-      }
+      padding-left: 16px;
+      padding-right: 16px;
     }
   }
 }

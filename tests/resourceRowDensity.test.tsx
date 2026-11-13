@@ -106,10 +106,10 @@ describe("ResourceRow layout", () => {
 });
 
 describe("ResourceRow stylesheet contract", () => {
-  it("lays the row out as a grid with a shrinkable main column", () => {
+  it("lays the row out as a grid with a shrinkable main column and fixed tracks", () => {
     const row = rule(contentCss, ".resource-row");
     expect(row).toContain("display: grid");
-    expect(row).toContain("grid-template-columns: minmax(0, 1fr)");
+    expect(row).toContain("grid-template-columns: minmax(0, 1fr) 240px 24px 104px 80px");
   });
 
   it("repeats the dot, icon and title tracks inside the select button", () => {
@@ -123,9 +123,10 @@ describe("ResourceRow stylesheet contract", () => {
     }
   });
 
-  it("stacks the compact row onto two lines", () => {
-    expect(rule(contentCss, ".resource-row.row-compact")).toContain("grid-template-columns");
-    // Line 2: the pill, tag and time move off the title's row.
+  it("stacks the compact row onto two lines with reserved tracks", () => {
+    const compact = rule(contentCss, ".resource-row.row-compact");
+    expect(compact).toContain("min-height: 56px");
+    expect(compact).toContain("grid-template-columns: minmax(0, 1fr) 240px 24px 104px 80px");
     expect(rule(contentCss, ".row-compact .row-meta")).toContain("grid-row: 2");
     expect(rule(contentCss, ".row-compact .row-time")).toContain("grid-row: 2");
   });
