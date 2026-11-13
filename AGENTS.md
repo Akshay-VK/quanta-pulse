@@ -63,3 +63,9 @@ in `src-tauri/` after Rust changes. Do not run the packaged app during dev.
 - Vite ignores `src-tauri/**`; Rust changes require a `tauri dev` restart.
 - macOS packaging needs a GUI session; `scripts/make-dmg.sh` exists because
   Tauri's Finder-driven DMG bundler fails headless.
+
+## Agent references
+
+- For spec, ticket, triage, or implementation tracker work, read [docs/agents/issue-tracker.md](docs/agents/issue-tracker.md) and use GitHub Issues in `Akshay-VK/quanta-pulse` with an explicit repository target.
+- For triage label names, read [docs/agents/triage-labels.md](docs/agents/triage-labels.md).
+- For project terminology or durable decisions, read [docs/agents/domain.md](docs/agents/domain.md), then consult [docs/wiki/index.md](docs/wiki/index.md) and its linked dated pages.
