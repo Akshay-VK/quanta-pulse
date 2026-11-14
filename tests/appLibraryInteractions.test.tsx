@@ -100,6 +100,6 @@ describe("App Library interactions", () => {
     await click(button("Show details for Recorded without a resource"));
     expect(document.querySelector(".peek-title")?.textContent).toBe("Recorded without a resource");
     expect(document.querySelector(".peek")?.textContent).toContain("Upload date unavailable");
-    expect(document.querySelector(".peek")?.textContent).toContain("Open Quanta page");
+    expect(document.querySelector(".peek")?.textContent).toContain("Open in Quanta");
   });
 });

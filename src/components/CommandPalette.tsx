@@ -3,10 +3,10 @@ import { Calendar, History, Library, Search, Settings, Sun } from "lucide-react"
 import { useState, type ReactNode } from "react";
 import { NAV, type ViewId } from "../lib/nav";
 import { courseTitle } from "../lib/courseName";
-import { formatSectionPath } from "../lib/sectionPath";
 import { Kbd } from "./ui/Kbd";
 import { Dialog } from "./ui/Dialog";
 import type { Course, Resource } from "../lib/types";
+import { rankMaterialMatches } from "../lib/materialActions";
 
 const VIEW_ICON: Record<ViewId, ReactNode> = {
   today: <Sun aria-hidden="true" />,
@@ -32,7 +32,8 @@ export default function CommandPalette({
   courses,
   onCourse,
   resources,
-  onOpenResource,
+  onInspectResource,
+  onSeeAllFiles,
   actions,
 }: {
   open: boolean;
@@ -41,7 +42,8 @@ export default function CommandPalette({
   courses: Course[];
   onCourse: (id: number) => void;
   resources: Resource[];
-  onOpenResource: (url: string) => void;
+  onInspectResource: (resource: Resource) => void;
+  onSeeAllFiles: (query: string) => void;
   actions: PaletteAction[];
 }) {
   const [query, setQuery] = useState("");
@@ -53,11 +55,7 @@ export default function CommandPalette({
     matches(`${c.name} ${c.shortName ?? ""} ${courseTitle(c.id, c.name)}`),
   );
   const files = needle
-    ? resources
-        .filter((r) =>
-          matches(`${r.title} ${r.courseName ?? ""} ${formatSectionPath(r)}`),
-        )
-        .slice(0, 8)
+    ? rankMaterialMatches(resources, needle).slice(0, 8)
     : [];
   const actionMatches = actions.filter((a) => matches(a.label));
 
@@ -139,7 +137,7 @@ export default function CommandPalette({
                   key={resource.id}
                   className="palette-item"
                   value={`${resource.title} ${resource.courseName ?? ""}`}
-                  onSelect={() => run(() => onOpenResource(resource.url))}
+                  onSelect={() => run(() => onInspectResource(resource))}
                 >
                   <span>{resource.title}</span>
                   <span className="palette-extra">
@@ -147,6 +145,15 @@ export default function CommandPalette({
                   </span>
                 </Command.Item>
               ))}
+            </Command.Group>
+          )}
+
+          {needle && resources.some((resource) => rankMaterialMatches([resource], needle).length > 0) && (
+            <Command.Group className="palette-group">
+              <Command.Item className="palette-item" value={`See all results ${needle}`} onSelect={() => run(() => onSeeAllFiles(query.trim()))}>
+                <span>See all results in Library</span>
+                <span className="palette-extra"><span className="faint">{query.trim()}</span></span>
+              </Command.Item>
             </Command.Group>
           )}
 
