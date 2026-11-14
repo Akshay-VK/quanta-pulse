@@ -30,6 +30,7 @@ export interface LibraryViewProps {
   loading?: boolean;
   error?: string | null;
   onRetry?: () => void;
+  initialSearch?: string;
 }
 
 function plural(n: number, word: string): string {
@@ -50,6 +51,7 @@ export default function LibraryView({
   loading = false,
   error = null,
   onRetry,
+  initialSearch,
 }: LibraryViewProps) {
   // The Courses | All files choice survives navigating into a course page.
   const [tab, setTab] = useState<"courses" | "files">(courseId == null ? "courses" : "files");
@@ -59,6 +61,12 @@ export default function LibraryView({
     previousTab.current = tab;
   }, [tab, details]);
   const [search, setSearch] = useState("");
+  useEffect(() => {
+    if (initialSearch !== undefined) {
+      setTab("files");
+      setSearch(initialSearch);
+    }
+  }, [initialSearch]);
   const [previewResource, setPreviewResource] = useState<Resource | null>(null);
 
   const course = courseId == null ? null : courses.find((c) => c.id === courseId) ?? null;

@@ -38,6 +38,7 @@ import {
   type DetailSelection, type DetailSubject, type DetailsAdapter, type RestoreDetailFocus,
 } from "./lib/details";
 import { canPreview } from "./lib/preview";
+import { materialActions } from "./lib/materialActions";
 import { relativeLabel } from "./lib/format";
 import { registerCourseLabels, courseLabel } from "./lib/courseName";
 import type {
@@ -109,6 +110,8 @@ function AppShell() {
 
   const [showLogin, setShowLogin] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [librarySearch, setLibrarySearch] = useState<string | undefined>();
+  const [pendingPaletteInspection, setPendingPaletteInspection] = useState<Resource | null>(null);
   const [selection, setSelection] = useState<DetailSelection | null>(null);
   const selectionRef = useRef<DetailSelection | null>(null);
   const selectionGeneration = useRef(0);
@@ -122,6 +125,7 @@ function AppShell() {
   const [localLookup, setLocalLookup] = useState<"loading" | "ready" | "error">("ready");
   const mirror = useMirror();
   const [previewResource, setPreviewResource] = useState<Resource | null>(null);
+  const materialSubmission = useRef(new Set<number>());
   const lastRow = useRef<HTMLElement | null>(null);
 
   // Below this width the sidebar is a rail and expands over the content.
@@ -562,6 +566,21 @@ function AppShell() {
     [notify, mirror],
   );
 
+  const downloadAndOpen = useCallback(async (resourceId: number) => {
+    if (materialSubmission.current.has(resourceId)) return;
+    materialSubmission.current.add(resourceId);
+    try {
+      const local = await (mirror?.ensureLocal ?? api.ensureLocal)(resourceId);
+      void mirror?.refresh();
+      await api.openLocalFile(resourceId);
+      notify(`Opened saved copy: ${local.path}`);
+    } catch (err) {
+      notify(`Could not download and open material: ${String(err)}`, true);
+    } finally {
+      materialSubmission.current.delete(resourceId);
+    }
+  }, [mirror, notify]);
+
   const copyText = useCallback(async (text: string, success: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -618,6 +637,13 @@ function AppShell() {
   // Runs after the next view has committed, so the fallback heading is current.
   useEffect(() => { closePeek(); }, [route, closePeek]);
 
+  useEffect(() => {
+    if (route.view !== "library" || !pendingPaletteInspection) return;
+    const origin = document.querySelector<HTMLElement>("main h1") ?? mainRef.current;
+    if (origin) detailsAdapters.library.selectResource(pendingPaletteInspection, origin);
+    setPendingPaletteInspection(null);
+  }, [route.view, pendingPaletteInspection, detailsAdapters]);
+
   const peekDetails: PeekDetails | null = useMemo(() => {
     if (selection?.kind === "change" && !peekResource) {
       const event = selection.change;
@@ -625,8 +651,9 @@ function AppShell() {
       const pageUrl = event.sourcePageUrl;
       return {
         ...changePresentation(event),
-        primaryAction: fileUrl ? { label: "Open file", onClick: () => void open(fileUrl) } : null,
-        secondaryAction: pageUrl ? { label: "Open Quanta page", onClick: () => void open(pageUrl) } : null,
+        primaryAction: fileUrl ? { label: "Open in Quanta", onClick: () => void open(fileUrl) } : null,
+        secondaryAction: pageUrl && !fileUrl ? { label: "Open in Quanta", onClick: () => void open(pageUrl) } : null,
+        menu: pageUrl && fileUrl ? [{ id: "page", label: "Open in Quanta page", onSelect: () => void open(pageUrl) }] : undefined,
       };
     }
     if (selection?.kind === "scan") return scanPresentation(selection.scan);
@@ -636,13 +663,19 @@ function AppShell() {
     const localStatus = peekResource.isExternal
       ? undefined
       : mirror?.statusOf(peekResource.id) ?? local;
+    const localState = peekResource.isExternal ? "unsupported" as const
+      : localStatus && isLocal(localStatus) ? "saved" as const
+        : localStatus?.status === "downloading" || localStatus?.status === "queued" ? "pending" as const : "missing" as const;
+    const primaryMaterialAction = materialActions(peekResource, { preview: previewable, local: localState })
+      .find((action) => action.id === "open-saved" || action.id === "download-open" || action.id === "open-quanta");
     return {
       ...todayPresentation(peekResource, eventKinds.get(peekResource.id)),
       ...(selection?.kind === "change" ? changePresentation(selection.change) : {}),
-      primaryAction:
-        localStatus && isLocal(localStatus)
-          ? { label: "Open local copy", onClick: () => void openLocal(peekResource.id) }
-          : { label: "Open file", onClick: () => void open(peekResource.url) },
+      primaryAction: primaryMaterialAction ? {
+        label: primaryMaterialAction.label,
+        onClick: () => primaryMaterialAction.id === "open-saved" ? void openLocal(peekResource.id)
+          : primaryMaterialAction.id === "download-open" ? void downloadAndOpen(peekResource.id) : void open(peekResource.url),
+      } : null,
       local:
         localStatus === undefined
           ? undefined
@@ -684,7 +717,7 @@ function AppShell() {
         }] : []),
       ],
     };
-  }, [selection, peekResource, peekLocal, localLookup, mirror, eventKinds, unreadIds, open, openLocal, ensureLocal, copyLocalPath, copyText, notify, toggleResourceRead]);
+  }, [selection, peekResource, peekLocal, localLookup, mirror, eventKinds, unreadIds, open, openLocal, ensureLocal, downloadAndOpen, copyLocalPath, copyText, notify, toggleResourceRead]);
 
   const paletteActions: PaletteAction[] = useMemo(
     () => [
@@ -899,6 +932,7 @@ function AppShell() {
                   onRetry={() => void refresh()}
                   onChanged={() => void refresh()}
                   onOpen={(url) => void open(url)}
+                  initialSearch={librarySearch}
                   onSyncNow={() => void handleSync()}
                 />
               )}
@@ -962,7 +996,8 @@ function AppShell() {
           courses={courses}
           onCourse={navigateToCourse}
           resources={resources}
-          onOpenResource={(url) => void open(url)}
+          onInspectResource={(resource) => { setPendingPaletteInspection(resource); navigate("library"); }}
+          onSeeAllFiles={(query) => { setLibrarySearch(query); navigate("library"); }}
           actions={paletteActions}
         />
 

@@ -153,22 +153,17 @@ function renderBody(
       return renderBinary(preview, objectUrl);
     case "unsupported":
       return (
-        <Banner
-          kind="error"
-          action={{ label: "Open in Quanta instead", onClick: () => onOpen(resource.url) }}
-        >
-          {preview.reason}
-        </Banner>
+        <div className="preview-status">
+          <p>{preview.reason}</p>
+          <Button variant="secondary" onClick={() => onOpen(resource.url)}>Open in Quanta</Button>
+        </div>
       );
     case "tooLarge":
       return (
-        <Banner
-          kind="error"
-          action={{ label: "Open in Quanta instead", onClick: () => onOpen(resource.url) }}
-        >
-          This file is too large to preview in-app
-          {preview.sizeBytes ? ` (${formatBytes(preview.sizeBytes)})` : ""}.
-        </Banner>
+        <div className="preview-status">
+          <p>This file is too large to preview in-app{preview.sizeBytes ? ` (${formatBytes(preview.sizeBytes)})` : ""}.</p>
+          <Button variant="secondary" onClick={() => onOpen(resource.url)}>Open in Quanta</Button>
+        </div>
       );
   }
 }

@@ -34,6 +34,41 @@ describe("App keyboard shortcuts", () => {
     expect(document.querySelector(".palette-item")?.textContent).toContain("Ctrl+5");
   });
 
+  it("inspects palette file matches and sends See all results to Library with the same query", async () => {
+    app = await renderApp();
+    await act(async () => { document.querySelector<HTMLButtonElement>(".search-trigger")!.click(); });
+    const input = document.querySelector<HTMLInputElement>(".palette-input")!;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(input, "Lecture 4");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const match = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) => item.textContent?.includes("Lecture 4"));
+    expect(match).toBeTruthy();
+    await click(match!);
+    expect(document.querySelector("main h1")?.textContent).toBe("Library");
+    expect(document.querySelector(".peek-title")?.textContent).toBe("Lecture 4");
+    expect(appApi.openExternal).not.toHaveBeenCalled();
+    expect(appApi.markRead).not.toHaveBeenCalled();
+  });
+
+  it("opens all palette matches in All files with the entered query", async () => {
+    app = await renderApp();
+    await act(async () => { document.querySelector<HTMLButtonElement>(".search-trigger")!.click(); });
+    const input = document.querySelector<HTMLInputElement>(".palette-input")!;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(input, "Lecture");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const all = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) => item.textContent?.includes("See all results in Library"));
+    expect(all).toBeTruthy();
+    await click(all!);
+    expect(document.querySelector("main h1")?.textContent).toBe("Library");
+    expect(document.querySelector<HTMLInputElement>('[aria-label="Search library"]')?.value).toBe("Lecture");
+    expect(document.querySelector('[aria-label="All course files"]')).toBeTruthy();
+  });
+
   it("uses Mod+comma for Settings and leaves bare comma alone", async () => {
     app = await renderApp();
     await act(async () => { key(","); });

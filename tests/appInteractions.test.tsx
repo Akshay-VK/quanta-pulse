@@ -204,8 +204,11 @@ describe("App details lifecycle", () => {
     app = await renderApp();
     await click(button("Show details for Lecture 4"));
     expect(appApi.openExternal).not.toHaveBeenCalled();
-    await click(button("Open file", document.querySelector(".peek")!));
-    expect(appApi.openExternal).toHaveBeenCalledWith(resource().url);
+    appApi.ensureLocal.mockResolvedValue({ resourceId: 1, relPath: "lecture.pdf", path: "/files/lecture.pdf", sizeBytes: 42, mime: null, sha256: null, status: "ok", error: null });
+    await click(button("Download and open", document.querySelector(".peek")!));
+    expect(appApi.ensureLocal).toHaveBeenCalledWith(1);
+    expect(appApi.openLocalFile).toHaveBeenCalledWith(1);
+    expect(appApi.openExternal).not.toHaveBeenCalled();
     expect(appApi.markRead).not.toHaveBeenCalled();
     await escape();
     expect(document.activeElement).toBe(button("Show details for Lecture 4"));

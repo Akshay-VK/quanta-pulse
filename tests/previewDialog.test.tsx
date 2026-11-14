@@ -165,7 +165,7 @@ describe("PreviewDialog", () => {
     });
     await render(buildResource({ resourceType: "presentation" }));
     expect(dialog().textContent).toContain("can't be previewed");
-    expect(dialog().textContent).toContain("Open in Quanta instead");
+    expect(dialog().textContent).toContain("Open in Quanta");
   });
 
   it("surfaces a fetch error and still offers the original", async () => {
