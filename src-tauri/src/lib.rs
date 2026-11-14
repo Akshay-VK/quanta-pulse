@@ -4,6 +4,7 @@
 //! Support directory. Session cookies remain in process memory and are never
 //! persisted to the database or macOS Keychain.
 
+pub mod attention;
 pub mod auth;
 pub mod commands;
 pub mod core;
@@ -47,6 +48,12 @@ pub fn run() {
             commands::restart_quanta_session,
             commands::start_sso_login,
             commands::logout,
+            commands::query_inbox,
+            commands::snapshot_inbox_event_ids,
+            commands::set_event_read_state,
+            commands::dismiss_inbox_events,
+            commands::delete_history,
+            commands::query_due_resources,
             commands::list_courses,
             commands::list_resources,
             commands::list_dashboard_resources,

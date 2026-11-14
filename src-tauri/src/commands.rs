@@ -223,6 +223,60 @@ pub fn daily_digest(state: State<AppState>, date: Option<String>) -> Result<Dige
     db::digest(&conn, &start, &end, &day.to_string()).map_err(|e| e.to_string())
 }
 
+/// Complete grouped attention collection, with matching counts before pagination.
+#[tauri::command]
+pub fn query_inbox(
+    state: State<AppState>,
+    filter: crate::models::InboxFilter,
+) -> Result<crate::models::InboxPage, String> {
+    crate::attention::inbox(&state.conn(), &filter)
+}
+
+/// Capture all matching event IDs; offset and limit do not restrict the scope.
+#[tauri::command]
+pub fn snapshot_inbox_event_ids(
+    state: State<AppState>,
+    filter: crate::models::InboxFilter,
+) -> Result<Vec<i64>, String> {
+    crate::attention::snapshot_inbox(&state.conn(), &filter)
+}
+
+/// Set explicit desired state; this is never a toggle.
+#[tauri::command]
+pub fn set_event_read_state(
+    state: State<AppState>,
+    event_ids: Vec<i64>,
+    desired_read: bool,
+) -> Result<(), String> {
+    crate::attention::set_event_read_state(
+        &state.conn(),
+        &event_ids,
+        desired_read,
+        &db::now_rfc3339(),
+    )
+}
+
+/// Persistent Inbox-only dismissal of an explicit captured set.
+#[tauri::command]
+pub fn dismiss_inbox_events(state: State<AppState>, event_ids: Vec<i64>) -> Result<(), String> {
+    crate::attention::dismiss_inbox(&state.conn(), &event_ids, &db::now_rfc3339())
+}
+
+/// Permanently delete recorded changes, optionally also scan diagnostics.
+#[tauri::command]
+pub fn delete_history(state: State<AppState>, include_scans: bool) -> Result<(), String> {
+    crate::attention::delete_history(&state.conn(), include_scans)
+}
+
+/// Complete resource deadlines; independent of all event/view-clear state.
+#[tauri::command]
+pub fn query_due_resources(
+    state: State<AppState>,
+    filter: crate::models::DueFilter,
+) -> Result<crate::models::DuePage, String> {
+    crate::attention::due_resources(&state.conn(), &filter)
+}
+
 /* --------------------------------------------------------------------- sync */
 
 #[tauri::command]
