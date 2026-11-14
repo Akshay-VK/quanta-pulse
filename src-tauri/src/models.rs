@@ -40,7 +40,8 @@ pub struct Resource {
     pub published_at: Option<Timestamp>,
     /// When the underlying file/page was last modified, if known.
     pub modified_at: Option<Timestamp>,
-    /// Deadline for assignments and quizzes, if known.
+    /// Deadline for assignments and quizzes, if known: RFC 3339 instant or
+    /// YYYY-MM-DD when the source supplies only a date.
     pub due_at: Option<Timestamp>,
     /// When Quanta Pulse first observed the resource.
     pub first_seen_at: Timestamp,
@@ -262,4 +263,118 @@ pub struct MirrorStats {
     pub state: String,
     pub root: String,
     pub free_bytes: u64,
+}
+
+/// Attention filtering is independent from the recorded change type.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum Attention {
+    #[default]
+    All,
+    Unread,
+}
+
+/// Complete collection filters. Offset pagination is stable for an unchanged snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct InboxFilter {
+    pub course_id: Option<i64>,
+    pub change_type: Option<String>,
+    pub attention: Attention,
+    pub search: Option<String>,
+    pub offset: usize,
+    pub limit: usize,
+}
+impl Default for InboxFilter {
+    fn default() -> Self {
+        Self {
+            course_id: None,
+            change_type: None,
+            attention: Attention::All,
+            search: None,
+            offset: 0,
+            limit: 100,
+        }
+    }
+}
+
+/// One surviving resource group, or one recorded orphan event. All IDs are
+/// non-dismissed relevant events; matching a type selects the whole group.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InboxItem {
+    pub key: String,
+    pub resource_id: Option<i64>,
+    pub course_id: Option<i64>,
+    pub latest_event: ChangeEvent,
+    pub event_ids: Vec<i64>,
+    pub change_types: Vec<String>,
+    pub unread: bool,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InboxCourseCount {
+    pub course_id: Option<i64>,
+    pub total: usize,
+    pub unread_total: usize,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InboxPage {
+    pub items: Vec<InboxItem>,
+    pub total: usize,
+    pub unread_total: usize,
+    pub course_counts: Vec<InboxCourseCount>,
+}
+
+/// Due bounds are inclusive `from`, exclusive `until`; accept RFC 3339 or
+/// YYYY-MM-DD (midnight UTC). No implicit current time or submission status.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct DueFilter {
+    pub course_id: Option<i64>,
+    pub resource_type: Option<String>,
+    pub search: Option<String>,
+    pub from: Option<String>,
+    pub until: Option<String>,
+    /// Optional local calendar bounds for date-only sources; override the
+    /// instant range for those sources without assigning them a timezone.
+    pub date_from: Option<String>,
+    pub date_until: Option<String>,
+    pub offset: usize,
+    pub limit: usize,
+}
+impl Default for DueFilter {
+    fn default() -> Self {
+        Self {
+            course_id: None,
+            resource_type: None,
+            search: None,
+            from: None,
+            until: None,
+            date_from: None,
+            date_until: None,
+            offset: 0,
+            limit: 100,
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DueDateKind {
+    Date,
+    Instant,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DueResource {
+    pub resource: Resource,
+    pub date_kind: DueDateKind,
+    pub course_paused: bool,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DuePage {
+    pub items: Vec<DueResource>,
+    pub total: usize,
 }

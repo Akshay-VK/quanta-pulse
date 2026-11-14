@@ -290,3 +290,54 @@ export type ResourcePreview =
       limitBytes: number;
       sourceUrl: string;
     };
+
+/** Type/search selects entire groups; pagination never limits counts or snapshots. */
+export interface InboxFilter {
+  courseId?: number;
+  changeType?: "new" | "updated" | "announcement" | "deadline" | "unavailable" | "restored";
+  attention?: "all" | "unread";
+  search?: string;
+  offset?: number;
+  limit?: number;
+}
+export interface InboxItem {
+  key: string;
+  resourceId: number | null;
+  courseId: number | null;
+  latestEvent: ChangeEvent;
+  eventIds: number[];
+  changeTypes: string[];
+  unread: boolean;
+}
+export interface InboxCourseCount {
+  courseId: number | null;
+  total: number;
+  unreadTotal: number;
+}
+export interface InboxPage {
+  items: InboxItem[];
+  total: number;
+  unreadTotal: number;
+  courseCounts: InboxCourseCount[];
+}
+/** Range is [from, until), RFC 3339 or YYYY-MM-DD (midnight UTC).
+ * Date-only source values remain dates; local agenda grouping belongs to the UI.
+ */
+export interface DueFilter {
+  courseId?: number;
+  resourceType?: string;
+  search?: string;
+  from?: string;
+  until?: string;
+  /** YYYY-MM-DD bounds for date-only sources; override instant range for them. */
+  dateFrom?: string;
+  dateUntil?: string;
+  offset?: number;
+  limit?: number;
+}
+export interface DueResource {
+  resource: Resource;
+  dateKind: "date" | "instant";
+  coursePaused: boolean;
+}
+export interface DuePage { items: DueResource[]; total: number }

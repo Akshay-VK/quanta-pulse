@@ -180,6 +180,7 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     // persisted marker makes this one-time; normal future event queries use
     // the event flag, with no rolling timestamp rule.
     apply_course_tree_incident_cleanup(conn, &now_rfc3339())?;
+    conn.execute_batch(include_str!("../migrations/0005_inbox_dismissals.sql"))?;
     Ok(())
 }
 
@@ -869,14 +870,14 @@ pub fn insert_event(
     Ok(changed > 0)
 }
 
-const EVENT_SELECT: &str = "SELECT e.id, e.resource_id, e.course_id, c.name, r.title, r.url, r.resource_type,
+pub(crate) const EVENT_SELECT: &str = "SELECT e.id, e.resource_id, e.course_id, c.name, r.title, r.url, r.resource_type,
         r.uploaded_at, e.change_type, e.title, e.description, e.detected_at, e.read_at, r.source_page_url,
         r.section_path, r.section
  FROM change_events e
  LEFT JOIN resources r ON r.id = e.resource_id
  LEFT JOIN courses c ON c.id = e.course_id";
 
-fn map_event(r: &rusqlite::Row<'_>) -> rusqlite::Result<ChangeEvent> {
+pub(crate) fn map_event(r: &rusqlite::Row<'_>) -> rusqlite::Result<ChangeEvent> {
     let read_at: Option<String> = r.get(12)?;
     Ok(ChangeEvent {
         id: r.get(0)?,

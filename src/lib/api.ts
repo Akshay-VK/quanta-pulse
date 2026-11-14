@@ -2,6 +2,10 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  InboxFilter,
+  InboxPage,
+  DueFilter,
+  DuePage,
   AuthStatus,
   SessionResetResult,
   SessionRefreshResult,
@@ -33,6 +37,17 @@ export const api = {
   refreshSession: () => invoke<SessionRefreshResult>("refresh_session"),
   restartQuantaSession: () => invoke<SessionResetResult>("restart_quanta_session"),
   logout: () => invoke<void>("logout"),
+
+  queryInbox: (filter: InboxFilter = {}) => invoke<InboxPage>("query_inbox", { filter }),
+  snapshotInboxEventIds: (filter: InboxFilter = {}) =>
+    invoke<number[]>("snapshot_inbox_event_ids", { filter }),
+  setEventReadState: (eventIds: number[], desiredRead: boolean) =>
+    invoke<void>("set_event_read_state", { eventIds, desiredRead }),
+  dismissInboxEvents: (eventIds: number[]) =>
+    invoke<void>("dismiss_inbox_events", { eventIds }),
+  deleteHistory: (includeScans: boolean) => invoke<void>("delete_history", { includeScans }),
+  queryDueResources: (filter: DueFilter = {}) =>
+    invoke<DuePage>("query_due_resources", { filter }),
 
   listCourses: () => invoke<Course[]>("list_courses"),
   listResources: (filter: ResourceFilter = {}) =>
