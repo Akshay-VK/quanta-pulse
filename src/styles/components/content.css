@@ -79,6 +79,8 @@
     opacity: 0;
   }
 
+  /* Policy destinations, including overflow, remain discoverable without hover. */
+  .row-material .row-actions,
   .resource-row:hover .row-actions,
   .resource-row:focus-within .row-actions,
   .resource-row.selected .row-actions {
@@ -893,4 +895,30 @@
     0%, 100% { opacity: 0.4; }
     50% { opacity: 1; }
   }
+}
+/* Attention controls remain visible beside quiet, token-based material rows. */
+@layer components {
+  .attention-item { display: flex; align-items: center; border-bottom: 1px solid var(--line); }
+  .attention-item > .resource-row { flex: 1; min-width: 0; border-bottom: 0; }
+  .attention-read { flex-shrink: 0; margin-inline: 8px; }
+  .attention-section-title { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-block: 12px; }
+  .attention-section-title h2, .agenda-collapse { font: 600 16px/24px var(--type-ui); }
+  .due-soon, .agenda-group { margin-block: 24px; }
+  .due-soon { border-top: 1px solid var(--line); }
+  .due-soon-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; width: 100%; text-align: left; padding: 12px 8px; color: var(--ink); background: transparent; border: 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .due-soon-row > span:last-child { color: var(--muted); font-size: 12px; }
+  .due-soon-row:hover, .agenda-collapse:hover { background: var(--hover); }
+  .agenda-collapse { background: transparent; border: 0; color: var(--ink); cursor: pointer; text-align: left; padding: 4px; }
+  .agenda-entry .row-time { white-space: normal; max-width: 260px; text-align: right; }
+  @media (max-width: 700px) {
+    .attention-item { align-items: stretch; flex-direction: column; }
+    .attention-read { align-self: flex-end; margin-block-end: 4px; }
+    .agenda-entry .row-time { text-align: left; max-width: none; }
+  }
+}
+@layer components {
+  .inbox-view .result-count, .agenda-view .result-count { font-family: var(--type-ui); white-space: normal; }
+  .inbox-view .row-time { width: auto; white-space: normal; }
+  .inbox-view .resource-row:not(.row-compact), .agenda-entry .resource-row:not(.row-compact) { grid-template-columns: minmax(0, 1fr) 240px 24px 160px 80px; }
+  .agenda-entry .row-time { width: auto; }
 }

@@ -38,14 +38,14 @@ describe("Settings save and navigation in the real application", () => {
     app = await renderApp();
     await openSettings();
     await editInterval();
-    await click(button("Today"));
+    await click(button("Inbox"));
     expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain("Save");
     await click(button("Save"));
     expect(document.querySelector("main h1")?.textContent).toBe("Settings");
     expect(document.querySelector('[aria-label="Sync interval"]')).toBeTruthy();
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("Disk is busy");
     await click(button("Save"));
-    expect(document.querySelector("main h1")?.textContent).toBe("Today");
+    expect(document.querySelector("main h1")?.textContent).toBe("Inbox");
     expect(appApi.setSettings).toHaveBeenCalledTimes(2);
   });
 
@@ -66,7 +66,7 @@ describe("Settings save and navigation in the real application", () => {
     app = await renderApp();
     await openSettings();
     await editInterval();
-    await click(button("Today"));
+    await click(button("Inbox"));
     await click(button("Save", document.querySelector('[role="alertdialog"]')!));
     if (dismiss === "Escape") await escape();
     else await click(button("Stay"));
@@ -117,7 +117,7 @@ describe("Settings save and navigation in the real application", () => {
     app = await renderApp();
     await openSettings();
     await editInterval();
-    await click(button("Today"));
+    await click(button("Inbox"));
     await click(button("Save"));
     await click(button("Stay"));
     await emitAppEvent("ui:navigate", "history");
@@ -155,7 +155,7 @@ describe("Settings save and navigation in the real application", () => {
     await openSettings();
     await setInput("Quiet hours start", "08:00");
     await setInput("Quiet hours end", "08:00");
-    await click(button("Today"));
+    await click(button("Inbox"));
     const guard = document.querySelector('[role="alertdialog"]')!;
     expect(button("Save", guard).disabled).toBe(true);
     await click(button("Stay", guard));
@@ -189,7 +189,7 @@ describe("Settings save and navigation in the real application", () => {
     app = await renderApp();
     await openSettings();
     await editInterval();
-    if (surface === "navigation") await click(button("Today"));
+    if (surface === "navigation") await click(button("Inbox"));
     else if (surface === "discard") await click(button("Discard"));
     else await click(document.querySelector<HTMLButtonElement>(".search-trigger")!);
     expect(document.querySelector('[role="dialog"], [role="alertdialog"]')).toBeTruthy();

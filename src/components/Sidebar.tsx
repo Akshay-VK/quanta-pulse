@@ -50,7 +50,7 @@ function NavItem({
     <button
       type="button"
       className="nav-item"
-      aria-label={collapsed ? label : undefined}
+      aria-label={label}
       aria-current={active ? "page" : undefined}
       onClick={onClick}
     >
@@ -189,7 +189,7 @@ export default function Sidebar({
               label={item.label}
               // Library is the course list only; a course page is its own place.
               active={view === item.id && (item.id !== "library" || activeCourseId == null)}
-              badge={item.id === "history" ? unreadTotal : undefined}
+              badge={item.id === "today" ? unreadTotal : undefined}
               collapsed={collapsed}
               onClick={() => onView(item.id)}
             />

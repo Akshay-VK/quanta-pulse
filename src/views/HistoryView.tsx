@@ -112,6 +112,7 @@ export default function HistoryView({
   const [courseFilter, setCourseFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [confirmClear, setConfirmClear] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [markingRead, setMarkingRead] = useState(false);
   const readRequest = useRef(false);
 
@@ -241,14 +242,14 @@ export default function HistoryView({
               disabled={!hasUnread}
               onClick={() => void markAllRead()}
             >
-              {markingRead ? "Marking read" : "Mark all read"}
+              {markingRead ? "Marking read" : "Mark loaded history read"}
             </Button>
             <Menu
               label="History actions"
               items={[
                 {
                   id: "clear",
-                  label: "Clear history…",
+                  label: "Delete recorded history…",
                   danger: true,
                   onSelect: () => setConfirmClear(true),
                 },
@@ -266,8 +267,8 @@ export default function HistoryView({
       <div className="history-tabs">
         <ViewTabs
           items={[
-            { id: "changes", label: "Changes" },
-            { id: "scans", label: "Scans" },
+            { id: "changes", label: "Activity" },
+            { id: "scans", label: "Scan history" },
           ]}
           value={tab}
           onChange={setTab}
@@ -425,11 +426,11 @@ export default function HistoryView({
       <ConfirmDialog
         open={confirmClear}
         onOpenChange={setConfirmClear}
-        title="Clear history?"
-        body="This permanently removes every recorded change and scan from this machine. Course resources are not affected."
-        confirmLabel="Clear history"
+        title="Permanently delete recorded history?"
+        body={<><p>This permanently removes every recorded change and scan from this machine, including dismissed Inbox changes. Resources and saved files remain.</p>{deleteError && <p role="alert">{deleteError}</p>}</>}
+        confirmLabel="Delete changes and scans"
         destructive
-        onConfirm={onClearAll}
+        onConfirm={async () => { setDeleteError(null); try { await onClearAll(); } catch (err) { setDeleteError(`History could not be deleted: ${String(err)}`); throw err; } }}
       />
     </div>
   );

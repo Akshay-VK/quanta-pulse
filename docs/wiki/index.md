@@ -4,6 +4,8 @@ This wiki preserves dated decisions and their evidence. It is not the live track
 
 ## Product decisions
 
+- [2026-11-14: Inbox and Agenda frontend workflows](2026-11-14-inbox-agenda-implementation.md) — Complete collection wiring, captured attention actions, due-date grouping, shared inspection, rendered evidence, and integration seams.
+
 - [2026-11-14: Appearance vertical slice implemented](2026-11-14-appearance-implementation.md) — Implementation authorization, shared appearance ownership, palette verification, rendered evidence, and remaining native acceptance.
 - [2026-11-14: Attention and due collection data contracts](2026-11-14-attention-data-contracts.md) — Backend slice, exact frontend contracts, reversible dismissal, native verification, and integration limits.
 - [2026-11-14: Themes and student workflow specification](2026-11-14-themes-and-workflows-spec.md) — Follow-up scope, confirmed testing seams, published spec, and reconciliation with the completed workspace baseline.

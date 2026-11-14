@@ -89,7 +89,7 @@ describe("History read action", () => {
     expect(container.querySelector('[data-testid="unread-count"]')?.textContent).toBe("1");
 
     const button = [...container.querySelectorAll("button")]
-      .find((item) => item.textContent?.includes("Mark all read")) as HTMLButtonElement;
+      .find((item) => item.textContent?.includes("Mark loaded history read")) as HTMLButtonElement;
     await act(async () => {
       button.click();
       button.click();

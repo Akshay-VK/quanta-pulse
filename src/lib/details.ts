@@ -43,6 +43,7 @@ export function resourceDetails(resource: Resource): DetailProperty[] {
     label: "Availability",
     value: available ? "Available" : resource.availabilityStatus,
   });
+  props.push({ label: "Due", value: resource.dueAt ?? "Due date unavailable" });
   props.push({ label: "File", value: resource.url, copy: resource.url });
   if (resource.sourcePageUrl) {
     props.push({ label: "Page", value: resource.sourcePageUrl, copy: resource.sourcePageUrl });

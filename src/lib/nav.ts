@@ -4,7 +4,7 @@
 export type ViewId = "today" | "calendar" | "library" | "history" | "settings";
 
 export const NAV: { id: ViewId; label: string }[] = [
-  { id: "today", label: "Today" },
+  { id: "today", label: "Inbox" },
   { id: "calendar", label: "Calendar" },
   { id: "library", label: "Library" },
   { id: "history", label: "History" },
@@ -13,6 +13,7 @@ export const NAV: { id: ViewId; label: string }[] = [
 
 const LEGACY: Record<string, ViewId> = {
   dashboard: "today",
+  inbox: "today",
   resources: "library",
   courses: "library",
 };

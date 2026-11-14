@@ -36,8 +36,8 @@ describe("App details lifecycle", () => {
   it("ignores an older mirror lookup even after the same resource is selected again", async () => {
     const first = deferred<LocalFile | null>();
     const current = deferred<LocalFile | null>();
-    appApi.listDashboardResources.mockResolvedValue([resource(), resource({ id: 2, title: "Lecture 5" })]);
-    appApi.listDashboardEvents.mockResolvedValue([change(), change({ id: 11, resourceId: 2 })]);
+    appApi.listResources.mockResolvedValue([resource(), resource({ id: 2, externalResourceId: "r2", title: "Lecture 5" })]);
+    appApi.listDashboardEvents.mockResolvedValue([change(), change({ id: 11, resourceId: 2, resourceTitle: "Lecture 5" })]);
     appApi.mirrorLocalFile.mockReturnValueOnce(first.promise).mockResolvedValueOnce(null).mockReturnValueOnce(current.promise);
     app = await renderApp();
     await click(button("Show details for Lecture 4"));
@@ -68,8 +68,8 @@ describe("App details lifecycle", () => {
 
   it("keeps a previous selection's late download out of the current details", async () => {
     const download = deferred<LocalFile>();
-    appApi.listDashboardResources.mockResolvedValue([resource(), resource({ id: 2, title: "Lecture 5" })]);
-    appApi.listDashboardEvents.mockResolvedValue([change(), change({ id: 11, resourceId: 2 })]);
+    appApi.listResources.mockResolvedValue([resource(), resource({ id: 2, externalResourceId: "r2", title: "Lecture 5" })]);
+    appApi.listDashboardEvents.mockResolvedValue([change(), change({ id: 11, resourceId: 2, resourceTitle: "Lecture 5" })]);
     appApi.ensureLocal.mockReturnValue(download.promise);
     app = await renderApp();
     await click(button("Show details for Lecture 4"));
@@ -94,7 +94,7 @@ describe("App details lifecycle", () => {
   it("keeps selection while filters retain the row, then clears it with heading focus", async () => {
     app = await renderApp();
     await click(button("Show details for Lecture 4"));
-    const search = document.querySelector<HTMLInputElement>('[aria-label="Search activity"]')!;
+    const search = document.querySelector<HTMLInputElement>('[aria-label="Search Inbox"]')!;
     const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
     await act(async () => { setValue.call(search, "Lecture"); search.dispatchEvent(new Event("input", { bubbles: true })); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 170)); });
@@ -177,12 +177,7 @@ describe("App details lifecycle", () => {
   it("lets a confirmation dialog consume Escape while keeping details and activity", async () => {
     app = await renderApp();
     await click(button("Show details for Lecture 4"));
-    const trigger = button("Activity actions");
-    trigger.focus();
-    await act(async () => { trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true })); });
-    await flushApp();
-    const clear = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((node) => node.textContent?.includes("Clear activity"))!;
-    await click(clear);
+    await click(button("Dismiss all Inbox items…"));
     expect(document.querySelector('[role="alertdialog"], [role="dialog"]')).toBeTruthy();
     await escape();
     expect(document.querySelector('[role="alertdialog"], [role="dialog"]')).toBeNull();
@@ -215,8 +210,8 @@ describe("App details lifecycle", () => {
   });
 
   it("clears a completed local lookup when another resource is selected", async () => {
-    appApi.listDashboardResources.mockResolvedValue([resource(), resource({ id: 2, title: "Lecture 5" })]);
-    appApi.listDashboardEvents.mockResolvedValue([change(), change({ id: 11, resourceId: 2 })]);
+    appApi.listResources.mockResolvedValue([resource(), resource({ id: 2, externalResourceId: "r2", title: "Lecture 5" })]);
+    appApi.listDashboardEvents.mockResolvedValue([change(), change({ id: 11, resourceId: 2, resourceTitle: "Lecture 5" })]);
     appApi.mirrorLocalFile.mockResolvedValueOnce({ resourceId: 1, relPath: "a.pdf", path: "/files/a.pdf", sizeBytes: 42, mime: null, sha256: null, status: "ok", error: null });
     appApi.mirrorLocalFile.mockReturnValueOnce(deferred<LocalFile | null>().promise);
     app = await renderApp();

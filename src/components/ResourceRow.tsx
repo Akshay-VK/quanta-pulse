@@ -15,7 +15,7 @@ export type RowDensity = "comfortable" | "compact";
 
 /** Below this width the row flips to its two-line compact layout. Container
  *  queries are unavailable on our minimum webview, so it is measured instead. */
-const COMPACT_MAX_WIDTH = 560;
+const COMPACT_MAX_WIDTH = 800;
 
 /**
  * Watches the row's own box and reports whether it is narrower than the compact
@@ -73,6 +73,7 @@ export default function ResourceRow({
   onPreview,
   onCourse,
   menu,
+  destinations,
 }: {
   title: string;
   type: string | null;
@@ -102,6 +103,8 @@ export default function ResourceRow({
   /** Opens the course this row belongs to; the course pill becomes a button. */
   onCourse?: () => void;
   menu: MenuItemSpec[];
+  /** Explicit policy destinations bypass the legacy local/open inference. */
+  destinations?: MenuItemSpec[];
 }) {
   const { ref, narrow } = useAutoCompact();
   const compact = density === "compact" || narrow;
@@ -110,11 +113,15 @@ export default function ResourceRow({
   // first and then opens.
   const resolvedOpenLabel = local === undefined ? openLabel : saved ? openLabel : "Download and open";
 
+  const primary = destinations?.find(action => action.id !== "preview");
+  const preview = destinations?.find(action => action.id === "preview");
+
   return (
     <div
       ref={ref}
       className={cx(
         "resource-row",
+        destinations !== undefined && "row-material",
         compact && "row-compact",
         selected && "selected",
         unread && "row-unread",
@@ -161,12 +168,20 @@ export default function ResourceRow({
       <span className="row-time">{timeLabel}</span>
 
       <span className="row-actions">
-        {previewAvailable && onPreview && (
+        {destinations ? preview && (
+          <IconButton label={preview.label} size={28} onClick={preview.onSelect}>
+            <Eye aria-hidden="true" />
+          </IconButton>
+        ) : previewAvailable && onPreview && (
           <IconButton label="Preview" size={28} onClick={onPreview}>
             <Eye aria-hidden="true" />
           </IconButton>
         )}
-        {showOpen && (saved ? onOpenLocal : onOpen) && (
+        {destinations ? primary && (
+          <IconButton label={primary.label} size={28} onClick={primary.onSelect}>
+            <ExternalLink aria-hidden="true" />
+          </IconButton>
+        ) : showOpen && (saved ? onOpenLocal : onOpen) && (
           <IconButton
             label={saved ? "Open local copy" : resolvedOpenLabel}
             size={28}
@@ -177,7 +192,7 @@ export default function ResourceRow({
         )}
         <Menu
           label="More actions"
-          items={menu}
+          items={[...(destinations ?? []), ...menu]}
           trigger={
             <IconButton label="More actions" size={28} tooltip={false}>
               <MoreHorizontal aria-hidden="true" />

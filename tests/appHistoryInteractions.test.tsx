@@ -45,7 +45,7 @@ describe("History shared details", () => {
     await click(eventButton);
     expect(document.querySelector(".peek-title")?.textContent).toBe("Lecture 4");
 
-    await click(button("Scans"));
+    await click(button("Scan history"));
     expect(document.querySelector(".peek")).toBeNull();
     const scanButton = document.querySelector<HTMLButtonElement>('[aria-label^="Show details for scan of"]');
     if (!scanButton) throw new Error(`Missing scan selector in: ${document.body.textContent}`);
@@ -66,7 +66,7 @@ describe("History shared details", () => {
   ])("keeps the %s scan status truthful in rows and details", async (status, label) => {
     appApi.listHistoryScans.mockResolvedValue([{ ...scan, status }]);
     await openHistory();
-    await click(button("Scans"));
+    await click(button("Scan history"));
     expect(document.querySelector("tbody")?.textContent).toContain(label);
     await click(document.querySelector<HTMLButtonElement>('[aria-label^="Show details for scan of"]')!);
     expect(document.querySelector(".peek")?.textContent).toContain(label);
@@ -75,9 +75,9 @@ describe("History shared details", () => {
   it("clears scan details when switching back to changes", async () => {
     appApi.listHistoryScans.mockResolvedValue([scan]);
     await openHistory();
-    await click(button("Scans"));
+    await click(button("Scan history"));
     await click(document.querySelector<HTMLButtonElement>('[aria-label^="Show details for scan of"]')!);
-    await click(button("Changes"));
+    await click(button("Activity"));
     expect(document.querySelector(".peek")).toBeNull();
   });
 

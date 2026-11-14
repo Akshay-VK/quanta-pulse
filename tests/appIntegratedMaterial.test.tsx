@@ -1,0 +1,60 @@
+import { act } from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { appApi, button, change, click, deferred, renderApp, resource, setupApp } from './helpers/renderApp';
+let app: Awaited<ReturnType<typeof renderApp>>;
+beforeEach(() => { setupApp(); vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-11-14T12:00:00Z')); });
+afterEach(() => { app?.unmount(); vi.useRealTimers(); });
+describe('integrated attention material destinations', () => {
+  it('downloads and opens the Inbox identity once, without opening its course page or acknowledging it', async () => {
+    const pending = deferred<Awaited<ReturnType<typeof appApi.ensureLocal>>>();
+    appApi.ensureLocal.mockReturnValue(pending.promise);
+    app = await renderApp();
+    const row = document.querySelector('.attention-item')!;
+    await click(button('Download and open', row));
+    await click(button('Download and open', row));
+    expect(appApi.ensureLocal).toHaveBeenCalledTimes(1);
+    expect(appApi.openExternal).not.toHaveBeenCalled();
+    await act(async () => pending.resolve({ resourceId: 1, path: '/fixture/lecture.pdf', relPath: 'lecture.pdf', sizeBytes: 12, mime: 'application/pdf', sha256: null, status: 'ok', error: null }));
+    expect(appApi.openLocalFile).toHaveBeenCalledWith(1);
+    expect(appApi.setEventReadState).not.toHaveBeenCalled();
+  });
+  it('keeps saved Agenda destinations separate from unavailable source and exact date context', async () => {
+    const item = resource({ dueAt: '2026-11-15', availabilityStatus: 'unavailable' });
+    appApi.queryDueResources.mockResolvedValue({ items: [{ resource: item, dateKind: 'date', coursePaused: false }], total: 1 });
+    appApi.mirrorLocalFiles.mockResolvedValue([{ resourceId: 1, status: 'kept', error: null }]);
+    app = await renderApp();
+    await click(button('Calendar'));
+    const row = document.querySelector('.agenda-entry')!;
+    expect(row.textContent).toContain('15 Nov 2026');
+    expect(row.textContent).toContain('Source unavailable');
+    await click(button('Open saved copy', row));
+    expect(appApi.openLocalFile).toHaveBeenCalledWith(1);
+    expect(appApi.ensureLocal).not.toHaveBeenCalled();
+    const trigger = button('More actions', row);
+    await act(async () => { trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })); });
+    const source = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent === 'Open in Quanta')!;
+    await click(source);
+    expect(appApi.openExternal).toHaveBeenCalledWith(item.url);
+    expect(appApi.openExternal).not.toHaveBeenCalledWith(item.sourcePageUrl);
+    expect(appApi.setEventReadState).not.toHaveBeenCalled();
+  });
+  it('previews an Inbox resource without acknowledging grouped attention or opening a source', async () => {
+    app = await renderApp();
+    await click(button('Preview', document.querySelector('.attention-item')!));
+    expect(appApi.previewResource).toHaveBeenCalledWith(1);
+    expect(appApi.setEventReadState).not.toHaveBeenCalled();
+    expect(appApi.openExternal).not.toHaveBeenCalled();
+    expect(appApi.ensureLocal).not.toHaveBeenCalled();
+  });
+  it('opens only a recorded destination for an orphan Activity event, without fabricating a download', async () => {
+    const event = change({ resourceId: 900, resourceTitle: 'Recorded worksheet', sourcePageUrl: 'https://example.test/recorded-page' });
+    appApi.dailyDigest.mockResolvedValue({ date: '2026-11-14', newCount: 1, updatedCount: 0, announcementCount: 0, deadlineCount: 0, unavailableCount: 0, coursesFailed: 0, lastSuccessAt: null, items: [event] });
+    app = await renderApp();
+    await click(button('Calendar')); await click(button('Activity calendar'));
+    const row = document.querySelector('.resource-row')!;
+    await click(button('Open in Quanta', row));
+    expect(appApi.openExternal).toHaveBeenCalledWith(event.resourceUrl);
+    expect(appApi.ensureLocal).not.toHaveBeenCalled();
+    expect(appApi.setEventReadState).not.toHaveBeenCalled();
+  });
+});

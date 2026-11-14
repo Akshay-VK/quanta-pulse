@@ -3,6 +3,7 @@
 // the helpers below, so their counts, colours and day boundaries can never
 // drift apart. Pure and timezone-aware so it can be unit tested.
 
+import { localDateKey } from "./agenda";
 import type { ChangeEvent } from "./types";
 import { parseTimestamp } from "./format";
 
@@ -78,9 +79,9 @@ export function dayKeyOf(d: Date): string {
 }
 
 /** Local calendar-day key of a stored timestamp. */
-export function localDayKey(value?: string | null): string {
+export function localDayKey(value?: string | null, timeZone?: string): string {
   const d = parseTimestamp(value);
-  return d ? dayKeyOf(d) : "";
+  return d ? timeZone ? localDateKey(d, timeZone) : dayKeyOf(d) : "";
 }
 
 /** Local midnight for a `YYYY-MM-DD` key. */
@@ -124,10 +125,10 @@ export function summarizeEvents(events: ChangeEvent[]): EventCounts {
 }
 
 /** Group events by their local calendar day, newest first within each day. */
-export function groupEventsByDay(events: ChangeEvent[]): Map<string, ChangeEvent[]> {
+export function groupEventsByDay(events: ChangeEvent[], timeZone?: string): Map<string, ChangeEvent[]> {
   const map = new Map<string, ChangeEvent[]>();
   for (const e of events) {
-    const key = localDayKey(e.detectedAt);
+    const key = localDayKey(e.detectedAt, timeZone);
     if (!key) continue;
     const bucket = map.get(key);
     if (bucket) bucket.push(e);

@@ -16,7 +16,7 @@ vi.mock("../src/lib/api", () => ({
 }));
 
 import { api } from "../src/lib/api";
-import CalendarView from "../src/views/CalendarView";
+import CalendarView from "../src/views/ActivityCalendar";
 import { TooltipProvider } from "../src/components/ui/Tooltip";
 
 declare global {
