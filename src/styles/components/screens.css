@@ -18,13 +18,14 @@
 
   .cal-layout {
     display: flex;
+    flex-wrap: wrap;
     align-items: flex-start;
     gap: var(--sp-6);
   }
 
   .cal-main {
-    flex: 0 1 auto;
-    min-width: 520px;
+    flex: 1 1 520px;
+    min-width: min(520px, 100%);
   }
 
   .cal-header {
@@ -35,7 +36,7 @@
   }
 
   .cal-month-title {
-    font: 400 28px/34px var(--type-display);
+    font: 600 16px/24px var(--type-display);
     margin-right: var(--sp-1);
   }
 
@@ -168,7 +169,7 @@
 
   .cal-panel {
     flex: 0 1 360px;
-    min-width: 320px;
+    min-width: min(320px, 100%);
     max-width: 420px;
     background: var(--raised);
     border-left: 1px solid var(--line);
@@ -176,7 +177,7 @@
   }
 
   .cal-panel-title {
-    font: 400 24px/29px var(--type-title);
+    font: 600 16px/24px var(--type-title);
     margin-bottom: var(--sp-4);
   }
 
@@ -400,15 +401,15 @@
 
   /* 7.6: a 720px content column beside a 160px sticky section list. */
   .settings-page {
-    /* Header plus the 160px nav, a 48px gap, and the 720px column, centred. */
-    max-width: calc(160px + var(--sp-12) + 720px);
+    max-width: 880px;
+    width: 100%;
     margin-inline: auto;
   }
 
   .settings-layout {
     display: grid;
-    grid-template-columns: 160px minmax(0, 720px);
-    gap: var(--sp-12);
+    grid-template-columns: 160px minmax(0, 1fr);
+    gap: var(--sp-6);
     align-items: start;
   }
 
@@ -451,7 +452,7 @@
 
   .settings-group-title {
     padding: var(--sp-10) 0 var(--sp-2);
-    font: 400 20px/26px var(--type-dialog);
+    font: 600 16px/24px var(--type-dialog);
     color: var(--ink);
   }
 

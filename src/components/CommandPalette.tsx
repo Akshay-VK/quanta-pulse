@@ -83,7 +83,7 @@ export default function CommandPalette({
             className="palette-input"
             value={query}
             onValueChange={setQuery}
-            placeholder="Search or jump to…"
+            placeholder="Search files and commands…"
             autoFocus
           />
         </div>
@@ -96,7 +96,7 @@ export default function CommandPalette({
           {views.length > 0 && (
             <Command.Group className="palette-group">
               <div className="palette-heading">Views</div>
-              {views.map((item, index) => (
+              {views.map((item) => (
                 <Command.Item
                   key={item.id}
                   className="palette-item"
@@ -105,7 +105,7 @@ export default function CommandPalette({
                   <span className="icon">{VIEW_ICON[item.id]}</span>
                   <span>{item.label}</span>
                   <span className="palette-extra">
-                    <Kbd keys={`Mod+${index + 1}`} />
+                    <Kbd keys={`Mod+${NAV.findIndex((view) => view.id === item.id) + 1}`} />
                   </span>
                 </Command.Item>
               ))}
@@ -172,6 +172,7 @@ export default function CommandPalette({
           )}
         </Command.List>
         <div className="palette-footer">
+          <span>File results use local titles, courses, and section names.</span>
           <span>
             <Kbd keys="Up" /> <Kbd keys="Down" /> to navigate
           </span>

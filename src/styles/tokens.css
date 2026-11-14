@@ -8,26 +8,26 @@
 @layer tokens {
   :root,
   :root[data-theme="light"] {
-    /* 4.1 Colour */
-    --bg: #faf9f6;
-    --side: #f3f1eb;
+    /* 4.1 Colour — approved Linear-inspired workspace palette */
+    --bg: #fafafc;
+    --side: #f2f2f6;
     --raised: #ffffff;
-    --hover: rgba(55, 53, 47, 0.06);
-    --selected: rgba(55, 53, 47, 0.09);
-    --ink: #2b2a27;
-    --muted: #6b685f;
-    --faint: #9a978e;
-    --line: rgba(55, 53, 47, 0.12);
-    --line-strong: rgba(55, 53, 47, 0.22);
-    --accent: #2383e2;
-    --link: #0f63b8;
+    --hover: #ebebf2;
+    --selected: #eae6ff;
+    --ink: #222326;
+    --muted: #5d5d6c;
+    --faint: #666676;
+    --line: #dcdce5;
+    --line-strong: #808090;
+    --accent: #5b45d6;
+    --link: #5033c5;
     --overlay: rgba(25, 24, 22, 0.4);
     --dot-ok: #3fa46a;
     --dot-warn: #d99628;
     --dot-danger: #d9473b;
 
     /* 6.1 Extra tokens */
-    --ink-hover: #413f3a;
+    --ink-hover: #222326;
     --danger-solid: #c23a2f;
     --on-danger: #ffffff;
     --on-accent: #ffffff;
@@ -62,10 +62,10 @@
     --course-dot-10: #6b4fa8;
     --course-dot-11: #3d8f4f;
 
-    /* 4.2 Typography */
-    --type-display: "Newsreader Variable", Georgia, serif;
-    --type-title: "Newsreader Variable", Georgia, serif;
-    --type-dialog: "Newsreader Variable", Georgia, serif;
+    /* 4.2 Typography — Geist everywhere, bundled */
+    --type-display: "Geist Variable", system-ui, sans-serif;
+    --type-title: "Geist Variable", system-ui, sans-serif;
+    --type-dialog: "Geist Variable", system-ui, sans-serif;
     --type-lead: "Geist Variable", system-ui, sans-serif;
     --type-ui: "Geist Variable", system-ui, sans-serif;
     --type-ui-strong: "Geist Variable", system-ui, sans-serif;
@@ -85,13 +85,12 @@
     --sp-10: 40px;
     --sp-12: 48px;
     --sp-16: 64px;
-    --sidebar-w: 248px;
+    --sidebar-w: 240px;
     --sidebar-rail: 56px;
     --topbar-h: 48px;
     --row-h: 40px;
-    --peek-w: 340px;
-    --content-max: 900px;
-    --page-pad-x: 48px;
+    --peek-w: 360px;
+    --page-pad-x: 24px;
     --control-h-sm: 28px;
     --control-h: 32px;
     --control-h-lg: 36px;
@@ -136,18 +135,18 @@
   }
 
   :root[data-theme="dark"] {
-    --bg: #262624;
-    --side: #1f1e1d;
-    --raised: #2e2d2b;
-    --hover: rgba(255, 255, 255, 0.06);
-    --selected: rgba(255, 255, 255, 0.09);
-    --ink: #eceae4;
-    --muted: #a19e95;
-    --faint: #6f6d66;
-    --line: rgba(255, 255, 255, 0.1);
-    --line-strong: rgba(255, 255, 255, 0.18);
-    --accent: #5aa2f0;
-    --link: #7db4f5;
+    --bg: #09090b;
+    --side: #0d0d10;
+    --raised: #151519;
+    --hover: #1d1d23;
+    --selected: #262338;
+    --ink: #f4f5f8;
+    --muted: #b4b4c0;
+    --faint: #9b9ba8;
+    --line: #2a2a33;
+    --line-strong: #707080;
+    --accent: #6d5ef5;
+    --link: #b9b1ff;
     --overlay: rgba(0, 0, 0, 0.55);
     --dot-ok: #4fbe7e;
     --dot-warn: #e3a63c;
@@ -156,8 +155,7 @@
     --ink-hover: #ffffff;
     --danger-solid: #f0705f;
     --on-danger: #1a0f0e;
-    /* The accent is a light blue in the dark theme, so its glyph goes dark. */
-    --on-accent: #16222e;
+    --on-accent: #ffffff;
     --control-knob: #ffffff;
 
     --t-new-bg: #1d3a52;

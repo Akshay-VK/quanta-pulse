@@ -1,21 +1,36 @@
 import { useEffect } from "react";
-import { tinykeys } from "tinykeys";
+import { createKeybindingsHandler } from "tinykeys";
 
 /** A tinykeys binding map, e.g. `{ "$mod+k": () => open() }`. */
 export type HotkeyMap = Record<string, (event: KeyboardEvent) => void>;
 
 /**
- * Bind global keyboard shortcuts. tinykeys already ignores events that
- * originate in text fields (input/textarea/select/contenteditable), so
- * typing never triggers a shortcut. Pass `enabled: false` while a modal or
- * palette owns the keyboard.
+ * Bind global shortcuts while keeping text editing safe. Mod+K remains
+ * available from an editor so the palette can always be opened.
  */
 export function useHotkey(bindings: HotkeyMap, enabled = true): void {
   useEffect(() => {
     if (!enabled) return;
     const entries = Object.entries(bindings);
     if (entries.length === 0) return;
-    const unbind = tinykeys(window, Object.fromEntries(entries));
-    return unbind;
+    const keybindings = Object.fromEntries(entries);
+    const handler = createKeybindingsHandler(keybindings, {
+      ignore: (event) => {
+        if (event.defaultPrevented || event.repeat || event.isComposing || event.keyCode === 229) return true;
+        const target = event.target;
+        const editor = target instanceof Element ? target.closest("[contenteditable]") : null;
+        const editing = target instanceof Element && (
+          target.closest("input, textarea, select, [role='textbox']") !== null ||
+          (editor !== null && editor.getAttribute("contenteditable") !== "false")
+        );
+        if (!editing) return false;
+        const mod = navigator.platform.toLowerCase().includes("mac") ? event.metaKey : event.ctrlKey;
+        const onlyMod = mod && !event.altKey && !event.shiftKey && !(navigator.platform.toLowerCase().includes("mac") ? event.ctrlKey : event.metaKey);
+        if ((onlyMod && event.key.toLowerCase() === "k") || event.key === "Escape") return false;
+        return true;
+      },
+    });
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
   });
 }

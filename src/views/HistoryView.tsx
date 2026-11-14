@@ -4,20 +4,19 @@
 // read, grouped by local calendar day so a change looks identical everywhere.
 // Scans are the persisted `scan_runs` table, shown as a data table.
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Copy, ExternalLink, MoreHorizontal } from "lucide-react";
-import type { ChangeEvent, Course, ScanRun } from "../lib/types";
+import type { ChangeEvent, Course, Resource, ScanRun } from "../lib/types";
 import { dayKeyOf, eventKindMeta, groupEventsByDay, todayKey } from "../lib/events";
 import { formatCompact, formatTimeOfDay } from "../lib/format";
 import { courseTitle } from "../lib/courseName";
 import { eventLinks, primaryUrl } from "../lib/open";
-import type { DetailProperty } from "../lib/details";
+import { scanStatusMeta, type DetailsAdapter } from "../lib/details";
 import PageHeader from "../components/PageHeader";
 import ResourceRow from "../components/ResourceRow";
 import { useMirror } from "../hooks/useMirror";
 import GroupHeader from "../components/GroupHeader";
 import DataTable, { type DataColumn } from "../components/DataTable";
-import PeekPanel, { type PeekDetails } from "../components/PeekPanel";
 import ConfirmDialog from "../components/ConfirmDialog";
 import { Button } from "../components/ui/Button";
 import { IconButton } from "../components/ui/IconButton";
@@ -40,6 +39,11 @@ export interface HistoryViewProps {
   onSyncNow: () => void;
   /** Opens a course page from a row's course pill. */
   onOpenCourse?: (courseId: number) => void;
+  details: DetailsAdapter;
+  resources: Resource[];
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
 }
 
 const TYPE_FILTERS = [
@@ -64,10 +68,6 @@ const STATUS_KIND: Record<string, StatusKind> = {
 const BASELINE_TIP =
   "First scan of a course. It records everything as known and reports no changes.";
 
-function noop(): void {
-  return undefined;
-}
-
 function eventTitle(e: ChangeEvent): string {
   return e.resourceTitle ?? e.title;
 }
@@ -86,53 +86,6 @@ function dayLabel(key: string): string {
   });
 }
 
-interface ScanStatusMeta {
-  kind: StatusKind;
-  label: string;
-  running?: boolean;
-}
-
-function scanStatusMeta(status: string): ScanStatusMeta {
-  switch (status) {
-    case "running":
-      return { kind: "new", label: "Running", running: true };
-    case "ok":
-      return { kind: "restored", label: "Completed" };
-    case "partial":
-      return { kind: "updated", label: "Completed with errors" };
-    case "cancelled":
-      return { kind: "deadline", label: "Failed" };
-    default:
-      return { kind: "deadline", label: status };
-  }
-}
-
-/** "ok/total" courses, derived from the fields the scan record stores. */
-function courseRatio(s: ScanRun): string {
-  const ok = Math.max(0, s.coursesScanned - s.coursesFailed);
-  return `${ok}/${s.coursesScanned}`;
-}
-
-function errorCount(s: ScanRun): number {
-  if (!s.errorSummary) return 0;
-  return s.errorSummary.split(";").filter((part) => part.trim().length > 0).length;
-}
-
-function scanProperties(s: ScanRun): DetailProperty[] {
-  const props: DetailProperty[] = [
-    { label: "Started", value: formatCompact(s.startedAt) },
-    { label: "Status", value: scanStatusMeta(s.status).label },
-    { label: "Found", value: String(s.discoveredCount) },
-    { label: "New", value: String(s.newCount) },
-    { label: "Updated", value: String(s.updatedCount) },
-    { label: "Unavailable", value: String(s.unavailableCount) },
-    { label: "Courses", value: courseRatio(s) },
-    { label: "Baseline", value: s.isBaseline ? "Yes" : "No" },
-  ];
-  if (s.errorSummary) props.push({ label: "Errors", value: s.errorSummary });
-  return props;
-}
-
 function numberCell(value: number) {
   return value === 0 ? <span className="num zero">0</span> : value;
 }
@@ -147,6 +100,11 @@ export default function HistoryView({
   onClearAll,
   onSyncNow,
   onOpenCourse,
+  details,
+  resources,
+  loading,
+  error,
+  onRetry,
 }: HistoryViewProps) {
   const mirror = useMirror();
   const [tab, setTab] = useState("changes");
@@ -155,7 +113,6 @@ export default function HistoryView({
   const [search, setSearch] = useState("");
   const [confirmClear, setConfirmClear] = useState(false);
   const [markingRead, setMarkingRead] = useState(false);
-  const [peekScan, setPeekScan] = useState<ScanRun | null>(null);
   const readRequest = useRef(false);
 
   const courseById = useMemo(() => new Map(courses.map((c) => [c.id, c])), [courses]);
@@ -190,6 +147,17 @@ export default function HistoryView({
   }, [filtered]);
 
   const hasUnread = events.some((e) => !e.read);
+  const selectedChangeId = details.selected?.kind === "change" ? details.selected.change.id : null;
+  const selectedScanId = details.selected?.kind === "scan" ? details.selected.scan.id : null;
+  const selection = details.selected;
+
+  useEffect(() => {
+    details.clear();
+  }, [tab, details.clear]);
+  useEffect(() => {
+    if (selection?.kind === "change" && !filtered.some((event) => event.id === selection.change.id)) details.clear();
+    if (selection?.kind === "scan" && !scans.some((scan) => scan.id === selection.scan.id)) details.clear();
+  }, [details.clear, filtered, scans, selection]);
 
   async function markAllRead() {
     if (readRequest.current || !hasUnread) return;
@@ -211,7 +179,14 @@ export default function HistoryView({
       header: "Started",
       cell: (s) => (
         <span className="cell-title">
-          <span className="mono">{formatCompact(s.startedAt)}</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label={`Show details for scan of ${formatCompact(s.startedAt)}`}
+            onClick={(event) => details.selectScan(s, event.currentTarget)}
+          >
+            {formatCompact(s.startedAt)}
+          </Button>
           {s.isBaseline && (
             <Tooltip content={BASELINE_TIP}>
               <span className="status-pill">Baseline</span>
@@ -243,37 +218,14 @@ export default function HistoryView({
       numeric: true,
       cell: (s) => numberCell(s.unavailableCount),
     },
-    { id: "courses", header: "Courses", numeric: true, cell: (s) => courseRatio(s) },
+    { id: "courses", header: "Courses", numeric: true, cell: (s) => `${Math.max(0, s.coursesScanned - s.coursesFailed)}/${s.coursesScanned}` },
     {
       id: "errors",
       header: "Errors",
       numeric: true,
-      cell: (s) => {
-        const count = errorCount(s);
-        if (count === 0) return numberCell(0);
-        return (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="num"
-            onClick={(event) => {
-              event.stopPropagation();
-              setPeekScan(s);
-            }}
-          >
-            {count}
-          </Button>
-        );
-      },
+      cell: (s) => numberCell(s.errorSummary ? s.errorSummary.split(";").filter((part) => part.trim()).length : 0),
     },
   ];
-
-  const peekDetails: PeekDetails | null = peekScan
-    ? {
-        title: `Scan of ${formatCompact(peekScan.startedAt)}`,
-        properties: scanProperties(peekScan),
-      }
-    : null;
 
   return (
     <div>
@@ -323,6 +275,14 @@ export default function HistoryView({
         />
       </div>
 
+      {loading && (tab === "changes" ? events.length > 0 : scans.length > 0) && <div role="status" className="result-count">Refreshing History…</div>}
+      {error && (tab === "changes" ? events.length > 0 : scans.length > 0) && (
+        <div role="alert" className="empty-state">
+          <span>{error}</span>
+          <Button variant="secondary" size="sm" onClick={onRetry}>Retry History</Button>
+        </div>
+      )}
+
       {tab === "changes" ? (
         <>
           <div className="filter-bar">
@@ -355,12 +315,13 @@ export default function HistoryView({
 
           {filtered.length === 0 ? (
             <EmptyState
-              title="No changes recorded"
+              title={loading && events.length === 0 ? "Loading History…" : error && events.length === 0 ? "History unavailable" : events.length === 0 ? "No changes recorded" : "No changes match these filters"}
               body={
                 events.length === 0
-                  ? "Changes appear after the first scan finishes. The first scan only sets a baseline."
-                  : "No changes match these filters."
+                  ? error ? "Retry to load recorded changes." : "Changes appear after the first scan finishes. The first scan only sets a baseline."
+                  : "Try changing the filters or search terms."
               }
+              action={events.length === 0 && error ? { label: "Retry History", onClick: onRetry } : undefined}
             />
           ) : (
             groups.map((group) => (
@@ -370,6 +331,7 @@ export default function HistoryView({
                   const meta = eventKindMeta(e.changeType);
                   const course = e.courseId != null ? courseById.get(e.courseId) : undefined;
                   const primary = primaryUrl(eventLinks(e));
+                  const currentResource = resources.find((resource) => resource.id === e.resourceId);
                   return (
                     <ResourceRow
                       key={e.id}
@@ -379,7 +341,7 @@ export default function HistoryView({
                       courseCode={courseTitle(e.courseId, course?.shortName ?? e.courseName ?? course?.name)}
                       courseName={e.courseName}
                       unread={!e.read}
-                      selected={false}
+                      selected={selectedChangeId === e.id}
                       unavailable={e.changeType === "unavailable"}
                       status={{ kind: STATUS_KIND[e.changeType] ?? "new", label: meta.label }}
                       timeLabel={formatTimeOfDay(e.detectedAt)}
@@ -397,16 +359,14 @@ export default function HistoryView({
                       }
                       showOpen={Boolean(primary)}
                       local={
-                        e.resourceId == null
-                          ? undefined
-                          : mirror?.statusOf(e.resourceId)
+                        currentResource ? mirror?.statusOf(currentResource.id) : undefined
                       }
                       onOpenLocal={
-                        e.resourceId != null && onOpenLocal
-                          ? () => onOpenLocal(e.resourceId as number)
+                        currentResource && onOpenLocal
+                          ? () => onOpenLocal(currentResource.id)
                           : undefined
                       }
-                      onSelect={noop}
+                      onSelect={(origin) => details.selectChange(e, origin, currentResource ?? null)}
                       onOpen={primary ? () => onOpen(primary) : undefined}
                       menu={[
                         ...(e.resourceUrl
@@ -448,26 +408,19 @@ export default function HistoryView({
         </>
       ) : scans.length === 0 ? (
         <EmptyState
-          title="No scans yet"
-          body="Run your first scan to set a baseline"
-          action={{ label: "Sync now", onClick: onSyncNow }}
+          title={loading ? "Loading scans…" : error ? "Scans unavailable" : "No scans yet"}
+          body={error ? "Retry to load recorded scans." : "Run your first scan to set a baseline"}
+          action={error ? { label: "Retry History", onClick: onRetry } : { label: "Sync now", onClick: onSyncNow }}
         />
       ) : (
         <DataTable
           columns={scanColumns}
           rows={scans}
           getKey={(s) => s.id}
-          onRowClick={(s) => setPeekScan(s)}
-          selectedKey={peekScan?.id ?? null}
+          selectedKey={selectedScanId}
           ariaLabel="Scan history"
         />
       )}
-
-      <PeekPanel
-        open={peekScan != null}
-        details={peekDetails}
-        onClose={() => setPeekScan(null)}
-      />
 
       <ConfirmDialog
         open={confirmClear}

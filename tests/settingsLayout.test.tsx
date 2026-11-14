@@ -245,11 +245,12 @@ describe("Settings > Telegram", () => {
 });
 
 describe("Settings stylesheet contract", () => {
-  it("centres a 160px + 720px grid with a 48px gap", () => {
+  it("centres a bounded 160px navigation grid with a 24px gap", () => {
     expect(rule(screensCss, ".settings-layout")).toContain(
-      "grid-template-columns: 160px minmax(0, 720px)",
+      "grid-template-columns: 160px minmax(0, 1fr)",
     );
-    expect(rule(screensCss, ".settings-layout")).toContain("gap: var(--sp-12)");
+    expect(rule(screensCss, ".settings-layout")).toContain("gap: var(--sp-6)");
+    expect(rule(screensCss, ".settings-page")).toContain("max-width: 880px");
     expect(rule(screensCss, ".settings-page")).toContain("margin-inline: auto");
   });
 
@@ -261,9 +262,9 @@ describe("Settings stylesheet contract", () => {
     expect(rule(screensCss, ".settings-link[aria-current=\"true\"]")).toContain("font-weight: 600");
   });
 
-  it("uses sentence-case dialog titles with 40px above each", () => {
+  it("uses compact section titles with 40px above each", () => {
     const title = rule(screensCss, ".settings-group-title");
-    expect(title).toContain("font: 400 20px/26px var(--type-dialog)");
+    expect(title).toContain("font: 600 16px/24px var(--type-dialog)");
     expect(title).toContain("padding: var(--sp-10) 0 var(--sp-2)");
     expect(title).not.toContain("uppercase");
     // Only the first section loses the lead-in; the old rule matched every h2.

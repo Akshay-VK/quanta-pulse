@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { ChangeEvent, Course, Digest } from "../src/lib/types";
+import type { DetailsAdapter } from "../src/lib/details";
 
 vi.mock("../src/lib/api", () => ({
   api: {
@@ -68,6 +69,7 @@ function buildCourse(): Course {
 
 let container: HTMLDivElement;
 let root: Root;
+const details: DetailsAdapter = { selected: null, selectResource: vi.fn(), selectChange: vi.fn(), selectScan: vi.fn(), clear: vi.fn() };
 
 beforeEach(() => {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -99,11 +101,22 @@ async function renderCalendar() {
   await act(async () => {
     root.render(
       <TooltipProvider>
-        <CalendarView courses={[buildCourse()]} onOpen={() => {}} onOpenScan={() => {}} />
+        <CalendarView courses={[buildCourse()]} onOpen={() => {}} onOpenScan={() => {}} details={details} />
       </TooltipProvider>,
     );
   });
   await flush();
+}
+
+async function clickButton(label: string) {
+  const button = [...container.querySelectorAll("button")].find((item) => item.textContent?.trim() === label || item.getAttribute("aria-label") === label);
+  if (!button) throw new Error(`Missing button: ${label}`);
+  await act(async () => button.click());
+  await flush();
+}
+
+function emptyDigest(date: string): Digest {
+  return { date, newCount: 0, updatedCount: 0, announcementCount: 0, deadlineCount: 0, unavailableCount: 0, coursesFailed: 0, lastSuccessAt: null, items: [] };
 }
 
 function statValue(label: string): string | undefined {
@@ -210,5 +223,35 @@ describe("CalendarView", () => {
     await flush();
 
     expect(api.eventsRange).toHaveBeenLastCalledWith(from, to);
+  });
+
+  it("reports a failed month request and retries it independently", async () => {
+    const selected = todayKey();
+    const event = buildEvent(9, new Date().toISOString());
+    vi.mocked(api.eventsRange).mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce([event]);
+    vi.mocked(api.dailyDigest).mockResolvedValue(emptyDigest(selected));
+    await renderCalendar();
+
+    expect(container.textContent).toContain("Could not load activity for this month");
+    await clickButton("Retry month");
+    expect(api.eventsRange).toHaveBeenCalledTimes(2);
+    expect(api.dailyDigest).toHaveBeenCalledTimes(1);
+    expect(container.textContent).not.toContain("Could not load activity for this month");
+    expect(container.querySelector(".cal-day.selected .cal-dot.ev-new")).toBeTruthy();
+  });
+
+  it("reports a failed day request and retries it independently", async () => {
+    const selected = todayKey();
+    vi.mocked(api.eventsRange).mockResolvedValue([]);
+    vi.mocked(api.dailyDigest).mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(emptyDigest(selected));
+    await renderCalendar();
+
+    expect(container.textContent).toContain("Could not load activity for this day");
+    expect(container.textContent).not.toContain("No activity on this day");
+    await clickButton("Retry day");
+    expect(api.dailyDigest).toHaveBeenCalledTimes(2);
+    expect(api.eventsRange).toHaveBeenCalledTimes(1);
+    expect(container.textContent).not.toContain("Could not load activity for this day");
+    expect(container.textContent).toContain("No activity on this day");
   });
 });

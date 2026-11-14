@@ -14,13 +14,17 @@ import {
 } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "../lib/api";
-import type { LocalFileStatus, MirrorStats } from "../lib/types";
+import type { LocalFile, LocalFileStatus, MirrorStats } from "../lib/types";
 
 interface MirrorValue {
   stats: MirrorStats | null;
   /** resourceId -> status row; absent when nothing is known about it. */
   statuses: Map<number, LocalFileStatus>;
   refresh: () => Promise<void>;
+  /** Reconcile a point lookup with events received while it was pending. */
+  lookupLocalFile: (resourceId: number) => Promise<LocalFile | null>;
+  /** Publish an on-demand download result to all rows and details. */
+  ensureLocal: (resourceId: number) => Promise<LocalFile>;
   startBackfill: () => Promise<void>;
   pause: () => Promise<void>;
   resume: () => Promise<void>;
@@ -54,6 +58,10 @@ export function MirrorProvider({ children }: { children: ReactNode }) {
   const [stats, setStats] = useState<MirrorStats | null>(null);
   const [statuses, setStatuses] = useState<Map<number, LocalFileStatus>>(() => new Map());
   const alive = useRef(true);
+  const fileRevision = useRef(0);
+  const fileRevisions = useRef(new Map<number, number>());
+  const refreshGeneration = useRef(0);
+  const lookupGenerations = useRef(new Map<number, number>());
 
   useEffect(() => {
     alive.current = true;
@@ -62,12 +70,50 @@ export function MirrorProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  const recordFile = useCallback((resourceId: number, file: LocalFileStatus | null) => {
+    fileRevisions.current.set(resourceId, ++fileRevision.current);
+    setStatuses((current) => {
+      const next = new Map(current);
+      if (file) next.set(resourceId, file);
+      else next.delete(resourceId);
+      return next;
+    });
+  }, []);
+
+  const lookupLocalFile = useCallback(async (resourceId: number) => {
+    const generation = (lookupGenerations.current.get(resourceId) ?? 0) + 1;
+    lookupGenerations.current.set(resourceId, generation);
+    const revision = fileRevisions.current.get(resourceId);
+    const file = await api.mirrorLocalFile(resourceId);
+    if (alive.current && lookupGenerations.current.get(resourceId) === generation &&
+        fileRevisions.current.get(resourceId) === revision) recordFile(resourceId, file);
+    return file;
+  }, [recordFile]);
+
+  const ensureLocal = useCallback(async (resourceId: number) => {
+    const file = await api.ensureLocal(resourceId);
+    if (alive.current) recordFile(resourceId, file);
+    return file;
+  }, [recordFile]);
+
   const refresh = useCallback(async () => {
+    const generation = ++refreshGeneration.current;
+    const revision = fileRevision.current;
     try {
       const [next, rows] = await Promise.all([api.mirrorStats(), api.mirrorLocalFiles()]);
-      if (!alive.current) return;
+      if (!alive.current || generation !== refreshGeneration.current) return;
       setStats(next);
-      setStatuses(new Map(rows.map((row) => [row.resourceId, row])));
+      setStatuses((current) => {
+        const snapshot = new Map(rows.map((row) => [row.resourceId, row]));
+        // File events received after this request began are fresher than its snapshot.
+        for (const [id, updated] of fileRevisions.current) {
+          if (updated <= revision) continue;
+          const status = current.get(id);
+          if (status) snapshot.set(id, status);
+          else snapshot.delete(id);
+        }
+        return snapshot;
+      });
     } catch {
       // Stats are a convenience; rows still work off the events below.
     }
@@ -86,11 +132,7 @@ export function MirrorProvider({ children }: { children: ReactNode }) {
         "mirror:file",
         (event) => {
           const { resourceId, status, error } = event.payload;
-          setStatuses((current) => {
-            const next = new Map(current);
-            next.set(resourceId, { resourceId, status, error: error ?? null });
-            return next;
-          });
+          recordFile(resourceId, { resourceId, status, error: error ?? null });
         },
       );
       if (cancelled) {
@@ -105,7 +147,7 @@ export function MirrorProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       unlisten.forEach((stop) => stop());
     };
-  }, []);
+  }, [recordFile]);
 
   useEffect(() => {
     void refresh();
@@ -123,6 +165,8 @@ export function MirrorProvider({ children }: { children: ReactNode }) {
       stats: stats ?? emptyStats(),
       statuses,
       refresh,
+      lookupLocalFile,
+      ensureLocal,
       startBackfill: () => apply(() => api.mirrorStartBackfill()),
       pause: () => apply(() => api.mirrorPause()),
       resume: () => apply(() => api.mirrorResume()),
@@ -132,7 +176,7 @@ export function MirrorProvider({ children }: { children: ReactNode }) {
       statusOf: (resourceId) =>
         resourceId == null ? null : statuses.get(resourceId) ?? null,
     };
-  }, [stats, statuses, refresh]);
+  }, [stats, statuses, refresh, lookupLocalFile, ensureLocal]);
 
   return <MirrorContext.Provider value={value}>{children}</MirrorContext.Provider>;
 }

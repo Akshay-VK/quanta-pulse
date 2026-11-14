@@ -6,10 +6,8 @@
 
   .resource-row {
     display: grid;
-    /* selectable region | course pill + status | mirror icon | time | actions.
-       Every track that holds text can shrink, so a long title ellipsises
-       instead of pushing the other columns into each other. */
-    grid-template-columns: minmax(0, 1fr) auto auto auto auto;
+    /* title | metadata | local indicator | time | actions */
+    grid-template-columns: minmax(0, 1fr) 240px 24px 104px 80px;
     align-items: center;
     column-gap: var(--sp-3);
     min-width: 0;
@@ -64,7 +62,7 @@
 
   .row-time {
     grid-column: 4;
-    flex: 0 0 auto;
+    width: 104px;
     font: 13px/18px var(--type-small);
     color: var(--muted);
     white-space: nowrap;
@@ -72,9 +70,10 @@
 
   .row-actions {
     grid-column: 5;
-    flex: 0 0 auto;
+    width: 80px;
     display: flex;
     align-items: center;
+    justify-content: flex-end;
     gap: 2px;
     opacity: 0;
   }
@@ -87,7 +86,7 @@
 
   .row-meta {
     grid-column: 2;
-    flex: 0 0 auto;
+    width: 240px;
     display: inline-flex;
     align-items: center;
     gap: var(--sp-2);
@@ -105,9 +104,10 @@
      or kept. Never shrinks, never wraps. */
   .row-mirror {
     grid-column: 3;
-    flex: 0 0 auto;
+    width: 24px;
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     min-width: 0;
   }
 
@@ -143,41 +143,47 @@
     .mirror-spin { animation: none; }
   }
 
-  /* Two lines for narrow containers (the Calendar day panel and any row
-     measured under 560px): title on line 1, pill, tag and time on line 2,
-     aligned under the title. */
+  /* Two lines for constrained widths: title on line 1, metadata on line 2;
+     reserved indicator/time/action tracks keep alignment. */
   .resource-row.row-compact {
-    grid-template-columns: 7px 16px minmax(0, 1fr) auto auto;
+    grid-template-columns: minmax(0, 1fr) 24px 104px;
+    grid-template-rows: auto auto;
     row-gap: var(--sp-1);
+    align-content: center;
+    min-height: 56px;
     padding-top: var(--sp-2);
     padding-bottom: var(--sp-2);
   }
 
   .row-compact .row-select {
-    grid-column: 1 / 4;
+    grid-column: 1 / 3;
     grid-row: 1;
   }
 
   .row-compact .row-actions {
-    grid-column: 5;
+    grid-column: 3;
+    width: auto;
+    justify-self: end;
     grid-row: 1;
+    align-self: start;
   }
 
   .row-compact .row-meta {
-    grid-column: 3;
+    grid-column: 1;
     grid-row: 2;
+    width: auto;
     min-width: 0;
   }
 
   .row-compact .row-mirror {
-    grid-column: 4;
+    grid-column: 2;
     grid-row: 2;
   }
 
   .row-compact .row-time {
-    grid-column: 5;
+    grid-column: 3;
     grid-row: 2;
-    justify-self: end;
+    justify-self: start;
   }
 
   .row-course-pill {
@@ -347,6 +353,8 @@
   }
 
   .cell-title {
+    width: 100%;
+    text-align: left;
     display: flex;
     flex-direction: column;
     gap: 2px;

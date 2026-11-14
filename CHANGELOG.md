@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Before 1.0.0 the policy is: **minor** for features, redesigns and migrations,
 **patch** for fixes. A version is never reused or lowered, and tags are `vX.Y.Z`.
 
+## [0.3.0] - 2026-11-13
+
+### Changed
+
+- Redesigned the desktop workspace with a compact sidebar, bundled Geist
+  typography, and refreshed light and dark theme tokens.
+- Unified resource details across Today, Library, Calendar and History, with
+  consistent selection, preview and panel cleanup when changing views.
+- Refined Library course navigation, Calendar event selection and History
+  actions, with clearer loading, empty, error and retry states.
+- Improved keyboard navigation and command-palette hints, including keyboard
+  access to file details and shortcuts that respect editable fields.
+- Made Settings saves and navigation clearer: unsaved changes are guarded,
+  failed saves can be retried, and operation feedback stays visible.
+
+### Fixed
+
+- Compact resource rows and detail layouts at narrow window widths.
+- Stale detail selection and mirror status after switching views or refreshing.
+- Inactive filter-count contrast and Today baseline, empty and error feedback.
+
 ## [0.2.0] - 2026-10-16
 
 ### Added
