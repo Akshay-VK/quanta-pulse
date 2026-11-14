@@ -4,6 +4,8 @@ This wiki preserves dated decisions and their evidence. It is not the live track
 
 ## Product decisions
 
+- [2026-11-14: Final themes and workflow integration](2026-11-14-final-ui-integration.md) — Assembled code, AC/story audit, full gates, rendered matrices, superseding updater diagnosis and native verification limits.
+
 - [2026-11-14: Inbox and Agenda integrated with material destinations](2026-11-14-inbox-agenda-integration.md) — Assembled ownership, action regressions, screenshots, and exact remaining merge seams.
 - [2026-11-14: Settings recovery and updater lifecycle](2026-11-14-settings-updater-recovery.md) — Focused Settings organization, verified reconnect guidance, update lifecycle regressions, and installed-feed diagnosis limits.
 
