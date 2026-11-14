@@ -19,3 +19,20 @@ This specification supersedes the previous fixed near-black/violet appearance de
 Pending authentication changes were captured as `b3fd2b7` (`fix: pause monitoring after Quanta session expiry`) and merged with the current main baseline on the feature branch. That fix propagates typed authentication expiry, prevents reconciliation of an expired partial inventory, parks automatic scans until verified authentication, and limits expiry notifications to one per episode. It is baseline maintenance separate from the future UI feature.
 
 Publication does not authorize an automatic implementation run or model delegation. No implementation sub-issues were created as part of this synthesis. Integration and verification results are recorded separately when completed.
+
+## Baseline integration verification
+
+The assembled application tree at `8170285` contains the current main workspace plus the pending session-expiry fix; the spec and deliverables are committed there. Verification passed before advancing main:
+
+- `npm run lint`: passed, zero warnings.
+- `npm test`: 39 files and 332 tests passed.
+- `npm run build`: passed, including TypeScript checking. The existing 500.22 kB main-chunk warning remains.
+- Windows native `cargo check --all-targets`: passed.
+- Windows native `cargo test --lib`: 169 tests passed, including the six new discovery expiry cases and three sync-control regressions.
+- A focused Linux harness importing the actual discovery modules passed 41 tests. This supports the native results; it is not a substitute for the full application check.
+- `git diff --check`: passed.
+- Stored spec template, all 62 sequential user stories, published issue body, and `ready-for-agent` label were read back and verified.
+
+The Linux full-application Cargo attempt could not complete because host DBus/GTK development libraries are absent; the installed Windows Rust toolchain supplied the successful native-target checks above. Windows emitted an incremental-cache access note but both native commands exited successfully. Frontend dependencies were restored from the existing lockfile to make the Linux test/build environment usable; no dependency version change is included.
+
+The existing pitch source, final PDF, source archive, and screenshot assets are included in the baseline. Compiler intermediates and review renders remain locally available under their ignored build directory. No installer, packaged app, signed-in Quanta flow, visual preview, or new UI implementation was run as part of this specification/integration task.
