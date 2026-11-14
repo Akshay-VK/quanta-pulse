@@ -5,6 +5,8 @@ This wiki preserves dated decisions and their evidence. It is not the live track
 ## Product decisions
 
 - [2026-11-14: Inbox and Agenda integrated with material destinations](2026-11-14-inbox-agenda-integration.md) — Assembled ownership, action regressions, screenshots, and exact remaining merge seams.
+- [2026-11-14: Settings recovery and updater lifecycle](2026-11-14-settings-updater-recovery.md) — Focused Settings organization, verified reconnect guidance, update lifecycle regressions, and installed-feed diagnosis limits.
+
 
 - [2026-11-14: Inbox and Agenda frontend workflows](2026-11-14-inbox-agenda-implementation.md) — Complete collection wiring, captured attention actions, due-date grouping, shared inspection, rendered evidence, and integration seams.
 - [2026-11-14: Shared material actions and navigation completed](2026-11-14-material-action-navigation-completion.md) — Complete caller conversion, guarded destinations, session context, real-App and rendered evidence, and exact Inbox/Agenda integration interface.

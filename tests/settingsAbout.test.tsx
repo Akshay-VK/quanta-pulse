@@ -26,7 +26,7 @@ vi.mock("../src/lib/api", () => ({
 
 import { api } from "../src/lib/api";
 import SettingsView from "../src/views/SettingsView";
-import type { Settings } from "../src/lib/types";
+import type { AuthStatus, Settings } from "../src/lib/types";
 
 const SETTINGS: Settings = {
   syncIntervalMinutes: 30,
@@ -80,12 +80,15 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-function render(settings = SETTINGS) {
+function render(
+  settings = SETTINGS,
+  auth: AuthStatus | null = null,
+) {
   act(() => {
     root.render(
       <SettingsView
         settings={settings}
-        auth={null}
+        auth={auth}
         dbInfo={null}
         onSave={vi.fn().mockResolvedValue(settings)}
         onLogout={vi.fn()}
@@ -136,6 +139,40 @@ describe("Settings > About states", () => {
     await tick();
     expect(container.textContent).toContain("Update 9.9.9 available");
     expect(container.textContent).toContain("Restart to update");
+  });
+
+  it("keeps the update action available after prepare or install fails, without claiming success", async () => {
+    vi.mocked(api.checkUpdate).mockResolvedValue({ version: "9.9.9", body: "notes" } as never);
+    vi.mocked(api.prepareForUpdate).mockRejectedValueOnce(new Error("busy"));
+    render();
+    await clickCheck();
+    const install = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Restart to update"));
+    expect(install).toBeTruthy();
+    await act(async () => { install!.click(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(container.textContent).toContain("Update failed");
+    expect(container.textContent).not.toContain("Check failed");
+    expect(container.textContent).not.toContain("Up to date");
+    expect(container.textContent).toContain("busy");
+    const retry = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Check now"));
+    expect(retry).toBeTruthy();
+  });
+
+  it("disables manual checks while one bounded request is pending", async () => {
+    let resolveFn: (value: null) => void = () => {};
+    vi.mocked(api.checkUpdate).mockReturnValue(new Promise((resolve) => { resolveFn = resolve; }) as never);
+    render();
+    const check = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Check now"))!;
+    await act(async () => { check.click(); });
+    expect(check.disabled).toBe(true);
+    expect(api.checkUpdate).toHaveBeenCalledTimes(1);
+    await act(async () => resolveFn(null));
+  });
+
+  it("keeps stored files accessible and points to the single reconnect action", async () => {
+    render(SETTINGS, { authenticated: false, email: null, fullName: null, method: null, acquiredAt: null, sessionExpired: true });
+    expect(container.textContent).toContain("Your saved files remain available.");
+    expect(container.textContent).toContain("Scroll to the top of Settings and use Reconnect");
+    expect([...container.querySelectorAll("button")].filter((button) => button.textContent?.trim() === "Reconnect")).toHaveLength(0);
   });
 
   it("shows the error state with the message when the check fails", async () => {
