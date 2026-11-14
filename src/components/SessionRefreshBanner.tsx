@@ -92,15 +92,21 @@ export default function SessionRefreshBanner({ sessionExpired, onRestart, onSign
     return (
       <Banner
         kind="info"
-        action={isResetting ? undefined : { label: "Restart session", onClick: () => void restart() }}
+        action={isResetting ? undefined : { label: "Reconnect", onClick: () => void restart() }}
       >
         {isResetting ? (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-            <span className="spinner" aria-hidden="true" />
-            <strong>Restarting session</strong>
-          </span>
+          <>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+              <span className="spinner" aria-hidden="true" />
+              <strong>Waiting for Quanta sign-in</strong>
+            </span>
+            <div>Complete sign-in in the Quanta window. Close that window to cancel. Your saved files remain available.</div>
+          </>
         ) : (
-          <strong>{EXPIRED_MESSAGE}</strong>
+          <>
+            <strong>{EXPIRED_MESSAGE}</strong>
+            <div>Saved files stay available while you reconnect.</div>
+          </>
         )}
       </Banner>
     );
@@ -110,10 +116,11 @@ export default function SessionRefreshBanner({ sessionExpired, onRestart, onSign
     return (
       <Banner
         kind="info"
-        action={{ label: "Restart session", onClick: () => void restart() }}
+        action={{ label: "Reconnect", onClick: () => void restart() }}
       >
         <strong>{message}</strong>
         <div>{reason}</div>
+        <div>Your saved files remain available. Reconnect when you are ready to try again.</div>
       </Banner>
     );
   }

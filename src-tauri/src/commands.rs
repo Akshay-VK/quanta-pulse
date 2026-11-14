@@ -19,7 +19,7 @@ use crate::quanta::preview::{
 };
 use crate::quanta::urlnorm::is_internal;
 use crate::settings::Settings;
-use crate::state::AppState;
+use crate::state::{AppState, SyncControl};
 use crate::{auth, notify};
 
 #[derive(Debug, Deserialize)]
@@ -1057,15 +1057,18 @@ pub fn app_version() -> String {
 
 /// Stop background work and wait for in-flight scans, downloads and previews
 /// to finish before an update installs and the app relaunches.
+fn request_update_quiescence(sync: &SyncControl) {
+    // This is deliberately a cooperative cancel request, not scheduler shutdown.
+    // A later scan resets the flag, so a failed update leaves monitoring alive.
+    sync.cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
 #[tauri::command]
 pub fn prepare_for_update(_app: AppHandle, state: State<AppState>) -> Result<(), String> {
     // Cancel the in-flight scan so it can finish without starting another one,
     // but do not permanently shut down the scheduler: an update that fails to
     // install must leave background sync and update checks running.
-    state
-        .sync
-        .cancel
-        .store(true, std::sync::atomic::Ordering::SeqCst);
+    request_update_quiescence(&state.sync);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     loop {
         if !state.is_busy() {
@@ -1079,4 +1082,18 @@ pub fn prepare_for_update(_app: AppHandle, state: State<AppState>) -> Result<(),
     Ok(())
 }
 
+#[cfg(test)]
+mod update_prepare_tests {
+    use super::request_update_quiescence;
+    use crate::state::SyncControl;
+    use std::sync::atomic::Ordering;
 
+    #[test]
+    fn update_prepare_requests_cooperative_cancel_without_stopping_monitoring() {
+        let sync = SyncControl::default();
+        request_update_quiescence(&sync);
+
+        assert!(sync.cancel.load(Ordering::SeqCst));
+        assert!(!sync.shutdown.load(Ordering::SeqCst));
+    }
+}

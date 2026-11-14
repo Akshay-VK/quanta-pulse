@@ -4,6 +4,8 @@ This wiki preserves dated decisions and their evidence. It is not the live track
 
 ## Product decisions
 
+- [2026-11-14: Settings recovery and updater lifecycle](2026-11-14-settings-updater-recovery.md) — Focused Settings organization, verified reconnect guidance, update lifecycle regressions, and installed-feed diagnosis limits.
+
 - [2026-11-14: Appearance vertical slice implemented](2026-11-14-appearance-implementation.md) — Implementation authorization, shared appearance ownership, palette verification, rendered evidence, and remaining native acceptance.
 
 - [2026-11-14: Themes and student workflow specification](2026-11-14-themes-and-workflows-spec.md) — Follow-up scope, confirmed testing seams, published spec, and reconciliation with the completed workspace baseline.

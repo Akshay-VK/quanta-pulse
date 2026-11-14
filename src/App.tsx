@@ -11,6 +11,7 @@ import TopBar from "./components/TopBar";
 import PeekPanel, { type PeekDetails } from "./components/PeekPanel";
 import CommandPalette, { type PaletteAction } from "./components/CommandPalette";
 import SessionRefreshBanner from "./components/SessionRefreshBanner";
+import { installAvailableUpdate } from "./lib/updateLifecycle";
 import LoginScreen from "./components/LoginScreen";
 import PreviewDialog from "./components/PreviewDialog";
 import SyncProgress from "./components/SyncProgress";
@@ -317,11 +318,7 @@ function AppShell() {
           onClick: () => {
             void (async () => {
               try {
-                const u = await api.checkUpdate();
-                if (!u) return;
-                await api.prepareForUpdate();
-                await api.downloadAndInstallUpdate(u, () => {});
-                try { await api.relaunchApp(); } catch { /* installer exits the app on Windows */ }
+                await installAvailableUpdate();
               } catch (err) {
                 notify(String(err), true);
               }

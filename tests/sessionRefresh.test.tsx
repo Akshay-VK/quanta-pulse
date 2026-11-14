@@ -33,7 +33,7 @@ async function render(
 }
 
 function actionButton(): HTMLButtonElement | null {
-  return [...container.querySelectorAll("button")].find((item) => item.textContent?.trim() === "Restart session" || item.textContent?.trim() === "Try again") as HTMLButtonElement | null;
+  return [...container.querySelectorAll("button")].find((item) => item.textContent?.trim() === "Reconnect" || item.textContent?.trim() === "Try again") as HTMLButtonElement | null;
 }
 
 describe("SessionRefreshBanner", () => {
@@ -56,7 +56,9 @@ describe("SessionRefreshBanner", () => {
       actionButton()?.click();
     });
     expect(onRestart).toHaveBeenCalledTimes(1);
-    expect(container.textContent).toContain("Restarting session");
+    expect(container.textContent).toContain("Waiting for Quanta sign-in");
+    expect(container.textContent).toContain("Close that window to cancel");
+    expect(container.textContent).toContain("Your saved files remain available");
 
     await act(async () => resolve({ status: "connected", message: "Quanta verified." }));
     expect(container.textContent).toContain("Quanta session verified");

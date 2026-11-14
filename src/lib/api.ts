@@ -89,7 +89,9 @@ export const api = {
   /** GitHub-releases update check (manual). Reuse the plugin's signed check. */
   checkUpdate: async (): Promise<Update | null> => {
     const { check } = await import("@tauri-apps/plugin-updater");
-    return check();
+    // Both the Settings action and the shell's install prompt use this seam.
+    // Bound the network request so a stalled release feed stays retryable.
+    return check({ timeout: 30_000 });
   },
   /** Download, verify and install the given update, then exit. Progress is reported via the callback. */
   downloadAndInstallUpdate: (update: Update, onEvent: (event: DownloadEvent) => void) =>
