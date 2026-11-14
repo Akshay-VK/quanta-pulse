@@ -8,6 +8,7 @@ vi.mock("../src/lib/api", () => ({
     checkUpdate: vi.fn().mockResolvedValue(null),
     prepareForUpdate: vi.fn().mockResolvedValue(undefined),
     downloadAndInstallUpdate: vi.fn().mockResolvedValue(undefined),
+    relaunchApp: vi.fn().mockResolvedValue(undefined),
     openAppFolder: vi.fn().mockResolvedValue(undefined),
     mirrorStats: vi.fn().mockResolvedValue({
       queued: 0, downloading: 0, done: 0, failed: 0, skipped: 0, kept: 0,

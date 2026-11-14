@@ -281,6 +281,9 @@ export default function SettingsView({
         // Plugin reports progress through here; status stays "installing"
         void event;
       });
+      // On desktop platforms that do not exit during install, restart now so
+      // the freshly installed build actually runs.
+      try { await api.relaunchApp(); } catch { /* already exiting on Windows */ }
       // Reaches here only if the installer did not exit immediately.
       setUpdateStatus("upToDate");
     } catch (err) {

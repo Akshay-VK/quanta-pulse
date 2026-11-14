@@ -46,7 +46,12 @@ async fn run_check(app: &tauri::AppHandle) {
         return;
     }
 
-    let updater = match app.updater_builder().build() {
+    let updater = match app
+        .updater_builder()
+        // Keep an update check from hanging the scheduler forever on a slow or
+        // stalled network; a failed check is retried on the next cadence.
+        .timeout(std::time::Duration::from_secs(30))
+        .build() {
         Ok(u) => u,
         Err(e) => {
             tracing::debug!("could not build updater: {e}");
