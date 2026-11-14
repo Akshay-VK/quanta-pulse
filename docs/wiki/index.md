@@ -4,6 +4,7 @@ This wiki preserves dated decisions and their evidence. It is not the live track
 
 ## Product decisions
 
+- [2026-11-14: Themes and student workflow specification](2026-11-14-themes-and-workflows-spec.md) — Follow-up scope, confirmed testing seams, published spec, and reconciliation with the completed workspace baseline.
 - [2026-11-13: Linear-inspired workspace redesign approved](2026-11-13-linear-workspace-redesign.md) — Approved palette, interaction scope, test seam, tracker graph, and implementation routing.
 - [2026-11-13: User-requested pause](2026-11-13-paused-handoff.md) — Historical pause record and safe resume point.
 - [2026-11-13: Implementation resumed and integrated](2026-11-13-resume-and-merge.md) — Historical ticket merge checkpoints and gates.

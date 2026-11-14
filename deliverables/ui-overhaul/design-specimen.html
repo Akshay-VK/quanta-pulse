@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quanta Pulse design specimen</title>
+<style>
+:root { color-scheme:dark; font-family:var(--font-sans,system-ui,sans-serif); color:var(--foreground,#e6e7ea); }
+* { box-sizing:border-box; }
+html,body { margin:0; }
+button,select { font:inherit; }
+button,select { cursor:pointer; }
+button:focus-visible,select:focus-visible { outline:2px solid var(--ring,#86a9ff); outline-offset:3px; }
+.intro { font-size:13px; color:var(--muted-foreground,#aaa); line-height:1.6; margin:0 0 14px; }
+.controls { display:flex; flex-wrap:wrap; gap:12px; margin-bottom:16px; }
+.controls label { display:flex; flex-direction:column; gap:5px; font-size:12px; color:var(--muted-foreground,#aaa); }
+.controls select { color:var(--foreground,#e6e7ea); background:var(--secondary,#242428); border:1px solid var(--border,#38383e); border-radius:6px; padding:7px 22px 7px 9px; min-height:34px; }
+.workspace { --canvas:#18191b; --side:#151618; --surface:#202125; --text:#e6e7ea; --sub:#a1a4ac; --stroke:#303238; --mark:#86a9ff; --mark-ink:#152244; --row:44px; display:grid; grid-template-columns:146px minmax(0,1fr) 176px; min-height:520px; overflow:hidden; background:var(--canvas); color:var(--text); border:1px solid var(--stroke); border-radius:10px; font-size:13px; line-height:1.5; }
+.workspace button { color:inherit; border:0; background:transparent; text-align:left; }
+.workspace button:focus-visible { outline:2px solid var(--mark); outline-offset:-2px; }
+.sidebar { background:var(--side); padding:17px 9px; border-right:1px solid var(--stroke); display:flex; flex-direction:column; gap:4px; }
+.brand { font-size:13px; font-weight:650; padding:0 7px 20px; white-space:nowrap; }
+.brand b { color:var(--mark); font-size:19px; padding-right:6px; }
+.nav { display:flex; justify-content:space-between; align-items:center; min-height:33px; padding:6px 8px; border-radius:5px; color:var(--sub)!important; }
+.nav.active { background:var(--surface); color:var(--text)!important; }
+.nav:hover { background:var(--surface); }
+.count { font-variant-numeric:tabular-nums; font-size:11px; }
+.section-label { font-size:11px; margin:20px 8px 6px; color:var(--sub); }
+.footer { margin-top:auto; padding:22px 7px 0; font-size:11px; color:var(--sub); }
+.footer span { display:block; margin-top:8px; }
+.main { min-width:0; }
+.topbar { padding:15px 18px; border-bottom:1px solid var(--stroke); color:var(--sub); font-size:12px; }
+.content { padding:22px 18px; }
+h1 { margin:0; font-size:23px; line-height:1.35; font-weight:600; letter-spacing:-.5px; }
+.subtitle { font-size:12px; color:var(--sub); margin:5px 0 18px; }
+.tabs { display:flex; align-items:center; gap:6px; border-bottom:1px solid var(--stroke); padding-bottom:12px; margin-bottom:19px; }
+.tabs button { padding:4px 9px; border-radius:5px; font-size:12px; color:var(--sub); }
+.tabs button[aria-pressed="true"] { color:var(--text); background:var(--surface); }
+.group { display:flex; align-items:center; justify-content:space-between; margin:19px 0 8px; font-weight:550; font-size:12px; }
+.group span { font-weight:400; font-size:11px; color:var(--sub); }
+.deadline { border:1px solid var(--stroke); border-radius:6px; padding:10px; width:100%; display:flex; gap:9px; align-items:center; }
+.deadline .clock { color:var(--mark); font-size:17px; }
+.secondary { display:block; color:var(--sub); font-size:11px; margin-top:2px; font-weight:400; }
+.item { width:100%; display:flex; min-height:var(--row); padding:8px!important; align-items:center; border-radius:5px; gap:9px; }
+.item:hover,.item.chosen { background:var(--surface); }
+.dot { background:var(--mark); width:5px; height:5px; border-radius:50%; flex-shrink:0; }
+.dot.read { background:transparent; }
+.fileicon { color:var(--sub); font-size:16px; }
+.item-copy { min-width:0; flex:1; }
+.item-title { display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:12px; }
+.item-time { color:var(--sub); font-size:10px; white-space:nowrap; }
+.baseline { color:var(--sub); font-size:11px; line-height:1.65; border-top:1px solid var(--stroke); margin-top:24px; padding-top:14px; }
+.details { background:var(--surface); border-left:1px solid var(--stroke); padding:16px 14px; min-width:0; }
+.details-head { display:flex; align-items:center; justify-content:space-between; color:var(--sub); font-size:11px; margin-bottom:22px; }
+.details-head button { font-size:18px; }
+.details h2 { font-size:16px; line-height:1.45; margin:0 0 7px; font-weight:600; }
+.details p { color:var(--sub); font-size:11px; line-height:1.7; margin:0 0 20px; }
+.preview { background:var(--canvas); border:1px solid var(--stroke); padding:14px 10px; border-radius:5px; min-height:110px; font-size:11px; margin:19px 0; }
+.preview div { margin-top:12px; height:3px; width:90%; background:var(--stroke); }
+.preview div:nth-child(3) { width:70%; }
+.details dl { display:grid; gap:9px; margin:16px 0 24px; font-size:11px; }
+.details dt { color:var(--sub); }
+.details dd { margin:1px 0 0; }
+.primary { display:block; width:100%; background:var(--mark)!important; color:var(--mark-ink)!important; text-align:center!important; padding:8px!important; border-radius:5px; font-size:11px!important; font-weight:600; }
+.read-action { padding:10px 0!important; color:var(--sub)!important; font-size:11px!important; width:100%; text-align:center!important; }
+.empty { padding:22px 0; color:var(--sub); font-size:12px; }
+.notice { min-height:24px; font-size:12px; margin:11px 0 0; color:var(--muted-foreground,#aaa); }
+.swatches { display:flex; gap:5px; margin:15px 0; }
+.swatches span { width:24px; height:24px; border:1px solid var(--stroke); border-radius:5px; }
+@media(max-width:640px) { .workspace { grid-template-columns:116px minmax(0,1fr); } .details { grid-column:1/-1; border-left:0; border-top:1px solid var(--stroke); } .details .preview { display:none; } .details dl { grid-template-columns:1fr 1fr; } .content { padding:20px 12px; } .topbar { padding:15px 12px; } .sidebar { padding-left:5px; padding-right:5px; } .brand { font-size:11px; } .brand b { font-size:15px; } }
+@media(prefers-reduced-motion:reduce) { * { transition:none!important; } }
+</style>
+</head>
+<body>
+<p class="intro">Proposed workspace · illustrative course data. Try a palette, switch light/dark, open a course, or select material to inspect it.</p>
+<div class="controls" aria-label="Design options">
+<label>Palette<select id="palette"><option value="soft">Soft Graphite</option><option value="t3">T3 Neutral</option><option value="slate">Slate</option><option value="ocean">Ocean</option><option value="forest">Forest</option><option value="iris">Iris</option></select></label>
+<label>Mode<select id="mode"><option value="dark">Dark</option><option value="light">Light</option></select></label>
+<label>Accent<select id="accent"><option value="default">Palette default</option><option value="blue">Blue</option><option value="violet">Violet</option><option value="teal">Teal</option><option value="rose">Rose</option><option value="amber">Amber</option></select></label>
+<label>Density<select id="density"><option value="44px">Comfortable</option><option value="36px">Compact</option></select></label>
+</div>
+<div class="workspace" id="workspace">
+<aside class="sidebar"><div class="brand"><b>⌁</b>Quanta Pulse</div>
+<button class="nav active" data-view="inbox">Inbox <span class="count" id="unread-count">3</span></button>
+<button class="nav" data-view="calendar">Calendar</button>
+<button class="nav" data-view="library">Library</button>
+<div class="section-label">Courses</div>
+<button class="nav" data-view="course">OOP <span class="count">2</span></button>
+<button class="nav" data-view="math">Mathematics</button>
+<div class="footer"><button class="nav" data-view="appearance">Appearance</button><span>✓ Synced 4 min ago</span><span>8 courses monitored</span></div>
+</aside>
+<main class="main"><div class="topbar" id="breadcrumb">Workspace / Inbox</div><div class="content" id="content"></div></main>
+<aside class="details" id="details" aria-label="Selected material"></aside>
+</div>
+<p class="notice" id="notice" role="status">Concept specimen; file opening is simulated. Appearance choices are not persisted.</p>
+<script>
+const families={
+soft:{dark:['#18191b','#151618','#202125','#e6e7ea','#a1a4ac','#303238','#86a9ff'],light:['#f7f8fa','#f0f1f4','#ffffff','#292b32','#626774','#d7dbe2','#315dc8']},
+t3:{dark:['#0a0a0a','#000000','#111111','#f5f5f5','#818181','#191919','#346bf1'],light:['#fcfcfc','#fafafa','#ffffff','#27272a','#71717b','#e4e4e7','#1b4ed8']},
+slate:{dark:['#1a1d23','#16191f','#232730','#e4e9f1','#a2adbe','#363d49','#9fb4d8'],light:['#f5f7fa','#edf0f5','#ffffff','#29313e','#616e80','#d4dce6','#416698']},
+ocean:{dark:['#171d24','#131920','#202a34','#e3edf5','#9bb0c2','#324252','#82b9dc'],light:['#f4f8fb','#eaf1f6','#ffffff','#26394a','#5b7185','#ccdae5','#21658d']},
+forest:{dark:['#191e1b','#151a17','#232c26','#e5eee7','#a1b3a6','#36443b','#94b99e'],light:['#f5f8f5','#ebf1eb','#ffffff','#2c3a2f','#617264','#d1ddd3','#386947']},
+iris:{dark:['#1d1a23','#18151e','#292332','#ece7f3','#afa2bf','#44384f','#b7a4e1'],light:['#f8f6fb','#f0ebf5','#ffffff','#392d45','#766584','#ded3e7','#7353a0']}
+};
+const accents={blue:['#86a9ff','#315dc8'],violet:['#b7a4e1','#7353a0'],teal:['#81bcb7','#276e68'],rose:['#dfa2b7','#a13d60'],amber:['#d5b27a','#805a18']};
+const items=[{id:1,title:'Lecture 14: Inheritance',course:'OOP',state:'New file',time:'10:42',saved:true,unread:true,section:'Week 7'}, {id:2,title:'Tutorial 6: Eigenvalues',course:'Mathematics',state:'Updated',time:'09:10',saved:true,unread:true,section:'Week 8'}, {id:3,title:'Lab groups for next week',course:'OOP',state:'Announcement',time:'08:55',saved:false,unread:true,section:'Announcements'}];
+let view='inbox',selected=1,filter='all';
+const app=document.getElementById('workspace'),content=document.getElementById('content'),details=document.getElementById('details');
+function appearance(){const mode=document.getElementById('mode').value,p=family(),roles=['canvas','side','surface','text','sub','stroke','mark'];roles.forEach((r,i)=>app.style.setProperty('--'+r,p[i]));const a=document.getElementById('accent').value;if(a!=='default')app.style.setProperty('--mark',accents[a][mode==='dark'?0:1]);app.style.setProperty('--mark-ink',mode==='light'||(document.getElementById('palette').value==='t3'&&a==='default')?'#ffffff':p[1]);app.style.setProperty('--row',document.getElementById('density').value);app.style.colorScheme=mode;if(view==='appearance')render();}
+function family(){return families[document.getElementById('palette').value][document.getElementById('mode').value];}
+function row(x){return '<button class="item '+(selected===x.id?'chosen':'')+'" data-item="'+x.id+'" aria-label="Inspect '+x.title+'"><span class="dot '+(x.unread?'':'read')+'"></span><span class="fileicon" aria-hidden="true">▤</span><span class="item-copy"><span class="item-title">'+x.title+'</span><span class="secondary">'+x.course+' · '+x.state+'</span></span><span class="item-time">'+x.time+'</span></button>';}
+function render(){const names={inbox:'Inbox',calendar:'Calendar',library:'Library',course:'Object Oriented Programming',math:'Mathematics',appearance:'Appearance'};document.getElementById('breadcrumb').textContent=(view==='course'||view==='math'?'Library / ':'Workspace / ')+names[view];document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===view));document.getElementById('unread-count').textContent=items.filter(x=>x.unread).length;
+let s='<h1>'+names[view]+'</h1>';
+if(view==='inbox'){s+='<p class="subtitle">3 changes across your courses</p><div class="tabs"><button data-filter="all" aria-pressed="'+(filter==='all')+'">All</button><button data-filter="unread" aria-pressed="'+(filter==='unread')+'">Unread</button></div><div class="group">Due soon <span>Actual due dates</span></div><button class="deadline" data-agenda="true"><span class="clock">◷</span><span>Assignment 3<span class="secondary">OOP · Tomorrow, 17:00</span></span></button><div class="group">Latest changes <span>Today</span></div>';const rows=items.filter(x=>filter==='all'||x.unread);s+=rows.length?rows.map(row).join(''):'<p class="empty">You’re all caught up.</p>';s+='<p class="baseline">Existing material stays in Library.<br>Only changes appear in your Inbox.</p>';}
+else if(view==='calendar'){s+='<p class="subtitle">Due dates · Local time</p><div class="group">Tomorrow <span>1 assignment</span></div><button class="deadline" data-agenda="true"><span class="clock">◷</span><span>Assignment 3<span class="secondary">OOP · 17:00</span></span></button><p class="baseline">Dates show when work is due.<br>Confirm submission status in Quanta.</p>';}
+else if(view==='appearance'){s+='<p class="subtitle">A quiet workspace, in your colors.</p><div class="group">Live palette</div><div class="swatches">'+family().map(c=>'<span style="background:'+c+'" title="'+c+'"></span>').join('')+'</div><p class="empty">Use the controls above to compare six palette families, six accent options, light and dark, and row density.</p><p class="baseline">Proposed production behavior: follow your system appearance and remember your choices locally.</p>';}
+else {const course=view==='course'?'OOP':view==='math'?'Mathematics':null;s+='<p class="subtitle">'+(course?'Course materials and context':'All your course material')+'</p><div class="group">'+(course?'Materials':'All files')+' <span>'+(course?'By section':'Across courses')+'</span></div>';s+=items.filter(x=>!course||x.course===course).map(row).join('');s+='<p class="baseline">Select material to inspect it.<br>Your place in the course stays intact.</p>';}
+content.innerHTML=s;renderDetails();}
+function renderDetails(){const x=items.find(x=>x.id===selected);if(!x){details.innerHTML='<p class="empty">Select material to see its details.</p>';return;}details.innerHTML='<div class="details-head">Material details<button id="close-detail" aria-label="Close material details">×</button></div><h2>'+x.title+'</h2><p>'+x.course+' / '+x.section+'</p><div class="preview">'+(x.saved?'PDF preview':'Course announcement')+'<div></div><div></div><div></div></div><dl><div><dt>Change</dt><dd>'+x.state+'</dd></div><div><dt>Detected</dt><dd>Today, '+x.time+'</dd></div><div><dt>Local availability</dt><dd>'+(x.saved?'✓ Saved on this device':'Source page in Quanta')+'</dd></div></dl><button class="primary" id="open-file">'+(x.saved?'Open saved copy':'Open in Quanta')+'</button><button class="read-action" id="read-file">Mark as '+(x.unread?'read':'unread')+'</button>';}
+document.querySelectorAll('.controls select').forEach(x=>x.addEventListener('change',appearance));
+document.addEventListener('click',e=>{const nav=e.target.closest('[data-view]');if(nav){view=nav.dataset.view;render();return;}const f=e.target.closest('[data-filter]');if(f){filter=f.dataset.filter;render();return;}const item=e.target.closest('[data-item]');if(item){selected=Number(item.dataset.item);render();return;}if(e.target.closest('[data-agenda]')){document.getElementById('notice').textContent='Assignment 3 · OOP · Due tomorrow at 17:00. This is a proposed due-date agenda, separate from detection history.';return;}if(e.target.closest('#close-detail')){selected=null;render();const target=document.querySelector('[data-item]');if(target)target.focus();return;}if(e.target.closest('#read-file')){items.find(x=>x.id===selected).unread=!items.find(x=>x.id===selected).unread;render();const target=document.getElementById('read-file');if(target)target.focus();return;}if(e.target.closest('#open-file'))document.getElementById('notice').textContent='Simulated action: '+(items.find(x=>x.id===selected).saved?'open the saved file on this device.':'open the source page in Quanta.');});
+appearance();render();
+</script>
+</body>
+</html>

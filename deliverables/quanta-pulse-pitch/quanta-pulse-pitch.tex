@@ -1,0 +1,90 @@
+% !TEX program = pdflatex
+% Quanta Pulse v0.3.0 sales presentation. All screenshots use demo course data.
+\documentclass[11pt]{article}
+\usepackage[paperwidth=320mm,paperheight=180mm,margin=0mm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{helvet}
+\renewcommand{\familydefault}{\sfdefault}
+\usepackage{graphicx,xcolor,tikz}
+\usepackage[hidelinks]{hyperref}
+\hypersetup{pdftitle={Quanta Pulse — Less Quanta. More studying.},pdfauthor={Quanta Pulse},pdfsubject={Student product introduction — v0.3.0}}
+\definecolor{bg}{HTML}{101014}
+\definecolor{panel}{HTML}{1D1A27}
+\definecolor{violet}{HTML}{A78BFA}
+\definecolor{bright}{HTML}{F6F3FF}
+\definecolor{muted}{HTML}{BBB5C9}
+\definecolor{rule}{HTML}{37313F}
+\pagecolor{bg}\color{bright}
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\newcommand{\releaseurl}{https://github.com/Akshay-VK/quanta-pulse/releases/tag/v0.3.0}
+% Coordinate system: millimetres, top-left origin. Text widths are explicit.
+\newcommand{\txt}[5]{\node[anchor=north west,inner sep=0pt,text width=#3mm,text=#4,align=left] at (#1,-#2) {#5};}
+\newcommand{\smalltype}{\fontsize{10}{13}\selectfont}
+\newcommand{\bodytype}{\fontsize{16}{21}\selectfont}
+\newcommand{\headtype}{\fontsize{29}{33}\selectfont\bfseries}
+\newcommand{\beginSlide}[2]{\thispagestyle{empty}\null\begin{tikzpicture}[remember picture,overlay,x=1mm,y=1mm,shift={(current page.north west)}]
+  \fill[bg] (0,0) rectangle (320,-180);
+  \txt{14}{9}{220}{violet}{\smalltype\bfseries QUANTA PULSE\quad /\quad #2}
+  \draw[rule,line width=.35pt] (14,-169)--(306,-169);
+  \txt{14}{172}{260}{muted}{\fontsize{8}{10}\selectfont A desktop companion for BITS Pilani students\quad\textbullet\quad v0.3.0}
+  \node[anchor=north east,inner sep=0pt,text=muted] at (306,-172) {\fontsize{8}{10}\selectfont #1\,/\,10};}
+\newcommand{\finishSlide}{\end{tikzpicture}\clearpage}
+% Required real app captures, using clearly disclosed demo course data.
+\newcommand{\screen}[1]{
+  \node[anchor=center,inner sep=0pt] at (160,-104) {\includegraphics[width=290mm,height=118mm,keepaspectratio]{assets/#1.png}};
+}
+\newcommand{\productSlide}[5]{\beginSlide{#1}{#2}
+  \txt{14}{22}{290}{bright}{\headtype #3}
+  \txt{14}{36}{290}{muted}{\fontsize{13}{16}\selectfont #4}
+  \screen{#5}
+  \txt{246}{164}{60}{muted}{\fontsize{7}{9}\selectfont Demo course data}
+  \finishSlide}
+\begin{document}
+\beginSlide{01}{FOR YOUR NEXT STUDY SESSION}
+  \fill[panel] (226,-28) rectangle (306,-151);
+  \draw[violet,line width=1pt] (243,-96)--(253,-96)--(258,-76)--(267,-118)--(277,-61)--(285,-96)--(298,-96);
+  \txt{14}{39}{225}{bright}{\fontsize{48}{51}\selectfont\bfseries Less Quanta.\\More studying.}
+  \txt{15}{105}{200}{muted}{\fontsize{20}{26}\selectfont Keep up with course resources.\\Get back to what you opened them for.}
+  \txt{15}{145}{220}{violet}{\fontsize{13}{17}\selectfont Meet Quanta Pulse\quad\textbullet\quad Local-first desktop tracker}
+\finishSlide
+
+\beginSlide{02}{THE FAMILIAR REFRESH RITUAL}
+  \txt{14}{28}{292}{bright}{\fontsize{36}{41}\selectfont\bfseries ``Did they upload anything?''}
+  \txt{15}{57}{280}{muted}{\bodytype One quick check becomes another tour of your course pages.}
+  \foreach \x/\n in {15/01,114/02,213/03}{\fill[panel] (\x,-87) rectangle +(92,-62);\txt{\x+6}{94}{78}{violet}{\smalltype\bfseries \n}}
+  \txt{21}{109}{78}{bright}{\fontsize{20}{25}\selectfont Open each\\course again.}
+  \txt{120}{109}{78}{bright}{\fontsize{20}{25}\selectfont Was that PDF\\already there?}
+  \txt{219}{109}{78}{bright}{\fontsize{20}{25}\selectfont Where did that\\file go?}
+  \txt{15}{155}{290}{muted}{\fontsize{12}{15}\selectfont The hard part should be the course material.}
+\finishSlide
+
+\productSlide{03}{TODAY}{Start with what changed.}{New and updated resources, brought together in Today.}{today}
+\productSlide{04}{LIBRARY}{Find the file. Keep your place.}{Browse course files in a tree. Keep local copies within reach.}{library}
+\productSlide{05}{INSPECT \& PREVIEW}{Look before you open.}{Inspect a resource and preview supported formats inside Pulse.}{details}
+\productSlide{06}{KEYBOARD PALETTE}{Take the shortcut.}{Open the command palette to jump between views and actions.}{palette}
+\productSlide{07}{ACTIVITY CALENDAR}{Remember when it appeared.}{Browse recorded activity by date in Calendar; revisit changes in History.}{calendar}
+\productSlide{08}{COURSE MONITORING}{Choose what you follow.}{Control which courses Pulse monitors. Use light or dark to suit your desk.}{course}
+
+\beginSlide{09}{QUIET BY DESIGN}
+  \txt{14}{25}{290}{bright}{\headtype A tracker that respects your space.}
+  \draw[rule] (160,-63)--(160,-151);
+  \txt{15}{65}{130}{violet}{\fontsize{22}{27}\selectfont\bfseries Your tracking stays local.}
+  \txt{15}{80}{128}{muted}{\bodytype Tracking state is stored on your device.}
+  \txt{177}{65}{128}{violet}{\fontsize{22}{27}\selectfont\bfseries No new Pulse account.}
+  \txt{177}{80}{128}{muted}{\bodytype Connect to Quanta using your existing access.}
+  \txt{15}{116}{128}{violet}{\fontsize{22}{27}\selectfont\bfseries A quiet first scan.}
+  \txt{15}{131}{128}{muted}{\bodytype Existing files become the baseline, without a flood of ``new''.}
+  \txt{177}{116}{128}{violet}{\fontsize{22}{27}\selectfont\bfseries Your courses. Your choice.}
+  \txt{177}{131}{128}{muted}{\bodytype Follow the courses you want to keep an eye on.}
+\finishSlide
+
+\beginSlide{10}{GET QUANTA PULSE}
+  \txt{14}{29}{290}{bright}{\fontsize{43}{47}\selectfont\bfseries Check what changed.\\Then get back to studying.}
+  \fill[violet] (15,-98) rectangle (173,-118);
+  \txt{22}{103}{150}{bg}{\fontsize{18}{22}\selectfont\bfseries\href{https://github.com/Akshay-VK/quanta-pulse/releases/tag/v0.3.0}{Download for Windows x64}}
+  \txt{15}{126}{285}{muted}{\fontsize{13}{17}\selectfont v0.3.0\quad\textbullet\quad Signed Windows installer\quad\textbullet\quad Official project release}
+  \txt{15}{140}{290}{violet}{\fontsize{11}{14}\selectfont\href{https://github.com/Akshay-VK/quanta-pulse/releases/tag/v0.3.0}{github.com/Akshay-VK/quanta-pulse/releases/tag/v0.3.0}}
+  \txt{15}{157}{290}{muted}{\fontsize{9}{12}\selectfont Independent project. Not affiliated with or endorsed by BITS Pilani.}
+\finishSlide
+\end{document}

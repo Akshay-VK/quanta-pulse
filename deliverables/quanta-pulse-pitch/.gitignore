@@ -1,0 +1,2 @@
+# Keep local compiler intermediates and review renders out of source control.
+build/
