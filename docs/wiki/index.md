@@ -4,6 +4,8 @@ This wiki preserves dated decisions and their evidence. It is not the live track
 
 ## Product decisions
 
+- [2026-11-14: Shared material actions and navigation completed](2026-11-14-material-action-navigation-completion.md) — Complete caller conversion, guarded destinations, session context, real-App and rendered evidence, and exact Inbox/Agenda integration interface.
+
 - [2026-11-14: Appearance vertical slice implemented](2026-11-14-appearance-implementation.md) — Implementation authorization, shared appearance ownership, palette verification, rendered evidence, and remaining native acceptance.
 - [2026-11-14: Attention and due collection data contracts](2026-11-14-attention-data-contracts.md) — Backend slice, exact frontend contracts, reversible dismissal, native verification, and integration limits.
 - [2026-11-14: Themes and student workflow specification](2026-11-14-themes-and-workflows-spec.md) — Follow-up scope, confirmed testing seams, published spec, and reconciliation with the completed workspace baseline.
