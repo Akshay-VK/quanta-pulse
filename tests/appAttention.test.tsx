@@ -41,6 +41,37 @@ describe('complete attention workflows through App', () => {
     expect(document.querySelector('main')?.textContent).toContain('Showing saved results');
     expect(appApi.queryInbox.mock.calls.slice(-2)).toContainEqual([expect.objectContaining({ offset: 0 })]);
   });
+  it('distinguishes stale badge counts from successfully refreshed Inbox rows', async () => {
+    app = await renderApp();
+    const fresh = page(20);
+    fresh.items[0].latestEvent.resourceTitle = 'Fresh lecture';
+    appApi.queryInbox.mockImplementation(async filter => {
+      if (filter?.limit) return fresh;
+      throw new Error('Counts offline');
+    });
+    await emitAppEvent('sync:done', {});
+    expect(button('Show details for Fresh lecture')).toBeTruthy();
+    expect(document.querySelector('main')?.textContent).toContain('Unread counts could not refresh');
+    expect(document.querySelector('main')?.textContent).not.toContain('Showing saved results');
+    expect(document.querySelector('main')?.textContent).not.toContain('Inbox could not refresh');
+    expect(button('Inbox').textContent).toContain('80');
+    appApi.queryInbox.mockResolvedValue({ ...fresh, unreadTotal: 12 });
+    await click(button('Retry counts'));
+    expect(document.querySelector('main')?.textContent).not.toContain('Unread counts could not refresh');
+    expect(button('Inbox').textContent).toContain('12');
+  });
+  it('distinguishes a failed Inbox refresh from successfully refreshed badge counts', async () => {
+    app = await renderApp();
+    appApi.queryInbox.mockImplementation(async filter => {
+      if (filter?.limit) throw new Error('Rows offline');
+      return { ...page(), unreadTotal: 12 };
+    });
+    await emitAppEvent('sync:done', {});
+    expect(button('Show details for Lecture 4')).toBeTruthy();
+    expect(document.querySelector('main')?.textContent).toContain('Showing saved results');
+    expect(document.querySelector('main')?.textContent).not.toContain('Unread counts could not refresh');
+    expect(button('Inbox').textContent).toContain('12');
+  });
   it('rejects a late page when a newer filter has become authoritative', async () => {
     app = await renderApp();
     const old = deferred<InboxPage>();

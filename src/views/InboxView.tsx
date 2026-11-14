@@ -34,7 +34,7 @@ export default function InboxView({ inbox, due, courses, resources, storedCount,
   onOpen: (url: string) => void; onOpenLocal: (id: number) => void; onOpenCourse: (id: number) => void;
   onAgenda: () => void; onLibrary: () => void; onSync: () => void; onChanged: () => Promise<void>;
 }) {
-  const { filter, setFilter, page, pending, error } = inbox;
+  const { filter, setFilter, page, pending, error, countError } = inbox;
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
@@ -86,6 +86,7 @@ export default function InboxView({ inbox, due, courses, resources, storedCount,
     {page && <p className="result-count">{page.items.length} shown of {page.total} matching items · {page.unreadTotal} unread</p>}
     {pending && page && <p role="status" className="result-count">Refreshing Inbox…</p>}
     {error && <Banner kind="error" action={{ label: 'Retry Inbox', onClick: () => void inbox.refresh() }}>{page ? 'Showing saved results. Inbox could not refresh.' : 'Could not load Inbox.'} {error}</Banner>}
+    {countError && <Banner kind="info" action={{ label: 'Retry counts', onClick: () => void inbox.refresh() }}>{countError}. Sidebar counts may be out of date.</Banner>}
     {contextError && <Banner kind="error" action={{ label: 'Retry course information', onClick: () => void onChanged() }}>Course information could not refresh. {contextError}</Banner>}
     {mutationError && !capture && <Banner kind="error">{mutationError}</Banner>}
     {!page && pending ? <Skeleton rows={5} /> : !page ? null : !page.items.length ? <EmptyState

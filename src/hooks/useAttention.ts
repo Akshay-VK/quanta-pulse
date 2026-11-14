@@ -42,7 +42,7 @@ export function useInbox() {
   const refresh = useCallback(async () => { await Promise.all([load(), refreshGlobal()]); }, [load, refreshGlobal]);
   useEffect(() => { void load(); return () => { ++generation.current; }; }, [load]);
   useEffect(() => { void refreshGlobal(); return () => { ++globalGeneration.current; }; }, [refreshGlobal]);
-  return { filter, setFilter, page, global, pending, error: [error, countError].filter(Boolean).join(" ") || null, refresh, loadMore: () => void load(true) };
+  return { filter, setFilter, page, global, pending, error, countError, refresh, loadMore: () => void load(true) };
 }
 export type InboxState = ReturnType<typeof useInbox>;
 
