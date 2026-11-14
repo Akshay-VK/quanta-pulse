@@ -4,6 +4,7 @@ This wiki preserves dated decisions and their evidence. It is not the live track
 
 ## Product decisions
 
+- [2026-11-14: Windows native development startup verified](2026-11-14-windows-development-smoke.md) — Isolated WebView2 login smoke, cleanup evidence, and limits; supersedes the earlier startup-isolation preflight concern.
 - [2026-11-14: Final themes and workflow integration](2026-11-14-final-ui-integration.md) — Assembled code, AC/story audit, full gates, rendered matrices, superseding updater diagnosis and native verification limits.
 
 - [2026-11-14: Inbox and Agenda integrated with material destinations](2026-11-14-inbox-agenda-integration.md) — Assembled ownership, action regressions, screenshots, and exact remaining merge seams.

@@ -7,4 +7,6 @@ These captures show the assembled implementation at `Akshay-VK/quanta-pulse@8dea
 - [Course materials, light](light-course.png)
 - [Appearance chooser, light](light-appearance-chooser.png)
 
+[Windows development login](windows-dev-login.png) is a subsequent actual WebView2 window capture from an isolated temporary development identity, without credentials or illustrative workspace data. It verifies native startup/login rendering only; see the [dated smoke record](../../../wiki/2026-11-14-windows-development-smoke.md).
+
 The [acceptance record](../../2026-11-14-ui-final-coverage.md) states test coverage and verification limits. Full capture scripts, matrices, and additional PNGs were recorded under `/tmp/quanta-ui-progress-20261114/final/`; this directory preserves representative evidence in source control.
