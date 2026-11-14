@@ -1059,13 +1059,12 @@ pub fn app_version() -> String {
 /// to finish before an update installs and the app relaunches.
 #[tauri::command]
 pub fn prepare_for_update(_app: AppHandle, state: State<AppState>) -> Result<(), String> {
+    // Cancel the in-flight scan so it can finish without starting another one,
+    // but do not permanently shut down the scheduler: an update that fails to
+    // install must leave background sync and update checks running.
     state
         .sync
         .cancel
-        .store(true, std::sync::atomic::Ordering::SeqCst);
-    state
-        .sync
-        .shutdown
         .store(true, std::sync::atomic::Ordering::SeqCst);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     loop {

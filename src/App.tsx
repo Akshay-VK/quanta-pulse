@@ -321,6 +321,7 @@ function AppShell() {
                 if (!u) return;
                 await api.prepareForUpdate();
                 await api.downloadAndInstallUpdate(u, () => {});
+                try { await api.relaunchApp(); } catch { /* installer exits the app on Windows */ }
               } catch (err) {
                 notify(String(err), true);
               }
