@@ -6,7 +6,7 @@
 // UTC strings.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Copy, ExternalLink } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy } from "lucide-react";
 import { api } from "../lib/api";
 import {
   EVENT_KINDS,
@@ -29,7 +29,6 @@ import {
 } from "../lib/events";
 import { formatCompact, formatTimeOfDay, relativeLabel } from "../lib/format";
 import { courseTitle } from "../lib/courseName";
-import { eventLinks, primaryUrl } from "../lib/open";
 import type { ChangeEvent, Course, Digest, Resource } from "../lib/types";
 import type { DetailsAdapter } from "../lib/details";
 import PageHeader from "../components/PageHeader";
@@ -64,12 +63,6 @@ const STATUS_KIND: Record<string, StatusKind> = {
   unavailable: "unavailable",
   restored: "restored",
 };
-
-function openLabel(changeType: string): string {
-  if (changeType === "deadline") return "Open course";
-  if (changeType === "announcement") return "Read post";
-  return "Open file";
-}
 
 function monthBounds({ year, month }: YearMonth): { from: string; to: string } {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -109,8 +102,8 @@ function dayAriaLabel(key: string, events: ChangeEvent[]): string {
 export default function CalendarView({
   courses,
   resources = [],
-  onOpen,
-  onOpenLocal,
+  onOpen: _onOpen,
+  onOpenLocal: _onOpenLocal,
   onOpenScan,
   onOpenCourse,
   details,
@@ -434,9 +427,10 @@ export default function CalendarView({
                 digest.items.map((e) => {
                   const meta = eventKindMeta(e.changeType);
                   const course = e.courseId != null ? courseById.get(e.courseId) : undefined;
-                  const primary = primaryUrl(eventLinks(e));
                   return (
                     <ResourceRow
+                      resource={e.resourceId == null ? null : resourceById.get(e.resourceId) ?? null}
+                      recorded={e}
                       key={e.id}
                       title={e.resourceTitle ?? e.title}
                       type={e.resourceType}
@@ -453,16 +447,9 @@ export default function CalendarView({
                           ? () => onOpenCourse(e.courseId as number)
                           : undefined
                       }
-                      openLabel={openLabel(e.changeType)}
-                      showOpen={Boolean(primary)}
                       density="compact"
                       local={
-                        e.resourceId == null ? undefined : mirror?.statusOf(e.resourceId)
-                      }
-                      onOpenLocal={
-                        e.resourceId != null && onOpenLocal
-                          ? () => onOpenLocal(e.resourceId as number)
-                          : undefined
+                        e.resourceId == null || !resourceById.get(e.resourceId) || resourceById.get(e.resourceId)?.isExternal ? undefined : mirror?.statusOf(e.resourceId)
                       }
                       onSelect={(origin) =>
                         details.selectChange(e, origin, e.resourceId == null ? null : resourceById.get(e.resourceId) ?? null, () => {
@@ -470,28 +457,7 @@ export default function CalendarView({
                           return true;
                         })
                       }
-                      onOpen={primary ? () => onOpen(primary) : undefined}
                       menu={[
-                        ...(e.resourceUrl
-                          ? [
-                              {
-                                id: "open-file",
-                                label: "Open file",
-                                icon: <ExternalLink aria-hidden="true" />,
-                                onSelect: () => onOpen(e.resourceUrl as string),
-                              },
-                            ]
-                          : []),
-                        ...(e.sourcePageUrl
-                          ? [
-                              {
-                                id: "open-page",
-                                label: "Open Quanta page",
-                                icon: <ExternalLink aria-hidden="true" />,
-                                onSelect: () => onOpen(e.sourcePageUrl as string),
-                              },
-                            ]
-                          : []),
                         {
                           id: "copy",
                           label: "Copy link",

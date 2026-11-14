@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSessionScroll, useSessionValue } from "../../hooks/useSessionViews";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMirror } from "../../hooks/useMirror";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -51,6 +52,9 @@ import { courseHomeUrl } from "./courseUrl";
 
 interface CoursePageProps {
   course: Course;
+  folderPath?: string[] | null;
+  /** A new shell inventory refreshes the complete scoped course query. */
+  inventory?: Resource[];
   onOpen: (url: string) => void;
   onPreview: (resource: Resource) => void;
   onChanged: () => void;
@@ -99,9 +103,6 @@ function latestIn(node: CourseTreeNode): number {
   return latest;
 }
 
-/** Section expansion, remembered per course for the session. */
-const sessionExpansion = new Map<number, Set<string>>();
-
 function countNewThisWeek(events: ChangeEvent[]): number {
   const since = Date.now() - 7 * 86_400_000;
   return events.filter(
@@ -114,6 +115,8 @@ function countNewThisWeek(events: ChangeEvent[]): number {
 /** One course's page: contents tree and per-course activity. */
 export default function CoursePage({
   course,
+  folderPath,
+  inventory,
   onOpen,
   onPreview,
   onChanged,
@@ -127,21 +130,23 @@ export default function CoursePage({
   const [busy, setBusy] = useState(false);
   const [confirmRebaseline, setConfirmRebaseline] = useState(false);
 
-  const [tab, setTab] = useState<"contents" | "activity">("contents");
+  const [tab, setTab] = useSessionValue<"contents" | "activity">(`course:${course.id}:tab`, "contents");
   const previousTab = useRef(tab);
   useEffect(() => {
     if (previousTab.current !== tab) details?.clear();
     previousTab.current = tab;
   }, [tab, details]);
-  const [search, setSearch] = useState("");
-  const [sort, setSort] = useState<ResourceSort>("newest");
-  const [type, setType] = useState("all");
-  const [category, setCategory] = useState<ResourceCategoryId | "all">("all");
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [activeIndex, setActiveIndex] = useState(0);
-  const initialisedFor = useRef<number | null>(null);
+  const [search, setSearch] = useSessionValue(`course:${course.id}:search`, "");
+  const [sort, setSort] = useSessionValue<ResourceSort>(`course:${course.id}:sort`, "newest");
+  const [type, setType] = useSessionValue(`course:${course.id}:type`, "all");
+  const [category, setCategory] = useSessionValue<ResourceCategoryId | "all">(`course:${course.id}:category`, "all");
+  const [expanded, setExpanded] = useSessionValue<Set<string>>(`course:${course.id}:expanded`, new Set());
+  const [activeIndex, setActiveIndex] = useSessionValue(`course:${course.id}:activeIndex`, 0);
+  const [initialised, setInitialised] = useSessionValue(`course:${course.id}:initialised`, false);
 
+  const loadGeneration = useRef(0);
   const load = useCallback(async () => {
+    const generation = ++loadGeneration.current;
     setLoading(true);
     setLoadError(null);
     try {
@@ -150,18 +155,20 @@ export default function CoursePage({
         api.listResources({ courseId: course.id, limit: 2000 }),
         api.eventsRange(undefined, undefined, course.id, 2000),
       ]);
+      if (generation !== loadGeneration.current) return;
       setItems(resources);
       setEvents(courseEvents);
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : String(err));
+      if (generation === loadGeneration.current) setLoadError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (generation === loadGeneration.current) setLoading(false);
     }
   }, [course.id]);
 
   useEffect(() => {
     void load();
-  }, [load]);
+    return () => { ++loadGeneration.current; };
+  }, [load, inventory]);
 
   const unique = useMemo(() => dedupeCourseResources(items ?? []), [items]);
   const types = useMemo(() => typeOptions(unique), [unique]);
@@ -237,10 +244,28 @@ export default function CoursePage({
   // shown in a session, then remember whatever the user does.
   useEffect(() => {
     if (loading || items === null) return;
-    if (initialisedFor.current === course.id) return;
-    initialisedFor.current = course.id;
-    setExpanded(new Set(sessionExpansion.get(course.id) ?? pickDefaultSections(tree.children, latestIn)));
-  }, [loading, items, course.id, tree]);
+    if (initialised) return;
+    setInitialised(true);
+    setExpanded(new Set(pickDefaultSections(tree.children, latestIn)));
+  }, [loading, items, initialised, setInitialised, setExpanded, tree]);
+
+  const pathIdentity = JSON.stringify(folderPath ?? []);
+  const appliedPath = useRef<string | null>(null);
+  useEffect(() => {
+    if (loading || !folderPath?.length || appliedPath.current === pathIdentity) return;
+    appliedPath.current = pathIdentity;
+    const ids: string[] = [];
+    const walk = (node: CourseTreeNode) => {
+      for (const child of node.children) {
+        if (child.path.every((segment, index) => folderPath[index] === segment)) ids.push(child.id);
+        walk(child);
+      }
+    };
+    walk(tree);
+    setTab("contents");
+    setExpanded((previous) => new Set([...previous, ...ids]));
+    // Only a new route path expands folders; background refresh preserves explicit collapse.
+  }, [pathIdentity, loading]);
 
   const shown = searching ? searchResults.length : filtered.length;
   const total = unique.length;
@@ -252,11 +277,10 @@ export default function CoursePage({
         const next = new Set(prev);
         if (next.has(id)) next.delete(id);
         else next.add(id);
-        sessionExpansion.set(course.id, next);
         return next;
       });
     },
-    [course.id],
+    [setExpanded],
   );
 
   const allFolderIds = useCallback(() => {
@@ -276,21 +300,27 @@ export default function CoursePage({
 
   const setAllExpanded = (expand: boolean) => {
     const next = new Set(expand ? allFolderIds() : []);
-    sessionExpansion.set(course.id, next);
     setExpanded(next);
   };
 
+  const previousFilters = useRef({ needle, type, category, tab });
   useEffect(() => {
-    setActiveIndex(0);
-  }, [needle, type, category, tab]);
+    const previous = previousFilters.current;
+    if (previous.needle !== needle || previous.type !== type || previous.category !== category || previous.tab !== tab) setActiveIndex(0);
+    previousFilters.current = { needle, type, category, tab };
+  }, [needle, type, category, tab, setActiveIndex]);
 
   useEffect(() => {
+    if (items === null) return;
     setActiveIndex((index) =>
       rows.length === 0 ? 0 : Math.min(index, rows.length - 1),
     );
-  }, [rows.length]);
+  }, [rows.length, items, setActiveIndex]);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const mainScroll = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => { mainScroll.current = document.querySelector("main"); }, []);
+  useSessionScroll(`course:${course.id}:${tab}:main`, mainScroll, items !== null);
   const pendingFocus = useRef(false);
   const virtualActive = rows.length > VIRTUAL_THRESHOLD;
   const virtualizer = useVirtualizer({
@@ -300,6 +330,7 @@ export default function CoursePage({
     overscan: 10,
   });
   const virtualItems = virtualActive ? virtualizer.getVirtualItems() : [];
+  useSessionScroll(`course:${course.id}:${tab}:tree`, scrollRef, items !== null && (!virtualActive || virtualItems.length > 0));
 
   const move = useCallback(
     (index: number) => {
@@ -638,7 +669,7 @@ export default function CoursePage({
       <div className="history-tabs">
         <ViewTabs
           items={[
-            { id: "contents", label: "Contents" },
+            { id: "contents", label: "Materials" },
             { id: "activity", label: "Activity" },
           ]}
           value={tab}
@@ -668,6 +699,7 @@ export default function CoursePage({
               onChange={setSearch}
               placeholder="Search resources…"
               label="Search resources in this course"
+              debounceMs={0}
             />
             <Select
               value={sort}
@@ -748,8 +780,11 @@ export default function CoursePage({
             <GroupHeader label={longDayLabel(key)} count={group.length} />
             {group.map((event) => {
               const meta = eventKindMeta(event.changeType);
+              const currentResource = unique.find((resource) => resource.id === event.resourceId) ?? null;
               return (
                 <ResourceRow
+                  resource={currentResource}
+                  recorded={event}
                   key={event.id}
                   title={event.resourceTitle ?? event.title}
                   type={event.resourceType}
@@ -761,19 +796,9 @@ export default function CoursePage({
                   unavailable={event.changeType === "unavailable"}
                   status={{ kind: STATUS_KIND[event.changeType] ?? "new", label: meta.label }}
                   timeLabel={formatTimeOfDay(event.detectedAt)}
-                  openLabel={meta.label}
-                  showOpen={Boolean(event.resourceUrl)}
-                  onSelect={(origin) => details?.selectChange(event, origin, event.resourceId == null ? null : unique.find((resource) => resource.id === event.resourceId) ?? null)}
-                  onOpen={
-                    event.resourceUrl ? () => onOpen(event.resourceUrl as string) : undefined
-                  }
-                  menu={[
-                    {
-                      id: "open-file",
-                      label: "Open file",
-                      onSelect: () => event.resourceUrl && onOpen(event.resourceUrl),
-                    },
-                  ]}
+                  onSelect={(origin) => details?.selectChange(event, origin, currentResource)}
+                  local={currentResource && !currentResource.isExternal ? mirror?.statusOf(currentResource.id) : undefined}
+                  menu={[]}
                 />
               );
             })}

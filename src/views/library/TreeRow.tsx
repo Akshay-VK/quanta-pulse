@@ -1,14 +1,14 @@
+import { useMaterialActions } from "../../hooks/useMaterialActions";
+import { MaterialButtons } from "../../components/MaterialButtons";
 import { type ReactNode } from "react";
-import { ChevronRight, ExternalLink, Eye, Folder } from "lucide-react";
+import { ChevronRight, ExternalLink, Folder } from "lucide-react";
 import { cx } from "../../lib/cx";
 import { describeUpload, formatBytes } from "../../lib/format";
 import { fileTone } from "../../lib/filetype";
-import { canPreview } from "../../lib/preview";
 import { formatSectionPath } from "../../lib/sectionPath";
 import type { CourseTreeNode } from "../../lib/courseTree";
 import type { Resource } from "../../lib/types";
 import { FileTypeIcon } from "../../components/ui/FileTypeIcon";
-import { IconButton } from "../../components/ui/IconButton";
 import { StatusTag } from "../../components/ui/StatusTag";
 
 /** One flattened row of the course tree: a folder or a file. */
@@ -79,6 +79,7 @@ export default function TreeRow({
   selected = false,
   onSelect,
 }: TreeRowProps) {
+  const destinations = useMaterialActions({ onOpen, onPreview });
   const shared = {
     className: cx("tree-row", focused && "focused"),
     role: "treeitem",
@@ -131,7 +132,6 @@ export default function TreeRow({
   const upload = describeUpload(resource);
   const size = resource.sizeBytes ? formatBytes(resource.sizeBytes) : "";
   const unavailable = resource.availabilityStatus !== "available";
-  const previewable = canPreview(resource.resourceType, resource.url);
   const missingDate = upload.source === "unavailable";
 
   return (
@@ -145,10 +145,10 @@ export default function TreeRow({
     >
       <span className="tree-toggle" aria-hidden="true" />
       <FileTypeIcon type={resource.resourceType} />
-      <span className="tree-name" title={`${resource.title} — ${formatSectionPath(resource)}`}>
+      <button type="button" className="tree-name" aria-label={`Show details for ${resource.title}`} onClick={(event) => onSelect(resource, event.currentTarget)} title={`${resource.title} — ${formatSectionPath(resource)}`}>
         <Highlighted text={resource.title} query={searching ? query : ""} />
         {searching && <span className="tree-match-path">{formatSectionPath(resource)}</span>}
-      </span>
+      </button>
       <span className={cx("tree-col tree-col-type", "file-tone", fileTone(resource.resourceType))}>
         <span className="file-dot" aria-hidden="true" />
         {resource.resourceType}
@@ -169,22 +169,7 @@ export default function TreeRow({
         <StatusTag kind="restored" label="Restored" />
       )}
       <span className="tree-col tree-col-actions">
-        {previewable && (
-          <IconButton
-            label={`Preview ${resource.title}`}
-            size={28}
-            onClick={() => onPreview(resource)}
-          >
-            <Eye aria-hidden="true" />
-          </IconButton>
-        )}
-        <IconButton
-          label={`Open ${resource.title}`}
-          size={28}
-          onClick={() => onOpen(resource.url)}
-        >
-          <ExternalLink aria-hidden="true" />
-        </IconButton>
+        <MaterialButtons actions={destinations?.(resource) ?? []} />
       </span>
     </div>
   );

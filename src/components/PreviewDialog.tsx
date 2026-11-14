@@ -1,3 +1,4 @@
+import { materialSource } from "../lib/materialActions";
 import { useEffect, useState } from "react";
 import { ExternalLink, X } from "lucide-react";
 import { api } from "../lib/api";
@@ -101,7 +102,7 @@ export default function PreviewDialog({
           variant="secondary"
           size="sm"
           leadingIcon={<ExternalLink aria-hidden="true" />}
-          onClick={() => onOpen(resource.url)}
+          onClick={() => materialSource(resource) && onOpen(materialSource(resource)!)}
         >
           Open in Quanta
         </Button>
@@ -132,7 +133,7 @@ function renderBody(
     return (
       <Banner
         kind="error"
-        action={{ label: "Open in Quanta instead", onClick: () => onOpen(resource.url) }}
+        action={{ label: "Open in Quanta instead", onClick: () => materialSource(resource) && onOpen(materialSource(resource)!) }}
       >
         {state.message}
       </Banner>
@@ -155,14 +156,14 @@ function renderBody(
       return (
         <div className="preview-status">
           <p>{preview.reason}</p>
-          <Button variant="secondary" onClick={() => onOpen(resource.url)}>Open in Quanta</Button>
+          <Button variant="secondary" onClick={() => materialSource(resource) && onOpen(materialSource(resource)!)}>Open in Quanta</Button>
         </div>
       );
     case "tooLarge":
       return (
         <div className="preview-status">
           <p>This file is too large to preview in-app{preview.sizeBytes ? ` (${formatBytes(preview.sizeBytes)})` : ""}.</p>
-          <Button variant="secondary" onClick={() => onOpen(resource.url)}>Open in Quanta</Button>
+          <Button variant="secondary" onClick={() => materialSource(resource) && onOpen(materialSource(resource)!)}>Open in Quanta</Button>
         </div>
       );
   }

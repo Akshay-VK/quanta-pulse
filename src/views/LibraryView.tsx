@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useSessionScroll, useSessionValue } from "../hooks/useSessionViews";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import PageHeader from "../components/PageHeader";
 import PreviewDialog from "../components/PreviewDialog";
 import { SearchField } from "../components/ui/SearchField";
@@ -31,6 +32,8 @@ export interface LibraryViewProps {
   error?: string | null;
   onRetry?: () => void;
   initialSearch?: string;
+  /** Distinguishes repeated palette requests with the same query. */
+  initialSearchKey?: number;
 }
 
 function plural(n: number, word: string): string {
@@ -42,6 +45,7 @@ export default function LibraryView({
   courses,
   resources,
   courseId,
+  folderPath,
   onNavigate,
   onChanged,
   onOpen,
@@ -52,30 +56,41 @@ export default function LibraryView({
   error = null,
   onRetry,
   initialSearch,
+  initialSearchKey = 0,
 }: LibraryViewProps) {
   // The Courses | All files choice survives navigating into a course page.
-  const [tab, setTab] = useState<"courses" | "files">(courseId == null ? "courses" : "files");
+  const [tab, setTab] = useSessionValue<"courses" | "files">("library:tab", "courses");
   const previousTab = useRef(tab);
   useEffect(() => {
     if (previousTab.current !== tab) details?.clear();
     previousTab.current = tab;
   }, [tab, details]);
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useSessionValue("library:query", "");
+  const [appliedSearch, setAppliedSearch] = useSessionValue<string | undefined>("library:applied-search", undefined);
+  const searchRequest = JSON.stringify([initialSearchKey, initialSearch]);
   useEffect(() => {
-    if (initialSearch !== undefined) {
+    if (initialSearch !== undefined && searchRequest !== appliedSearch) {
       setTab("files");
       setSearch(initialSearch);
+      setAppliedSearch(searchRequest);
     }
-  }, [initialSearch]);
+  }, [initialSearch, searchRequest, appliedSearch, setAppliedSearch, setSearch, setTab]);
   const [previewResource, setPreviewResource] = useState<Resource | null>(null);
 
   const course = courseId == null ? null : courses.find((c) => c.id === courseId) ?? null;
+
+  const mainScroll = useRef<HTMLElement | null>(null);
+  useLayoutEffect(() => { mainScroll.current = document.querySelector("main"); }, []);
+  useSessionScroll(`library:${tab}`, mainScroll, !course && (!loading || resources.length > 0 || courses.length > 0));
 
   if (course) {
     return (
       <>
         <CoursePage
+          key={course.id}
           course={course}
+          inventory={resources}
+          folderPath={folderPath}
           onOpen={onOpen}
           onPreview={setPreviewResource}
           onChanged={onChanged}
@@ -115,6 +130,7 @@ export default function LibraryView({
               onChange={setSearch}
               placeholder="Search…"
               label="Search library"
+              debounceMs={0}
             />
           </div>
         }
@@ -145,6 +161,7 @@ export default function LibraryView({
           onOpen={onOpen}
           onPreview={setPreviewResource}
           details={details}
+          onCourse={(id) => onNavigate(id)}
           onClearSearch={() => setSearch("")}
         />
       )}

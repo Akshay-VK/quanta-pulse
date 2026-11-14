@@ -286,6 +286,12 @@
     overflow-wrap: anywhere;
   }
 
+  .peek-technical summary {
+    cursor: pointer;
+    color: var(--muted);
+    padding-block: var(--sp-2);
+  }
+
   .peek-properties {
     margin-top: var(--sp-5);
   }

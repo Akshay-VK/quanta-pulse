@@ -26,8 +26,8 @@ export interface PeekDetails {
   title: string;
   properties: DetailProperty[];
   note?: string | null;
-  primaryAction?: { label: string; onClick: () => void } | null;
-  secondaryAction?: { label: string; onClick: () => void } | null;
+  primaryAction?: { label: string; onClick: () => void; disabled?: boolean } | null;
+  secondaryAction?: { label: string; onClick: () => void; disabled?: boolean } | null;
   /** The mirror state of this resource, when it can have a local copy. */
   local?: PeekLocal | null;
   onOpenLocal?: () => void;
@@ -69,8 +69,8 @@ export default function PeekPanel({
 
   const local = details.local ?? null;
   const saved = isLocal(local);
-  const localPrimary = saved
-    ? { label: "Open local copy", onClick: details.onOpenLocal ?? (() => {}) }
+  const localPrimary = saved && !details.primaryAction
+    ? { label: "Open saved copy", onClick: details.onOpenLocal ?? (() => {}) }
     : null;
   const localActionLabel = local
     ? local.status === "kept" || saved
@@ -101,20 +101,21 @@ export default function PeekPanel({
         {details.local && (
           <>
             <h3 className="peek-group-title">Local copy</h3>
-            <PropertyList
-              className="peek-properties"
-              onCopy={onCopy}
-              properties={[
-                { label: "Status", value: localStatusLabel(details.local) },
-                ...(details.local.sizeBytes != null
-                  ? [{ label: "Size", value: formatBytes(details.local.sizeBytes) }]
-                  : []),
-                ...(details.local.path
-                  ? [{ label: "Path", value: details.local.path, mono: true, copy: details.local.path }]
-                  : []),
-                ...(details.local.error ? [{ label: "Why", value: details.local.error }] : []),
-              ]}
-            />
+            <PropertyList className="peek-properties" properties={[{ label: "Status", value: localStatusLabel(details.local) }]} />
+            {(details.local.sizeBytes != null || details.local.path || details.local.error) && (
+              <details className="peek-technical">
+                <summary>File information</summary>
+                <PropertyList
+                  className="peek-properties"
+                  onCopy={onCopy}
+                  properties={[
+                    ...(details.local.sizeBytes != null ? [{ label: "Size", value: formatBytes(details.local.sizeBytes) }] : []),
+                    ...(details.local.path ? [{ label: "Path", value: details.local.path, mono: true, copy: details.local.path }] : []),
+                    ...(details.local.error ? [{ label: "Why", value: details.local.error }] : []),
+                  ]}
+                />
+              </details>
+            )}
             <div className="peek-local-actions">
               {localPrimary && (
                 <Button variant="secondary" size="sm" onClick={localPrimary.onClick}>
@@ -149,12 +150,12 @@ export default function PeekPanel({
 
         <div className="peek-actions">
           {details.primaryAction && (
-            <Button variant="primary" onClick={details.primaryAction.onClick}>
+            <Button variant="primary" onClick={details.primaryAction.onClick} disabled={details.primaryAction.disabled}>
               {details.primaryAction.label}
             </Button>
           )}
           {details.secondaryAction && (
-            <Button variant="secondary" onClick={details.secondaryAction.onClick}>
+            <Button variant="secondary" onClick={details.secondaryAction.onClick} disabled={details.secondaryAction.disabled}>
               {details.secondaryAction.label}
             </Button>
           )}

@@ -118,7 +118,7 @@ describe("PreviewDialog", () => {
       (b) => b.textContent === "Open in Quanta",
     ) as HTMLButtonElement;
     await act(async () => openBtn.click());
-    expect(onOpen).toHaveBeenCalledWith(resource.url);
+    expect(onOpen).toHaveBeenCalledWith(resource.sourcePageUrl);
   });
 
   it("renders a PDF in an embedded frame from decoded bytes", async () => {

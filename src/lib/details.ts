@@ -1,3 +1,4 @@
+import { previewMode, PREVIEW_LABELS } from "./preview";
 // Property rows for the peek panel, built from a resource. Values are always
 // real data; a missing date is described, never invented.
 
@@ -20,10 +21,13 @@ export interface DetailProperty {
 export function resourceDetails(resource: Resource): DetailProperty[] {
   const upload = describeUpload(resource);
   const available = resource.availabilityStatus === "available";
+  const preview = resource.isExternal ? null : previewMode(resource.resourceType, resource.url);
   const props: DetailProperty[] = [
     { label: "Course", value: resource.courseName ?? "\u2014" },
     { label: "Section", value: formatSectionPath(resource) },
     { label: "Type", value: resource.resourceType || "\u2014" },
+    { label: "Preview", value: preview ? PREVIEW_LABELS[preview] : "Preview unavailable for this format" },
+    { label: "Due date", value: resource.dueAt && !Number.isNaN(Date.parse(resource.dueAt)) ? resource.dueAt : "Due date unavailable" },
   ];
   if (resource.sizeBytes) {
     props.push({ label: "Size", value: formatBytes(resource.sizeBytes) });

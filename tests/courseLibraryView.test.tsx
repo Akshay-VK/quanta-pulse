@@ -338,8 +338,8 @@ describe("CoursePage tree", () => {
     ]);
     await collapseAll();
     await click(byLabel("Expand Week 1"));
-    expect(byLabel("Preview Lecture One")).toBeTruthy();
-    expect(container.querySelector('button[aria-label="Preview Old archive"]')).toBeNull();
+    expect(byLabel("Preview")).toBeTruthy();
+    expect([...container.querySelectorAll('[role="treeitem"]')].find((row) => row.textContent?.includes("Old archive"))?.querySelector('button[aria-label="Preview"]')).toBeNull();
     expect(container.textContent).toContain("Restored");
   });
 

@@ -171,3 +171,23 @@ describe("App keyboard shortcuts", () => {
     expect(document.querySelector(".peek")).toBeNull();
   });
 });
+
+it("reapplies the same See all query after the Library query was edited", async () => {
+  app = await renderApp();
+  async function type(selector: string, value: string) {
+    await act(async () => {
+      const input = document.querySelector<HTMLInputElement>(selector)!;
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+  async function seeAll() {
+    await click(document.querySelector<HTMLButtonElement>(".search-trigger")!);
+    await type(".palette-input", "Lecture");
+    await click([...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) => item.textContent?.includes("See all results in Library"))!);
+  }
+  await seeAll();
+  await type('[aria-label="Search library"]', "Different query");
+  await seeAll();
+  expect(document.querySelector<HTMLInputElement>('[aria-label="Search library"]')?.value).toBe("Lecture");
+});

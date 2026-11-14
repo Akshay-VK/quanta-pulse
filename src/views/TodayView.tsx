@@ -23,10 +23,8 @@ import {
   matchesKind,
   type FeedKind,
 } from "../lib/filter";
-import { canPreview } from "../lib/preview";
 import { useMirror } from "../hooks/useMirror";
 import { courseTitle } from "../lib/courseName";
-import { primaryUrl, resourceLinks } from "../lib/open";
 import { parseTimestamp, formatDate, formatTimeOfDay, todayLabel } from "../lib/format";
 import { summarySentence } from "../lib/summary";
 import type { Course, Resource } from "../lib/types";
@@ -68,13 +66,6 @@ function rowStatus(
   return null;
 }
 
-function openLabel(resource: Resource, eventKinds: Map<number, Set<string>>): string {
-  const kinds = eventKinds.get(resource.id);
-  if (resource.dueAt) return "Open course";
-  if (kinds?.has("announcement")) return "Read post";
-  return "Open file";
-}
-
 function nearestDeadlineDays(resources: Resource[]): number | null {
   const now = Date.now();
   let nearest: number | null = null;
@@ -102,9 +93,9 @@ export default function TodayView({
   selectedId,
   onSelect,
   onSelectionRemoved,
-  onOpen,
-  onPreview,
-  onOpenLocal,
+  onOpen: _onOpen,
+  onPreview: _onPreview,
+  onOpenLocal: _onOpenLocal,
   onToggleRead,
   onMarkAllRead,
   onClearActivity,
@@ -324,6 +315,7 @@ export default function TodayView({
             <GroupHeader label={group.label} count={group.items.length} />
             {group.items.map((resource) => (
               <ResourceRow
+                  resource={resource}
                 key={resource.id}
                 title={resource.title}
                 type={resource.resourceType}
@@ -335,8 +327,6 @@ export default function TodayView({
                 unavailable={resource.availabilityStatus !== "available"}
                 status={rowStatus(resource, eventKinds)}
                 timeLabel={rowTime(resource)}
-                openLabel={openLabel(resource, eventKinds)}
-                previewAvailable={canPreview(resource.resourceType, resource.url)}
                 local={resource.isExternal ? undefined : mirror?.statusOf(resource.id)}
                 onSelect={(origin) => onSelect(resource, origin)}
                 onCourse={
@@ -344,9 +334,6 @@ export default function TodayView({
                     ? () => onOpenCourse(resource.courseId as number)
                     : undefined
                 }
-                onOpenLocal={() => onOpenLocal(resource.id)}
-                onOpen={() => onOpen(primaryUrl(resourceLinks(resource)) ?? resource.url)}
-                onPreview={() => onPreview(resource)}
                 menu={[
                   ...(resource.courseId != null
                     ? [
@@ -355,22 +342,6 @@ export default function TodayView({
                           label: `Open ${courseLabelOf(resource.courseId) ?? "course"}`,
                           icon: <ExternalLink aria-hidden="true" />,
                           onSelect: () => onOpenCourse(resource.courseId as number),
-                        },
-                      ]
-                    : []),
-                  {
-                    id: "open-file",
-                    label: "Open file",
-                    icon: <ExternalLink aria-hidden="true" />,
-                    onSelect: () => onOpen(resource.url),
-                  },
-                  ...(resource.sourcePageUrl
-                    ? [
-                        {
-                          id: "open-page",
-                          label: "Open Quanta page",
-                          icon: <ExternalLink aria-hidden="true" />,
-                          onSelect: () => onOpen(resource.sourcePageUrl as string),
                         },
                       ]
                     : []),

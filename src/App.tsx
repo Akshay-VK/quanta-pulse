@@ -38,7 +38,9 @@ import {
   type DetailSelection, type DetailSubject, type DetailsAdapter, type RestoreDetailFocus,
 } from "./lib/details";
 import { canPreview } from "./lib/preview";
-import { materialActions } from "./lib/materialActions";
+import { MaterialActionsContext } from "./hooks/useMaterialActions";
+import { SessionViewsProvider, useSessionScroll } from "./hooks/useSessionViews";
+import { materialSource, materialActions } from "./lib/materialActions";
 import { relativeLabel } from "./lib/format";
 import { registerCourseLabels, courseLabel } from "./lib/courseName";
 import type {
@@ -73,7 +75,7 @@ export function loadCollapsed(): boolean {
 }
 
 export default function App() {
-  return <MirrorProvider><AppShell /></MirrorProvider>;
+  return <SessionViewsProvider><MirrorProvider><AppShell /></MirrorProvider></SessionViewsProvider>;
 }
 
 function AppShell() {
@@ -111,6 +113,7 @@ function AppShell() {
   const [showLogin, setShowLogin] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [librarySearch, setLibrarySearch] = useState<string | undefined>();
+  const [librarySearchRequest, setLibrarySearchRequest] = useState(0);
   const [pendingPaletteInspection, setPendingPaletteInspection] = useState<Resource | null>(null);
   const [selection, setSelection] = useState<DetailSelection | null>(null);
   const selectionRef = useRef<DetailSelection | null>(null);
@@ -126,6 +129,7 @@ function AppShell() {
   const mirror = useMirror();
   const [previewResource, setPreviewResource] = useState<Resource | null>(null);
   const materialSubmission = useRef(new Set<number>());
+  const [materialPending, setMaterialPending] = useState<Set<number>>(new Set());
   const lastRow = useRef<HTMLElement | null>(null);
 
   // Below this width the sidebar is a rail and expands over the content.
@@ -530,47 +534,46 @@ function AppShell() {
     });
   }, [notify, lookupLocalFile]);
 
-  /** Opens the local copy, downloading it first when it is not on disk. */
+  /** Validate a saved copy before opening; a missing file requires explicit download. */
   const openLocal = useCallback(
     async (resourceId: number) => {
+      if (materialSubmission.current.has(resourceId)) return;
+      materialSubmission.current.add(resourceId);
+      setMaterialPending(new Set(materialSubmission.current));
+      const generation = selectionGeneration.current;
       try {
+        const file = await lookupLocalFile(resourceId);
+        if (!file) {
+          if (generation === selectionGeneration.current) setPeekLocal(null);
+          notify("Saved copy is missing from disk. Download and open to save it again.", true);
+          return;
+        }
         await api.openLocalFile(resourceId);
       } catch (err) {
         notify(String(err), true);
+      } finally {
+        materialSubmission.current.delete(resourceId);
+        setMaterialPending(new Set(materialSubmission.current));
       }
     },
-    [notify],
+    [notify, lookupLocalFile],
   );
 
-  /** Download on demand (P0) and tell the user what happened. */
-  const ensureLocal = useCallback(
-    async (resourceId: number) => {
-      const generation = selectionGeneration.current;
-      try {
-        const local = await (mirror?.ensureLocal ?? api.ensureLocal)(resourceId);
-        const selected = selectionRef.current;
-        const resource = selected?.kind === "resource" ? selected.resource
-          : selected?.kind === "change" ? selected.resource : null;
-        if (generation === selectionGeneration.current && resource?.id === resourceId) {
-          // A lookup started before this download cannot replace its result.
-          ++localLookupGeneration.current;
-          setPeekLocal(local);
-          setLocalLookup("ready");
-        }
-        void mirror?.refresh();
-        notify("Saved to this computer.");
-      } catch (err) {
-        notify(String(err), true);
-      }
-    },
-    [notify, mirror],
-  );
-
+  /** One guarded download owner for row, menu and inspector activation. */
   const downloadAndOpen = useCallback(async (resourceId: number) => {
     if (materialSubmission.current.has(resourceId)) return;
     materialSubmission.current.add(resourceId);
+    setMaterialPending(new Set(materialSubmission.current));
+    const generation = selectionGeneration.current;
     try {
       const local = await (mirror?.ensureLocal ?? api.ensureLocal)(resourceId);
+      const selected = selectionRef.current;
+      const resource = selected?.kind === "resource" ? selected.resource : selected?.kind === "change" ? selected.resource : null;
+      if (generation === selectionGeneration.current && resource?.id === resourceId) {
+        ++localLookupGeneration.current;
+        setPeekLocal(local);
+        setLocalLookup("ready");
+      }
       void mirror?.refresh();
       await api.openLocalFile(resourceId);
       notify(`Opened saved copy: ${local.path}`);
@@ -578,8 +581,31 @@ function AppShell() {
       notify(`Could not download and open material: ${String(err)}`, true);
     } finally {
       materialSubmission.current.delete(resourceId);
+      setMaterialPending(new Set(materialSubmission.current));
     }
   }, [mirror, notify]);
+
+  const destinations = useCallback((resource: Resource | null, recorded?: ChangeEvent) => {
+    const local = resource?.isExternal ? undefined : mirror?.statusOf(resource?.id) ?? (peekLocal?.resourceId === resource?.id ? peekLocal : null);
+    const pending = resource ? materialPending.has(resource.id) : false;
+    return materialActions(resource, {
+      preview: resource ? canPreview(resource.resourceType, resource.url) : false,
+      local: resource?.isExternal ? "unsupported" : isLocal(local) ? "saved" : "missing",
+      recordedUrl: recorded?.sourcePageUrl,
+      recordedFileUrl: recorded?.resourceUrl,
+    }, Boolean(recorded)).map((action) => ({
+      ...action,
+      disabled: pending && (action.id === "download-open" || action.id === "open-saved"),
+      onSelect: () => {
+        if (action.id === "preview" && resource) setPreviewResource(resource);
+        else if (action.id === "open-saved" && resource) void openLocal(resource.id);
+        else if (action.id === "download-open" && resource) void downloadAndOpen(resource.id);
+        else { const url = action.id === "open-recorded-file" ? materialSource(null, recorded?.resourceUrl) : materialSource(resource, materialSource(null, recorded?.sourcePageUrl) ?? recorded?.resourceUrl); if (url) void open(url); }
+      },
+    }));
+  }, [mirror, peekLocal, materialPending, open, openLocal, downloadAndOpen]);
+
+  useSessionScroll(`route:${route.view}:${route.courseId ?? "root"}:${JSON.stringify(route.folderPath)}`, mainRef);
 
   const copyText = useCallback(async (text: string, success: string) => {
     try {
@@ -647,35 +673,28 @@ function AppShell() {
   const peekDetails: PeekDetails | null = useMemo(() => {
     if (selection?.kind === "change" && !peekResource) {
       const event = selection.change;
-      const fileUrl = event.resourceUrl;
-      const pageUrl = event.sourcePageUrl;
+      const actions = destinations(null, event);
       return {
         ...changePresentation(event),
-        primaryAction: fileUrl ? { label: "Open in Quanta", onClick: () => void open(fileUrl) } : null,
-        secondaryAction: pageUrl && !fileUrl ? { label: "Open in Quanta", onClick: () => void open(pageUrl) } : null,
-        menu: pageUrl && fileUrl ? [{ id: "page", label: "Open in Quanta page", onSelect: () => void open(pageUrl) }] : undefined,
+        primaryAction: actions[0] ? { label: actions[0].label, onClick: actions[0].onSelect } : null,
+        menu: actions.slice(1),
       };
     }
     if (selection?.kind === "scan") return scanPresentation(selection.scan);
     if (!peekResource) return null;
-    const previewable = canPreview(peekResource.resourceType, peekResource.url);
     const local = peekLocal && peekLocal.resourceId === peekResource.id ? peekLocal : null;
-    const localStatus = peekResource.isExternal
-      ? undefined
-      : mirror?.statusOf(peekResource.id) ?? local;
-    const localState = peekResource.isExternal ? "unsupported" as const
-      : localStatus && isLocal(localStatus) ? "saved" as const
-        : localStatus?.status === "downloading" || localStatus?.status === "queued" ? "pending" as const : "missing" as const;
-    const primaryMaterialAction = materialActions(peekResource, { preview: previewable, local: localState })
-      .find((action) => action.id === "open-saved" || action.id === "download-open" || action.id === "open-quanta");
+    const localStatus = peekResource.isExternal ? undefined : mirror?.statusOf(peekResource.id) ?? local;
+    const actions = destinations(peekResource, selection?.kind === "change" ? selection.change : undefined);
+    const primary = actions.find((action) => action.id !== "preview");
+    const preview = actions.find((action) => action.id === "preview");
     return {
       ...todayPresentation(peekResource, eventKinds.get(peekResource.id)),
       ...(selection?.kind === "change" ? changePresentation(selection.change) : {}),
-      primaryAction: primaryMaterialAction ? {
-        label: primaryMaterialAction.label,
-        onClick: () => primaryMaterialAction.id === "open-saved" ? void openLocal(peekResource.id)
-          : primaryMaterialAction.id === "download-open" ? void downloadAndOpen(peekResource.id) : void open(peekResource.url),
-      } : null,
+      ...(selection?.kind === "change" ? { properties: [
+        ...changePresentation(selection.change).properties,
+        ...todayPresentation(peekResource).properties.filter(({ label }) => ["Section", "Preview", "Due date", "Availability"].includes(label)),
+      ] } : {}),
+      primaryAction: primary ? { label: primary.label, onClick: primary.onSelect, disabled: primary.disabled } : null,
       local:
         localStatus === undefined
           ? undefined
@@ -689,21 +708,9 @@ function AppShell() {
       onRevealLocal: local && isLocal(localStatus) ? () =>
         void api.revealLocalFile(peekResource.id).catch((err) => notify(String(err), true)) : undefined,
       onCopyLocalPath: () => void copyLocalPath(local?.path),
-      onDownloadNow: () => void ensureLocal(peekResource.id),
-      onRedownload: () => void ensureLocal(peekResource.id),
-      secondaryAction: previewable
-        ? { label: "Preview", onClick: () => setPreviewResource(peekResource) }
-        : null,
+      secondaryAction: preview ? { label: preview.label, onClick: preview.onSelect } : null,
       menu: [
-        ...(peekResource.sourcePageUrl
-          ? [
-              {
-                id: "page",
-                label: "Open Quanta page",
-                onSelect: () => void open(peekResource.sourcePageUrl as string),
-              },
-            ]
-          : []),
+        ...actions.filter((action) => action !== primary && action !== preview),
         {
           id: "copy",
           label: "Copy link",
@@ -717,7 +724,7 @@ function AppShell() {
         }] : []),
       ],
     };
-  }, [selection, peekResource, peekLocal, localLookup, mirror, eventKinds, unreadIds, open, openLocal, ensureLocal, downloadAndOpen, copyLocalPath, copyText, notify, toggleResourceRead]);
+  }, [selection, peekResource, peekLocal, localLookup, mirror, eventKinds, unreadIds, destinations, copyLocalPath, copyText, notify, toggleResourceRead]);
 
   const paletteActions: PaletteAction[] = useMemo(
     () => [
@@ -827,6 +834,7 @@ function AppShell() {
     : { items: [], current: currentLabel };
 
   return (
+    <MaterialActionsContext.Provider value={destinations}>
     <TooltipProvider>
       <div className={cx("app", collapsed && "rail", drawerOpen && "drawer-open")}>
         {narrow && drawerOpen && (
@@ -933,6 +941,7 @@ function AppShell() {
                   onChanged={() => void refresh()}
                   onOpen={(url) => void open(url)}
                   initialSearch={librarySearch}
+                  initialSearchKey={librarySearchRequest}
                   onSyncNow={() => void handleSync()}
                 />
               )}
@@ -997,7 +1006,7 @@ function AppShell() {
           onCourse={navigateToCourse}
           resources={resources}
           onInspectResource={(resource) => { setPendingPaletteInspection(resource); navigate("library"); }}
-          onSeeAllFiles={(query) => { setLibrarySearch(query); navigate("library"); }}
+          onSeeAllFiles={(query) => { setLibrarySearch(query); setLibrarySearchRequest((previous) => previous + 1); navigate("library"); }}
           actions={paletteActions}
         />
 
@@ -1026,5 +1035,6 @@ function AppShell() {
         <Toaster toasts={toasts} onDismiss={dismissToast} />
       </div>
       </TooltipProvider>
+    </MaterialActionsContext.Provider>
   );
 }

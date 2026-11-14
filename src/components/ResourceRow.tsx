@@ -1,8 +1,10 @@
+import { useMaterialActions } from "../hooks/useMaterialActions";
+import { MaterialButtons } from "./MaterialButtons";
 import { ExternalLink, Eye, MoreHorizontal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { cx } from "../lib/cx";
 import { isLocal, mirrorTip } from "../lib/mirrorState";
-import type { LocalFileStatus } from "../lib/types";
+import type { ChangeEvent, Resource, LocalFileStatus } from "../lib/types";
 import { CoursePill } from "./ui/CoursePill";
 import { FileTypeIcon } from "./ui/FileTypeIcon";
 import { IconButton } from "./ui/IconButton";
@@ -52,6 +54,8 @@ function useAutoCompact() {
  * the row is measured below `COMPACT_MAX_WIDTH`.
  */
 export default function ResourceRow({
+  resource,
+  recorded,
   title,
   type,
   courseId,
@@ -62,7 +66,7 @@ export default function ResourceRow({
   unavailable,
   status,
   timeLabel,
-  openLabel,
+  openLabel = "Open in Quanta",
   showOpen = true,
   previewAvailable = false,
   density = "comfortable",
@@ -74,6 +78,9 @@ export default function ResourceRow({
   onCourse,
   menu,
 }: {
+  /** Pass identity to use the App-owned policy; null plus recorded is an orphan. */
+  resource?: Resource | null;
+  recorded?: ChangeEvent;
   title: string;
   type: string | null;
   courseId: number | null;
@@ -84,7 +91,8 @@ export default function ResourceRow({
   unavailable: boolean;
   status?: { kind: StatusKind; label: string } | null;
   timeLabel: string;
-  openLabel: string;
+  openLabel?: string;
+  /** Legacy standalone control only. Identity-based rows derive all destinations from policy. */
   showOpen?: boolean;
   previewAvailable?: boolean;
   density?: RowDensity;
@@ -94,7 +102,7 @@ export default function ResourceRow({
    * link). Drives the status icon and the open/download label.
    */
   local?: LocalFileStatus | null;
-  /** Opens the local copy through the Shell ('Open local copy'). */
+  /** Legacy standalone saved-file callback. */
   onOpenLocal?: () => void;
   onSelect: (origin: HTMLButtonElement) => void;
   onOpen?: () => void;
@@ -103,6 +111,8 @@ export default function ResourceRow({
   onCourse?: () => void;
   menu: MenuItemSpec[];
 }) {
+  const destinations = useMaterialActions();
+  const actions = destinations && (resource !== undefined || recorded) ? destinations(resource ?? null, recorded) : null;
   const { ref, narrow } = useAutoCompact();
   const compact = density === "compact" || narrow;
   const saved = isLocal(local);
@@ -161,6 +171,7 @@ export default function ResourceRow({
       <span className="row-time">{timeLabel}</span>
 
       <span className="row-actions">
+        {actions ? <MaterialButtons actions={actions} menu={menu} /> : <>
         {previewAvailable && onPreview && (
           <IconButton label="Preview" size={28} onClick={onPreview}>
             <Eye aria-hidden="true" />
@@ -168,7 +179,7 @@ export default function ResourceRow({
         )}
         {showOpen && (saved ? onOpenLocal : onOpen) && (
           <IconButton
-            label={saved ? "Open local copy" : resolvedOpenLabel}
+            label={saved ? "Open saved copy" : resolvedOpenLabel}
             size={28}
             onClick={() => (saved ? onOpenLocal?.() : onOpen?.())}
           >
@@ -184,6 +195,7 @@ export default function ResourceRow({
             </IconButton>
           }
         />
+        </>}
       </span>
     </div>
   );
