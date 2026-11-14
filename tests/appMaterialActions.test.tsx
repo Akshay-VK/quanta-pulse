@@ -25,7 +25,7 @@ async function choose(label: string, text: string) {
 }
 
 describe("App shared material destinations", () => {
-  for (const surface of ["Today", "All files", "Tree", "Activity", "History", "Calendar"]) {
+  for (const surface of ["Inbox", "All files", "Tree", "Activity", "History", "Calendar"]) {
     it(`downloads and opens from ${surface}, while selection stays local and unread`, async () => {
       const event = change({ detectedAt: new Date().toISOString() });
       appApi.eventsRange.mockResolvedValue([event]);
@@ -35,7 +35,7 @@ describe("App shared material destinations", () => {
       if (surface === "All files") { await click(button("Library")); await click(button("All files")); }
       if (surface === "Tree" || surface === "Activity") { await click(document.querySelector<HTMLButtonElement>(".course-nav-item")!); if (surface === "Activity") await click(button("Activity")); }
       if (surface === "History") await emitAppEvent("ui:navigate", "history");
-      if (surface === "Calendar") await click(button(surface));
+      if (surface === "Calendar") { await click(button(surface)); await click(button("Activity calendar")); }
       const row = document.querySelector<HTMLElement>(surface === "All files" ? "tbody tr" : surface === "Tree" ? '[role="treeitem"]:not([aria-expanded])' : ".resource-row")!;
       expect(row).toBeTruthy();
       await click(row.querySelector<HTMLButtonElement>('[aria-label^="Show details"]') ?? row);
@@ -87,7 +87,7 @@ describe("App shared material destinations", () => {
     const main = document.querySelector("main")!; main.scrollTop = 137;
     main.dispatchEvent(new Event("scroll"));
     await click(document.querySelector<HTMLButtonElement>(".course-nav-item")!);
-    await click(button("Today")); await click(button("Library"));
+    await click(button("Inbox")); await click(button("Library"));
     expect(document.querySelector<HTMLInputElement>('[aria-label="Search library"]')?.value).toBe("Lecture");
     expect(document.querySelector('[aria-label="All course files"]')).toBeTruthy();
     expect(main.scrollTop).toBe(137);
@@ -97,7 +97,7 @@ describe("App shared material destinations", () => {
   });
 
   it("keeps external links out of local destinations", async () => {
-    appApi.listDashboardResources.mockResolvedValue([resource({ isExternal: true })]);
+    appApi.listResources.mockResolvedValue([resource({ isExternal: true })]);
     app = await renderApp();
     const row = document.querySelector(".resource-row")!;
     await click(button("Open in Quanta", row));
@@ -118,7 +118,7 @@ it("preserves course query, sorting, type, expansion and scroll across courses a
   await choose("Filter by file type", "pdf (1)");
   const main = document.querySelector("main")!;
   main.scrollTop = 215; main.dispatchEvent(new Event("scroll"));
-  await click(button("Today"));
+  await click(button("Inbox"));
   await click(document.querySelector<HTMLButtonElement>(".course-nav-item")!);
   expect(document.querySelector<HTMLInputElement>('[aria-label="Search resources in this course"]')?.value).toBe("Lecture");
   expect(button("Sort resources").textContent).toContain("Name (A–Z)");
@@ -131,7 +131,7 @@ it("preserves course query, sorting, type, expansion and scroll across courses a
 });
 
 it("keeps a missing disk copy distinct from an unavailable source and offers explicit redownload", async () => {
-  appApi.listDashboardResources.mockResolvedValue([resource({ availabilityStatus: "unavailable" })]);
+  appApi.listResources.mockResolvedValue([resource({ availabilityStatus: "unavailable" })]);
   appApi.mirrorLocalFiles.mockResolvedValue([{ resourceId: 1, status: "kept", error: null }]);
   appApi.mirrorLocalFile.mockResolvedValue(null);
   app = await renderApp();
@@ -187,7 +187,7 @@ it("isolates course context and ignores a late request from the course left behi
   const courseButton = (code: string) => [...document.querySelectorAll<HTMLButtonElement>(".course-nav-item")].find((node) => node.querySelector(".course-nav-code")?.textContent === code)!;
   await click(courseButton("MATH F111"));
   await input("Search resources in this course", "Lecture");
-  await click(button("Today"));
+  await click(button("Inbox"));
   delayFirst = true;
   await click(courseButton("MATH F111"));
   await click(courseButton("CS F111"));

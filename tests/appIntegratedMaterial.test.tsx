@@ -22,6 +22,7 @@ describe('integrated attention material destinations', () => {
     const item = resource({ dueAt: '2026-11-15', availabilityStatus: 'unavailable' });
     appApi.queryDueResources.mockResolvedValue({ items: [{ resource: item, dateKind: 'date', coursePaused: false }], total: 1 });
     appApi.mirrorLocalFiles.mockResolvedValue([{ resourceId: 1, status: 'kept', error: null }]);
+    appApi.mirrorLocalFile.mockResolvedValue({ resourceId: 1, path: '/fixture/lecture.pdf', relPath: 'lecture.pdf', sizeBytes: 12, mime: 'application/pdf', sha256: null, status: 'kept', error: null });
     app = await renderApp();
     await click(button('Calendar'));
     const row = document.querySelector('.agenda-entry')!;
@@ -34,8 +35,16 @@ describe('integrated attention material destinations', () => {
     await act(async () => { trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })); });
     const source = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent === 'Open in Quanta')!;
     await click(source);
-    expect(appApi.openExternal).toHaveBeenCalledWith(item.url);
-    expect(appApi.openExternal).not.toHaveBeenCalledWith(item.sourcePageUrl);
+    expect(appApi.openExternal).toHaveBeenCalledWith(item.sourcePageUrl);
+    expect(appApi.openExternal).not.toHaveBeenCalledWith(item.url);
+    expect(appApi.setEventReadState).not.toHaveBeenCalled();
+  });
+  it('retains current section, preview and availability facts beside recorded change and due facts', async () => {
+    appApi.listResources.mockResolvedValue([resource({ sectionPath: ['Week 4', 'Lectures'], dueAt: '2026-11-15', availabilityStatus: 'unavailable' })]);
+    app = await renderApp();
+    await click(button('Show details for Lecture 4'));
+    const panel = document.querySelector('.peek')!;
+    for (const fact of ['Section', 'Week 4', 'Lectures', 'Preview', 'Availability', 'Change', '2026-11-15', 'date only']) expect(panel.textContent).toContain(fact);
     expect(appApi.setEventReadState).not.toHaveBeenCalled();
   });
   it('previews an Inbox resource without acknowledging grouped attention or opening a source', async () => {
@@ -53,6 +62,11 @@ describe('integrated attention material destinations', () => {
     await click(button('Calendar')); await click(button('Activity calendar'));
     const row = document.querySelector('.resource-row')!;
     await click(button('Open in Quanta', row));
+    expect(appApi.openExternal).toHaveBeenCalledWith(event.sourcePageUrl);
+    const trigger = button('More actions', row);
+    await act(async () => { trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })); });
+    const recordedFile = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(item => item.textContent === 'Open recorded file in Quanta')!;
+    await click(recordedFile);
     expect(appApi.openExternal).toHaveBeenCalledWith(event.resourceUrl);
     expect(appApi.ensureLocal).not.toHaveBeenCalled();
     expect(appApi.setEventReadState).not.toHaveBeenCalled();

@@ -252,7 +252,7 @@ describe('complete inspector enrichment', () => {
     app = await renderApp();
     await click(button('Show details for Beyond the default cap'));
     expect(appApi.listResources).toHaveBeenCalledWith({ offset: 2000, limit: 2000 });
-    expect(button('Download now', document.querySelector('.peek')!)).toBeTruthy();
+    expect(button('Download and open', document.querySelector('.peek')!)).toBeTruthy();
     expect(appApi.setEventReadState).not.toHaveBeenCalled();
   });
 });

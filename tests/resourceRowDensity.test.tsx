@@ -3,7 +3,7 @@
 // the two-line compact layout. jsdom does not lay out CSS, so the structural
 // contract is asserted against the stylesheet source as well as the DOM.
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import ResourceRow from "../src/components/ResourceRow";
@@ -77,6 +77,22 @@ async function render(density?: "comfortable" | "compact") {
 }
 
 describe("ResourceRow layout", () => {
+  it("switches at the approved 800px container threshold after resize", async () => {
+    let resize!: ResizeObserverCallback;
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(callback: ResizeObserverCallback) { resize = callback; }
+      observe() {} disconnect() {}
+    });
+    try {
+      await render();
+      const row = container.querySelector(".resource-row")!;
+      const measure = (width: number) => act(() => resize([{ contentRect: { width } } as ResizeObserverEntry], {} as ResizeObserver));
+      measure(799);
+      expect(row.className).toContain("row-compact");
+      measure(800);
+      expect(row.className).not.toContain("row-compact");
+    } finally { vi.unstubAllGlobals(); }
+  });
   it("is one line by default and two lines when compact", async () => {
     await render();
     expect(container.querySelector(".resource-row")?.className).not.toContain("row-compact");

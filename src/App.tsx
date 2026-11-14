@@ -44,7 +44,6 @@ import { canPreview } from "./lib/preview";
 import { MaterialActionsContext } from "./hooks/useMaterialActions";
 import { SessionViewsProvider, useSessionScroll } from "./hooks/useSessionViews";
 import { materialSource, materialActions } from "./lib/materialActions";
-import { relativeLabel } from "./lib/format";
 import { registerCourseLabels, courseLabel } from "./lib/courseName";
 import type {
   DueFilter,
@@ -628,7 +627,13 @@ function AppShell() {
     const preview = actions.find((action) => action.id === "preview");
     const presentation = {
       ...todayPresentation(peekResource, eventKinds.get(peekResource.id)),
-      ...(selection?.kind === "change" ? changePresentation(selection.change) : {}),
+      ...(selection?.kind === "change" ? {
+        ...changePresentation(selection.change),
+        properties: [
+          ...changePresentation(selection.change).properties,
+          ...todayPresentation(peekResource).properties.filter(({ label }) => ["Section", "Preview", "Availability"].includes(label)),
+        ],
+      } : {}),
     };
     const dueEntry = agendaEntries([{ resource: peekResource, dateKind: /^\d{4}-\d{2}-\d{2}$/.test(peekResource.dueAt ?? "") ? "date" : "instant", coursePaused: false }], now, timeZone)[0];
     return {

@@ -925,6 +925,6 @@
 @layer components {
   .inbox-view .result-count, .agenda-view .result-count { font-family: var(--type-ui); white-space: normal; }
   .inbox-view .row-time { width: auto; white-space: normal; }
-  .inbox-view .resource-row:not(.row-compact), .agenda-entry .resource-row:not(.row-compact) { grid-template-columns: minmax(0, 1fr) 240px 24px 160px 80px; }
+  .inbox-view .resource-row:not(.row-compact), .agenda-entry .resource-row:not(.row-compact) { grid-template-columns: minmax(0, 1fr) 240px 24px 160px 92px; }
   .agenda-entry .row-time { width: auto; }
 }

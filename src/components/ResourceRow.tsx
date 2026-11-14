@@ -17,7 +17,7 @@ export type RowDensity = "comfortable" | "compact";
 
 /** Below this width the row flips to its two-line compact layout. Container
  *  queries are unavailable on our minimum webview, so it is measured instead. */
-const COMPACT_MAX_WIDTH = 560;
+const COMPACT_MAX_WIDTH = 800;
 
 /**
  * Watches the row's own box and reports whether it is narrower than the compact
@@ -125,6 +125,7 @@ export default function ResourceRow({
       ref={ref}
       className={cx(
         "resource-row",
+        actions !== null && "row-material",
         compact && "row-compact",
         selected && "selected",
         unread && "row-unread",
