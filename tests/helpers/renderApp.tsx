@@ -73,6 +73,20 @@ export function setupApp({ width = 1280, dark = false, platform = "Linux" } = {}
   appApi.listResources.mockResolvedValue([resource()]);
   appApi.listDashboardResources.mockResolvedValue([resource()]);
   appApi.listDashboardEvents.mockResolvedValue([change()]);
+  appApi.queryInbox.mockImplementation(async (filter = {}) => {
+    const events = await appApi.listDashboardEvents();
+    const byKey = new Map<string, typeof events>();
+    for (const event of events) {
+      const key = event.resourceId == null ? `event:${event.id}` : `resource:${event.resourceId}`;
+      byKey.set(key, [...(byKey.get(key) ?? []), event]);
+    }
+    const items = [...byKey].map(([key, group]) => ({ key, resourceId: group[0].resourceId, courseId: group[0].courseId, latestEvent: group[0], eventIds: group.map(e => e.id), changeTypes: [...new Set(group.map(e => e.changeType))], unread: group.some(e => !e.read) })).filter(item =>
+      (!filter.courseId || item.courseId === filter.courseId) && (!filter.changeType || item.changeTypes.includes(filter.changeType)) && (filter.attention !== 'unread' || item.unread) && (!filter.search || `${item.latestEvent.resourceTitle} ${item.latestEvent.title} ${item.latestEvent.courseName}`.toLowerCase().includes(filter.search.toLowerCase())));
+    const courseCounts = [...new Set(items.map(item => item.courseId))].map(courseId => ({ courseId, total: items.filter(item => item.courseId === courseId).length, unreadTotal: items.filter(item => item.courseId === courseId && item.unread).length }));
+    return { items: items.slice(filter.offset ?? 0, (filter.offset ?? 0) + (filter.limit ?? 100)), total: items.length, unreadTotal: items.filter(item => item.unread).length, courseCounts };
+  });
+  appApi.snapshotInboxEventIds.mockImplementation(async filter => (await appApi.queryInbox(filter)).items.flatMap(item => item.eventIds));
+  appApi.queryDueResources.mockResolvedValue({ items: [], total: 0 });
   appApi.listHistoryEvents.mockResolvedValue([change()]);
   appApi.listHistoryScans.mockResolvedValue([]);
   appApi.unreadCount.mockResolvedValue(1);

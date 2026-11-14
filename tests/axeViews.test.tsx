@@ -73,7 +73,7 @@ vi.mock("../src/lib/api", () => ({
   },
 }));
 import TodayView from "../src/views/TodayView";
-import CalendarView from "../src/views/CalendarView";
+import CalendarView from "../src/views/ActivityCalendar";
 import LibraryView from "../src/views/LibraryView";
 import HistoryView from "../src/views/HistoryView";
 import SettingsView from "../src/views/SettingsView";

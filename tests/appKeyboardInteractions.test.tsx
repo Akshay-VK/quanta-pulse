@@ -37,7 +37,7 @@ describe("App keyboard shortcuts", () => {
   it("uses Mod+comma for Settings and leaves bare comma alone", async () => {
     app = await renderApp();
     await act(async () => { key(","); });
-    expect(document.querySelector("main h1")?.textContent).toBe("Today");
+    expect(document.querySelector("main h1")?.textContent).toBe("Inbox");
 
     await act(async () => { key(",", { code: "Comma", ctrlKey: true }); });
     expect(document.querySelector("main h1")?.textContent).toBe("Settings");
@@ -45,10 +45,10 @@ describe("App keyboard shortcuts", () => {
 
   it("does not navigate or open the palette while editing text, except Mod+K", async () => {
     app = await renderApp();
-    const search = document.querySelector<HTMLInputElement>('input[placeholder="Search titles…"]')!;
+    const search = document.querySelector<HTMLInputElement>('input[aria-label="Search Inbox"]')!;
     search.focus();
     await act(async () => { key("2", { ctrlKey: true }); });
-    expect(document.querySelector("main h1")?.textContent).toBe("Today");
+    expect(document.querySelector("main h1")?.textContent).toBe("Inbox");
     await act(async () => { key("/", { code: "Slash", shiftKey: true }); });
     expect(document.querySelector('[role="dialog"]')).toBeNull();
 
@@ -69,13 +69,13 @@ describe("App keyboard shortcuts", () => {
     for (const editor of editors) {
       editor.focus();
       await act(async () => { key("2", { ctrlKey: true }); });
-      expect(document.querySelector("main h1")?.textContent).toBe("Today");
+      expect(document.querySelector("main h1")?.textContent).toBe("Inbox");
     }
     editors.forEach((editor) => editor.remove());
 
     await act(async () => { key("2", { ctrlKey: true, isComposing: true }); });
     await act(async () => { key("2", { ctrlKey: true, altKey: true }); });
-    expect(document.querySelector("main h1")?.textContent).toBe("Today");
+    expect(document.querySelector("main h1")?.textContent).toBe("Inbox");
   });
 
   it("guards focusable descendants of contenteditable and ARIA editors", async () => {
@@ -86,7 +86,7 @@ describe("App keyboard shortcuts", () => {
       document.querySelector("main")!.append(editor);
       editor.querySelector<HTMLElement>("span")!.focus();
       await act(async () => { key("2", { ctrlKey: true }); });
-      expect(document.querySelector("main h1")?.textContent).toBe("Today");
+      expect(document.querySelector("main h1")?.textContent).toBe("Inbox");
       await act(async () => { key("k", { ctrlKey: true, isComposing: true }); });
       expect(document.querySelector('[role="dialog"]')).toBeNull();
       await act(async () => { key("k", { ctrlKey: true }); });
@@ -98,7 +98,7 @@ describe("App keyboard shortcuts", () => {
 
   it("sends slash to the current view search, or opens the palette when none exists", async () => {
     app = await renderApp();
-    const search = document.querySelector<HTMLInputElement>('input[placeholder="Search titles…"]')!;
+    const search = document.querySelector<HTMLInputElement>('input[aria-label="Search Inbox"]')!;
     await act(async () => { key("/", { code: "Slash", shiftKey: true }); });
     expect(document.activeElement).toBe(search);
     expect(document.querySelector('[role="dialog"]')).toBeNull();
@@ -113,14 +113,14 @@ describe("App keyboard shortcuts", () => {
     app = await renderApp();
     await act(async () => { key("2", { ctrlKey: true, isComposing: true }); });
     await act(async () => { key("2", { ctrlKey: true, altKey: true }); });
-    expect(document.querySelector("main h1")?.textContent).toBe("Today");
+    expect(document.querySelector("main h1")?.textContent).toBe("Inbox");
   });
 
   it("keeps a modal palette in charge of navigation and Escape", async () => {
     app = await renderApp();
     await act(async () => { document.querySelector<HTMLButtonElement>(".search-trigger")!.click(); });
     await act(async () => { key("5", { ctrlKey: true }); });
-    expect(document.querySelector("main h1")?.textContent).toBe("Today");
+    expect(document.querySelector("main h1")?.textContent).toBe("Inbox");
     expect(document.querySelector('[role="dialog"]')).toBeTruthy();
     await act(async () => { key("Escape"); });
     expect(document.querySelector('[role="dialog"]')).toBeNull();
@@ -130,7 +130,7 @@ describe("App keyboard shortcuts", () => {
   it("keeps Escape available from an editor to close the details surface", async () => {
     app = await renderApp();
     await click(button("Show details for Lecture 4"));
-    const search = document.querySelector<HTMLInputElement>('input[placeholder="Search titles…"]')!;
+    const search = document.querySelector<HTMLInputElement>('input[aria-label="Search Inbox"]')!;
     search.focus();
     await act(async () => { key("Escape"); });
     expect(document.querySelector(".peek")).toBeNull();

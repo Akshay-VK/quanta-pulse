@@ -19,7 +19,9 @@ import { Button } from "./components/ui/Button";
 import { Dialog } from "./components/ui/Dialog";
 import { TooltipProvider } from "./components/ui/Tooltip";
 import { Toaster, type ToastItem } from "./components/ui/Toast";
-import TodayView from "./views/TodayView";
+import InboxView from "./views/InboxView";
+import { useInbox, useDueInventory, queryResourceInventory } from "./hooks/useAttention";
+import { agendaEntries, resolveTimezone } from "./lib/agenda";
 import CalendarView from "./views/CalendarView";
 import LibraryView from "./views/LibraryView";
 import HistoryView from "./views/HistoryView";
@@ -38,9 +40,9 @@ import {
   type DetailSelection, type DetailSubject, type DetailsAdapter, type RestoreDetailFocus,
 } from "./lib/details";
 import { canPreview } from "./lib/preview";
-import { relativeLabel } from "./lib/format";
 import { registerCourseLabels, courseLabel } from "./lib/courseName";
 import type {
+  DueFilter,
   AuthStatus,
   ChangeEvent,
   Course,
@@ -95,11 +97,20 @@ function AppShell() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [courses, setCourses] = useState<Course[]>([]);
   const [resources, setResources] = useState<Resource[]>([]);
-  const [dashboardResources, setDashboardResources] = useState<Resource[]>([]);
-  const [dashboardEvents, setDashboardEvents] = useState<ChangeEvent[]>([]);
+
   const [historyEvents, setHistoryEvents] = useState<ChangeEvent[]>([]);
   const [scans, setScans] = useState<ScanRun[]>([]);
-  const [unread, setUnread] = useState(0);
+  const inbox = useInbox();
+  const [dueFilter, setDueFilter] = useState<DueFilter>({});
+  const defaultDueFilter = useMemo(() => ({}), []);
+  const due = useDueInventory(defaultDueFilter);
+  const agendaDue = useDueInventory(dueFilter);
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => { const timer = setInterval(() => setNow(new Date()), 30_000); return () => clearInterval(timer); }, []);
+  const timeZone = resolveTimezone(settings?.timezone);
+  const refreshCollections = useRef(async () => {});
+  refreshCollections.current = async () => { await Promise.all([inbox.refresh(), due.refresh(), agendaDue.refresh()]); };
+  const unread = inbox.global?.unreadTotal ?? 0;
   const [dbInfo, setDbInfo] = useState<DbInfo | null>(null);
 
   const [loading, setLoading] = useState(true);
@@ -247,32 +258,31 @@ function AppShell() {
     setToasts((current) => current.filter((toast) => toast.id !== id));
   }, []);
 
+  const refreshGeneration = useRef(0);
   const refresh = useCallback(async () => {
+    const generation = ++refreshGeneration.current;
     setLoading(true);
+    const collectionsRefresh = refreshCollections.current();
     try {
-      const [c, r, dr, de, he, s, u, info] = await Promise.all([
+      const [c, r, he, s, info] = await Promise.all([
         api.listCourses(),
-        api.listResources(),
-        api.listDashboardResources(),
-        api.listDashboardEvents(),
+        queryResourceInventory(),
         api.listHistoryEvents(),
         api.listHistoryScans(),
-        api.unreadCount(),
         api.dbInfo(),
       ]);
+      if (generation !== refreshGeneration.current) return;
       setCourses(c);
       setResources(r);
-      setDashboardResources(dr);
-      setDashboardEvents(de);
       setHistoryEvents(he);
       setScans(s);
-      setUnread(u);
       setDbInfo(info);
       setLoadError(null);
     } catch (err) {
-      setLoadError(String(err));
+      if (generation === refreshGeneration.current) setLoadError(String(err));
     } finally {
-      setLoading(false);
+      await collectionsRefresh;
+      if (generation === refreshGeneration.current) setLoading(false);
     }
   }, []);
 
@@ -353,32 +363,8 @@ function AppShell() {
     };
   }, [refresh, refreshStatus, navigate]);
 
-  const eventKinds = useMemo(() => {
-    const map = new Map<number, Set<string>>();
-    for (const e of dashboardEvents) {
-      if (e.resourceId == null) continue;
-      if (!map.has(e.resourceId)) map.set(e.resourceId, new Set());
-      map.get(e.resourceId)!.add(e.changeType);
-    }
-    return map;
-  }, [dashboardEvents]);
-
-  const unreadIds = useMemo(
-    () =>
-      new Set(
-        dashboardEvents.filter((e) => !e.read && e.resourceId != null).map((e) => e.resourceId as number),
-      ),
-    [dashboardEvents],
-  );
-
-  const unreadByCourse = useMemo(() => {
-    const map = new Map<number, number>();
-    for (const e of dashboardEvents) {
-      if (e.read || e.courseId == null || e.resourceId == null) continue;
-      map.set(e.courseId, (map.get(e.courseId) ?? 0) + 1);
-    }
-    return map;
-  }, [dashboardEvents]);
+  const eventKinds = useMemo(() => new Map((inbox.page?.items ?? []).flatMap(item => item.resourceId == null ? [] : [[item.resourceId, new Set(item.changeTypes)] as const])), [inbox.page]);
+  const unreadByCourse = useMemo(() => new Map((inbox.global?.courseCounts ?? []).flatMap(count => count.courseId == null ? [] : [[count.courseId, count.unreadTotal] as const])), [inbox.global]);
 
   const open = useCallback(
     async (url: string) => {
@@ -414,81 +400,25 @@ function AppShell() {
     return result;
   }, [refresh, refreshStatus]);
 
-  const clearDashboardActivity = useCallback(async () => {
-    try {
-      await api.clearDashboardActivity();
-      await refresh();
-      notify("Activity cleared.");
-    } catch (err) {
-      notify(String(err), true);
-      throw err;
-    }
-  }, [notify, refresh]);
-
   const clearHistoryActivity = useCallback(async () => {
     try {
-      await api.clearHistoryActivity();
-      setHistoryEvents([]);
-      setScans([]);
-      setUnread(0);
+      await api.deleteHistory(true);
       await refresh();
-      notify("History cleared.");
-    } catch (err) {
-      notify(String(err), true);
-      throw err;
-    }
+      notify("Recorded changes and scan history permanently deleted.");
+    } catch (err) { notify(String(err), true); throw err; }
   }, [notify, refresh]);
 
-  const markAllRead = useCallback(async () => {
-    const visible = dashboardEvents.filter((e) => !e.read).length;
-    setDashboardEvents((current) => current.map((e) => ({ ...e, read: true })));
-    setUnread((current) => Math.max(0, current - visible));
-    try {
-      await api.markAllRead();
-      await refresh();
-    } catch (err) {
-      await refresh();
-      notify(String(err), true);
-    }
-  }, [dashboardEvents, notify, refresh]);
-
-  const toggleResourceRead = useCallback(
-    async (resource: Resource) => {
-      const ids = dashboardEvents
-        .filter((e) => e.resourceId === resource.id && !e.read)
-        .map((e) => e.id);
-      if (ids.length === 0) return;
-      try {
-        await api.markRead(ids);
-        await refresh();
-      } catch (err) {
-        notify(String(err), true);
-      }
-    },
-    [dashboardEvents, notify, refresh],
-  );
-
   const markHistoryRead = useCallback(async () => {
-    const visibleUnread = historyEvents.filter((event) => !event.read).length;
-    setHistoryEvents((current) => current.map((event) => ({ ...event, read: true })));
-    setUnread((current) => Math.max(0, current - visibleUnread));
     try {
-      await api.markAllRead();
+      await api.setEventReadState(historyEvents.map(event => event.id), true);
       await refresh();
-      notify("History marked as read.");
-    } catch (err) {
-      await refresh();
-      notify(String(err), true);
-      throw err;
-    }
+    } catch (err) { notify(String(err), true); throw err; }
   }, [historyEvents, notify, refresh]);
 
   const handleLogout = useCallback(async () => {
     await api.logout();
     setAuth(await api.authStatus());
     setResources([]);
-    setDashboardResources([]);
-    setDashboardEvents([]);
     setHistoryEvents([]);
     setCourses([]);
   }, []);
@@ -603,6 +533,17 @@ function AppShell() {
     }
   }, []);
 
+  useEffect(() => {
+    const current = selectionRef.current;
+    if (current?.kind !== "resource" || current.owner !== "calendar" || agendaDue.pending || agendaDue.error) return;
+    const updated = agendaDue.items?.find(item => item.resource.externalResourceId === current.resource.externalResourceId)?.resource;
+    if (updated && updated !== current.resource) {
+      const next = { ...current, resource: updated };
+      selectionRef.current = next;
+      setSelection(next);
+    }
+  }, [agendaDue.items, agendaDue.pending, agendaDue.error]);
+
   const adapterCallbacks = useMemo(() => Object.fromEntries(NAV.map(({ id: owner }) => [owner, {
     selectResource: (resource: Resource, origin: HTMLElement, restore?: RestoreDetailFocus) => selectDetails(owner, { kind: "resource", resource }, origin, restore),
     selectChange: (change: ChangeEvent, origin: HTMLElement, resource?: Resource | null, restore?: RestoreDetailFocus) => selectDetails(owner, { kind: "change", change, resource }, origin, restore),
@@ -636,9 +577,15 @@ function AppShell() {
     const localStatus = peekResource.isExternal
       ? undefined
       : mirror?.statusOf(peekResource.id) ?? local;
-    return {
+    const presentation = {
       ...todayPresentation(peekResource, eventKinds.get(peekResource.id)),
       ...(selection?.kind === "change" ? changePresentation(selection.change) : {}),
+    };
+    const dueEntry = agendaEntries([{ resource: peekResource, dateKind: /^\d{4}-\d{2}-\d{2}$/.test(peekResource.dueAt ?? "") ? "date" : "instant", coursePaused: false }], now, timeZone)[0];
+    return {
+      ...presentation,
+      properties: [...presentation.properties.filter(property => property.label !== "Due"), { label: "Due", value: dueEntry ? `${peekResource.dueAt} (${dueEntry.label}${dueEntry.item.dateKind === "date" ? "; date only" : `; ${timeZone}`})` : "Due date unavailable" }],
+      note: [presentation.note, peekResource.availabilityStatus !== "available" ? "Source unavailable. Saved copies remain separate from source availability." : null].filter(Boolean).join(" ") || null,
       primaryAction:
         localStatus && isLocal(localStatus)
           ? { label: "Open local copy", onClick: () => void openLocal(peekResource.id) }
@@ -677,23 +624,17 @@ function AppShell() {
           onSelect: () =>
             void copyText(peekResource.sourcePageUrl ?? peekResource.url, "Link copied."),
         },
-        ...(selection?.kind === "resource" ? [{
-          id: "read",
-          label: unreadIds.has(peekResource.id) ? "Mark as read" : "Mark as unread",
-          onSelect: () => void toggleResourceRead(peekResource),
-        }] : []),
       ],
     };
-  }, [selection, peekResource, peekLocal, localLookup, mirror, eventKinds, unreadIds, open, openLocal, ensureLocal, copyLocalPath, copyText, notify, toggleResourceRead]);
+  }, [selection, peekResource, peekLocal, localLookup, mirror, eventKinds, now, timeZone, open, openLocal, ensureLocal, copyLocalPath, copyText, notify]);
 
   const paletteActions: PaletteAction[] = useMemo(
     () => [
       { id: "sync", label: "Sync now", shortcut: "Mod+Shift+S", onSelect: () => void handleSync() },
-      { id: "read", label: "Mark all read", onSelect: () => void markAllRead() },
       { id: "theme", label: resolved === "dark" ? "Switch to light theme" : "Switch to dark theme", shortcut: "Mod+Shift+L", onSelect: toggle },
       { id: "rail", label: "Toggle sidebar", shortcut: "Mod+\\", onSelect: toggleSidebar },
     ],
-    [handleSync, markAllRead, resolved, toggle, toggleSidebar],
+    [handleSync, resolved, toggle, toggleSidebar],
   );
 
   const hasKeyboardModal = () => drawerOpen || Boolean(
@@ -772,7 +713,7 @@ function AppShell() {
     );
   }
 
-  const currentLabel = NAV.find((item) => item.id === route.view)?.label ?? "Today";
+  const currentLabel = NAV.find((item) => item.id === route.view)?.label ?? "Inbox";
   const currentCourse =
     route.courseId == null ? null : courses.find((c) => c.id === route.courseId) ?? null;
 
@@ -851,31 +792,20 @@ function AppShell() {
           <main className="app-main" ref={mainRef}>
             <div className="page">
               {route.view === "today" && (
-                <TodayView
-                  resources={dashboardResources}
-                  hasStoredResources={resources.length > 0}
-                  courses={courses}
-                  eventKinds={eventKinds}
-                  unreadIds={unreadIds}
-                  lastSyncLabel={sync?.lastSuccessAt ? relativeLabel(sync.lastSuccessAt) : null}
-                  loading={loading}
-                  error={loadError}
-                  onRetry={() => void refresh()}
-                  selectedId={peekResource?.id ?? null}
-                  onSelect={detailsAdapters.today.selectResource}
-                  onSelectionRemoved={detailsAdapters.today.clear}
-                  onOpen={(url) => void open(url)}
-                  onOpenLocal={(resourceId) => void openLocal(resourceId)}
-                  onPreview={setPreviewResource}
-                  onToggleRead={(resource) => void toggleResourceRead(resource)}
-                  onMarkAllRead={() => void markAllRead()}
-                  onClearActivity={clearDashboardActivity}
-                  onSyncNow={() => void handleSync()}
-                  onOpenCourse={navigateToCourse}
+                <InboxView
+                  inbox={inbox} due={due} contextError={loadError} courses={courses} resources={resources}
+                  storedCount={dbInfo?.resourceCount ?? resources.length}
+                  baseline={dbInfo?.eventCount === 0 && scans.some(scan => scan.isBaseline && scan.status === "ok")}
+                  details={detailsAdapters.today} now={now} timeZone={timeZone}
+                  onOpen={(url) => void open(url)} onOpenLocal={(id) => void openLocal(id)}
+                  onOpenCourse={navigateToCourse} onAgenda={() => navigate("calendar")}
+                  onLibrary={() => navigate("library")} onSync={() => void handleSync()}
+                  onChanged={refresh}
                 />
               )}
               {route.view === "calendar" && (
                 <CalendarView
+                  due={agendaDue} dueFilter={dueFilter} setDueFilter={setDueFilter} now={now} timeZone={timeZone}
                   courses={courses}
                   resources={resources}
                   onOpen={(url) => void open(url)}

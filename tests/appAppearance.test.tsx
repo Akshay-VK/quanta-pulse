@@ -63,7 +63,7 @@ describe("Appearance in the real application", () => {
     await click(button("Close appearance"));
     expect(document.activeElement).toBe(button("Appearance"));
     await click(button("Settings"));
-    await click(button("Today"));
+    await click(button("Inbox"));
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
     expect(appApi.setSettings).not.toHaveBeenCalled();
   });
@@ -80,7 +80,7 @@ describe("Appearance in the real application", () => {
     await escape();
     expect(button("Sync interval").textContent).toContain("60 min");
     expect(appApi.setSettings).not.toHaveBeenCalled();
-    await click(button("Today"));
+    await click(button("Inbox"));
     expect(document.querySelector('[role="alertdialog"]')).toBeTruthy();
   });
   it("reacts to OS changes only in System and cleans subscriptions", async () => {

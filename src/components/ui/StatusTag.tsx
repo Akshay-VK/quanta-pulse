@@ -17,7 +17,7 @@ const DEFAULT_LABEL: Record<StatusKind, string> = {
   restored: "Restored",
 };
 
-/** A small status chip. Labels longer than 16 characters are truncated. */
+/** A small status chip. Labels retain their full accessible meaning. */
 export function StatusTag({
   kind,
   label,
@@ -25,7 +25,7 @@ export function StatusTag({
   kind: StatusKind;
   label?: string;
 }) {
-  const text = (label ?? DEFAULT_LABEL[kind]).slice(0, 16);
+  const text = label ?? DEFAULT_LABEL[kind];
   return (
     <span className={cx("tag", `tag-${kind}`)} data-status={kind}>
       {text}
