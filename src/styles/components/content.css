@@ -23,6 +23,7 @@
 
   .resource-row.selected {
     background: var(--selected);
+    box-shadow: inset 3px 0 0 var(--focus);
   }
 
   /* The whole selectable region: unread dot 7px, file icon 16px, title. Its
@@ -531,7 +532,7 @@
   /* Keyboard focus only: a click on a row focuses it too, and a hover-coloured
      block plus a ring on every click reads as a bug. */
   .tree-row:focus-visible {
-    box-shadow: inset 0 0 0 1px var(--accent);
+    box-shadow: inset 0 0 0 1px var(--focus);
   }
 
   .tree-toggle {

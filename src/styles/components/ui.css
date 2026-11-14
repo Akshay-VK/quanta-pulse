@@ -315,7 +315,7 @@
     width: 100%;
     height: var(--control-h);
     padding: 0 var(--sp-8) 0 30px;
-    border: 1px solid var(--line);
+    border: 1px solid var(--line-strong);
     border-radius: var(--radius-sm);
     background: var(--raised);
     color: var(--ink);
@@ -327,8 +327,8 @@
   }
 
   .search-field .search-field-input:focus-visible {
-    border-color: var(--accent);
-    outline: 2px solid var(--accent);
+    border-color: var(--focus);
+    outline: 2px solid var(--focus);
     outline-offset: 1px;
   }
 
@@ -355,7 +355,7 @@
     width: 100%;
     height: var(--control-h);
     padding: 0 var(--sp-3);
-    border: 1px solid var(--line);
+    border: 1px solid var(--line-strong);
     border-radius: var(--radius-sm);
     background: var(--raised);
     color: var(--ink);
@@ -371,8 +371,8 @@
   }
 
   .text-field:focus-visible {
-    border-color: var(--accent);
-    outline: 2px solid var(--accent);
+    border-color: var(--focus);
+    outline: 2px solid var(--focus);
     outline-offset: 1px;
   }
 
@@ -404,7 +404,7 @@
     width: 72px;
     height: var(--control-h);
     padding: 0 var(--sp-3);
-    border: 1px solid var(--line);
+    border: 1px solid var(--line-strong);
     border-radius: var(--radius-sm);
     background: var(--raised);
     color: var(--ink);
@@ -413,8 +413,8 @@
   }
 
   .time-field:focus-visible {
-    border-color: var(--accent);
-    outline: 2px solid var(--accent);
+    border-color: var(--focus);
+    outline: 2px solid var(--focus);
     outline-offset: 1px;
   }
 
@@ -429,7 +429,7 @@
     gap: var(--sp-2);
     height: var(--control-h);
     padding: 0 var(--sp-3);
-    border: 1px solid var(--line);
+    border: 1px solid var(--line-strong);
     border-radius: var(--radius-sm);
     background: var(--raised);
     font: 500 14px/20px var(--type-ui-strong);
@@ -491,7 +491,7 @@
 
   .select-item-indicator {
     opacity: 0;
-    color: var(--accent);
+    color: var(--link);
     display: inline-flex;
   }
 
@@ -782,5 +782,15 @@
     to {
       opacity: 1;
     }
+  }
+  /* Disabled controls remain readable without depending on faded text. */
+  .btn:disabled, .btn[aria-disabled="true"], .icon-button:disabled,
+  .toggle-item[data-disabled], .select-item[data-disabled], .switch[data-disabled] {
+    opacity: 1;
+    color: var(--disabled-fg);
+  }
+  .btn:disabled, .btn[aria-disabled="true"] {
+    background: var(--disabled-bg);
+    border: 1px dashed var(--line-strong);
   }
 }

@@ -1,33 +1,37 @@
-/* Design tokens (Calm). Every measurement and colour in the app comes from
- * here; component CSS never hardcodes a colour or a raw px. Theme tint tokens
- * are explicit hex values on purpose — the minimum webview is equivalent to
- * Safari 15.6, so CSS `color-mix()` is off the table. */
+/* Shared layout, typography, semantic state and fallback appearance tokens.
+ * Authored palette/accent pairs live in lib/appearance.ts and set these same
+ * custom properties before the app renders. Explicit colors remain compatible
+ * with Safari 15.6; no color-mix or runtime theme downloads. */
 
 @layer tokens, base, layout, components;
 
 @layer tokens {
   :root,
   :root[data-theme="light"] {
-    /* 4.1 Colour — approved Linear-inspired workspace palette */
-    --bg: #fafafc;
-    --side: #f2f2f6;
+    /* Soft Graphite fallback. Authored families resolve in lib/appearance.ts. */
+    --bg: #f7f8fa;
+    --side: #eff0f3;
     --raised: #ffffff;
-    --hover: #ebebf2;
-    --selected: #eae6ff;
-    --ink: #222326;
-    --muted: #5d5d6c;
-    --faint: #666676;
-    --line: #dcdce5;
-    --line-strong: #808090;
-    --accent: #5b45d6;
-    --link: #5033c5;
+    --floating: #ffffff;
+    --focus: #285bd4;
+    --disabled-fg: #565a64;
+    --disabled-bg: #eff0f3;
+    --hover: #e8eaee;
+    --selected: #e1eaff;
+    --ink: #24262b;
+    --muted: #565a64;
+    --faint: #606571;
+    --line: #d5d8df;
+    --line-strong: #727986;
+    --accent: #285bd4;
+    --link: #214fbb;
     --overlay: rgba(25, 24, 22, 0.4);
     --dot-ok: #3fa46a;
     --dot-warn: #d99628;
     --dot-danger: #d9473b;
 
     /* 6.1 Extra tokens */
-    --ink-hover: #222326;
+    --ink-hover: #24262b;
     --danger-solid: #c23a2f;
     --on-danger: #ffffff;
     --on-accent: #ffffff;
@@ -88,7 +92,7 @@
     --sidebar-w: 240px;
     --sidebar-rail: 56px;
     --topbar-h: 48px;
-    --row-h: 40px;
+    --row-h: 44px;
     --peek-w: 360px;
     --page-pad-x: 24px;
     --control-h-sm: 28px;
@@ -99,7 +103,7 @@
     --radius-xs: 4px;
     --radius-sm: 6px;
     --radius-md: 8px;
-    --radius-lg: 12px;
+    --radius-lg: 10px;
     --radius-pill: 999px;
     --shadow-pop: 0 4px 16px rgba(0, 0, 0, 0.08), 0 0 0 1px var(--line);
     --shadow-dialog: 0 16px 48px rgba(0, 0, 0, 0.16), 0 0 0 1px var(--line);
@@ -135,18 +139,22 @@
   }
 
   :root[data-theme="dark"] {
-    --bg: #09090b;
-    --side: #0d0d10;
-    --raised: #151519;
-    --hover: #1d1d23;
-    --selected: #262338;
-    --ink: #f4f5f8;
-    --muted: #b4b4c0;
-    --faint: #9b9ba8;
-    --line: #2a2a33;
-    --line-strong: #707080;
-    --accent: #6d5ef5;
-    --link: #b9b1ff;
+    --bg: #18191b;
+    --side: #151618;
+    --raised: #202125;
+    --floating: #25262b;
+    --focus: #a6bfff;
+    --disabled-fg: #a1a4ac;
+    --disabled-bg: #151618;
+    --hover: #2b2d33;
+    --selected: #2b3851;
+    --ink: #e6e7ea;
+    --muted: #a1a4ac;
+    --faint: #a1a4ac;
+    --line: #3c3f47;
+    --line-strong: #8a8f9c;
+    --accent: #86a9ff;
+    --link: #a6bfff;
     --overlay: rgba(0, 0, 0, 0.55);
     --dot-ok: #4fbe7e;
     --dot-warn: #e3a63c;
@@ -155,7 +163,7 @@
     --ink-hover: #ffffff;
     --danger-solid: #f0705f;
     --on-danger: #1a0f0e;
-    --on-accent: #ffffff;
+    --on-accent: #101d3b;
     --control-knob: #ffffff;
 
     --t-new-bg: #1d3a52;

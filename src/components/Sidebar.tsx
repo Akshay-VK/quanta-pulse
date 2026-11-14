@@ -50,6 +50,7 @@ function NavItem({
     <button
       type="button"
       className="nav-item"
+      aria-label={collapsed ? label : undefined}
       aria-current={active ? "page" : undefined}
       onClick={onClick}
     >

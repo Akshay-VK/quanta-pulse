@@ -89,8 +89,7 @@ function render(settings = SETTINGS) {
         onSave={vi.fn().mockResolvedValue(settings)}
         onLogout={vi.fn()}
         onRefresh={vi.fn()}
-        themeMode="system"
-        onThemeMode={vi.fn()}
+        appearance={<p>Appearance controls</p>}
       />,
     );
   });

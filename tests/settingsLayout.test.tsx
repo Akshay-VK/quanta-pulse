@@ -6,7 +6,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import type { ThemeMode } from "../src/lib/types";
 import type { Settings } from "../src/lib/types";
 import contentCssRaw from "../src/styles/components/content.css?raw";
 import screensCssRaw from "../src/styles/components/screens.css?raw";
@@ -147,8 +146,7 @@ async function render() {
         onSave={() => Promise.resolve()}
         onLogout={() => Promise.resolve()}
         onRefresh={() => {}}
-        themeMode={"light" as ThemeMode}
-        onThemeMode={() => {}}
+        appearance={<p>Appearance controls</p>}
       />,
     );
   });

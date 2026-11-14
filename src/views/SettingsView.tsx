@@ -1,13 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { api } from "../lib/api";
 import { cx } from "../lib/cx";
 import { formatBytes, formatCompact } from "../lib/format";
 import type { DetailProperty } from "../lib/details";
-import type { AuthStatus, CacheStats, DbInfo, Settings, ThemeMode, MirrorStats, TelegramStatus } from "../lib/types";
+import type { AuthStatus, CacheStats, DbInfo, Settings, MirrorStats, TelegramStatus } from "../lib/types";
 import PageHeader from "../components/PageHeader";
 import SettingRow from "../components/SettingRow";
-import { ToggleGroup } from "../components/ui/ToggleGroup";
 import { Switch } from "../components/ui/Switch";
 import { Select } from "../components/ui/Select";
 import { TextField } from "../components/ui/TextField";
@@ -25,8 +24,7 @@ interface Props {
   onSave: (settings: Settings) => Promise<void>;
   onLogout: () => Promise<void> | void;
   onRefresh: () => void | Promise<void>;
-  themeMode: ThemeMode;
-  onThemeMode: (mode: ThemeMode) => void;
+  appearance: ReactNode;
   onController?: (controller: SettingsNavigationController | null) => void;
 }
 
@@ -38,12 +36,6 @@ export interface SettingsNavigationController {
   save: () => Promise<{ saved: boolean; error: string | null }>;
   discard: () => void;
 }
-
-const THEME_OPTIONS = [
-  { value: "system", label: "System" },
-  { value: "light", label: "Light" },
-  { value: "dark", label: "Dark" },
-];
 
 const SYNC_INTERVALS = [
   { value: "15", label: "15 min" },
@@ -108,8 +100,7 @@ export default function SettingsView({
   onSave,
   onLogout,
   onRefresh,
-  themeMode,
-  onThemeMode,
+  appearance,
   onController,
 }: Props) {
   const [draft, setDraft] = useState<Settings>(settings);
@@ -455,16 +446,7 @@ export default function SettingsView({
       <div className="settings-content">
         <section id="appearance" className="settings-section">
           <h2 className="settings-group-title">Appearance</h2>
-          <SettingRow title="Theme" description="Choose a theme or follow your system appearance.">
-            <ToggleGroup
-              value={themeMode}
-              onValueChange={(v) => {
-                if (v === "system" || v === "light" || v === "dark") onThemeMode(v);
-              }}
-              options={THEME_OPTIONS as Array<{ value: string; label: string }>}
-              ariaLabel="Color theme"
-            />
-          </SettingRow>
+          {appearance}
         </section>
 
         <section id="account" className="settings-section">

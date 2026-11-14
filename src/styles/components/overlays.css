@@ -23,7 +23,7 @@
     top: 50%;
     transform: translate(-50%, -50%);
     z-index: var(--z-dialog);
-    background: var(--raised);
+    background: var(--floating);
     color: var(--ink);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-dialog);
@@ -175,7 +175,7 @@
   /* ------------------------------------------------------------------- menu */
 
   .menu {
-    background: var(--raised);
+    background: var(--floating);
     color: var(--ink);
     box-shadow: var(--shadow-pop);
     border-radius: var(--radius-md);
@@ -245,7 +245,7 @@
   /* ---------------------------------------------------------------- popover */
 
   .popover {
-    background: var(--raised);
+    background: var(--floating);
     color: var(--ink);
     box-shadow: var(--shadow-pop);
     border-radius: var(--radius-md);

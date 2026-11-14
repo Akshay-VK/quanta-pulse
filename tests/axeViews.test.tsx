@@ -13,7 +13,6 @@ import type {
   ScanRun,
   Settings,
 } from "../src/lib/types";
-import type { ThemeMode } from "../src/lib/types";
 import type { DetailsAdapter } from "../src/lib/details";
 
 vi.mock("../src/lib/api", () => ({
@@ -316,8 +315,7 @@ const SCENARIOS: Scenario[] = [
 
         onLogout={() => Promise.resolve()}
         onRefresh={noop}
-        themeMode={"light" as ThemeMode}
-        onThemeMode={noop}
+        appearance={<p>Appearance controls</p>}
       />
     ),
   },

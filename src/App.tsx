@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { Moon, Sun } from "lucide-react";
+import { AppearancePopover, AppearanceControls } from "./components/Appearance";
 import Sidebar from "./components/Sidebar";
 import TopBar from "./components/TopBar";
 import PeekPanel, { type PeekDetails } from "./components/PeekPanel";
@@ -75,7 +76,8 @@ export default function App() {
 }
 
 function AppShell() {
-  const { themeMode, setThemeMode, resolved, toggle } = useTheme();
+  const appearance = useTheme();
+  const { resolved, toggle } = appearance;
 
   const [auth, setAuth] = useState<AuthStatus | null>(null);
   const [booted, setBooted] = useState(false);
@@ -687,10 +689,10 @@ function AppShell() {
     () => [
       { id: "sync", label: "Sync now", shortcut: "Mod+Shift+S", onSelect: () => void handleSync() },
       { id: "read", label: "Mark all read", onSelect: () => void markAllRead() },
-      { id: "theme", label: "Switch theme", shortcut: "Mod+Shift+L", onSelect: toggle },
+      { id: "theme", label: resolved === "dark" ? "Switch to light theme" : "Switch to dark theme", shortcut: "Mod+Shift+L", onSelect: toggle },
       { id: "rail", label: "Toggle sidebar", shortcut: "Mod+\\", onSelect: toggleSidebar },
     ],
-    [handleSync, markAllRead, toggle, toggleSidebar],
+    [handleSync, markAllRead, resolved, toggle, toggleSidebar],
   );
 
   const hasKeyboardModal = () => drawerOpen || Boolean(
@@ -822,12 +824,15 @@ function AppShell() {
             items={breadcrumb.items}
             current={breadcrumb.current}
             actions={
-              <IconButton
-                label={resolved === "dark" ? "Switch to light theme" : "Switch to dark theme"}
-                onClick={toggle}
-              >
-                {resolved === "dark" ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
-              </IconButton>
+              <>
+                <AppearancePopover appearance={appearance} />
+                <IconButton
+                  label={resolved === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+                  onClick={toggle}
+                >
+                  {resolved === "dark" ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
+                </IconButton>
+              </>
             }
           />
 
@@ -922,8 +927,7 @@ function AppShell() {
                   onSave={saveSettings}
                   onLogout={handleLogout}
                   onRefresh={() => void refresh()}
-                  themeMode={themeMode}
-                  onThemeMode={setThemeMode}
+                  appearance={<AppearanceControls appearance={appearance} />}
                   onController={registerSettingsController}
                 />
               )}
