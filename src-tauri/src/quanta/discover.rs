@@ -180,7 +180,10 @@ pub async fn discover_all(
             let _permit = sem.acquire().await;
             let url = match Url::parse(&course.url) {
                 Ok(u) => u,
-                Err(e) => return Err((course.external_id, format!("bad course url: {e}"))),
+                Err(e) => return Err((
+                    course.external_id,
+                    QuantaError::Client(format!("bad course url: {e}")),
+                )),
             };
             let mut pending = vec![(url, Vec::<String>::new())];
             let mut visited = HashSet::new();
@@ -194,7 +197,7 @@ pub async fn discover_all(
                 let fetched = match client.fetch(&page_url).await {
                     Ok(fetched) => fetched,
                     Err(e) if matches!(e, QuantaError::AuthExpired) => {
-                        return Err((course.external_id, format!("{}: {e}", page_url.path())));
+                        return Err((course.external_id, e));
                     }
                     Err(e) => {
                         page_errors.push(format!("{}: {e}", page_url.path()));
@@ -289,6 +292,9 @@ pub async fn discover_all(
             }
             Ok(Err((id, err))) => {
                 result.courses_failed += 1;
+                if matches!(err, QuantaError::AuthExpired) {
+                    result.auth_expired = true;
+                }
                 result.errors.push(format!("course {id}: {err}"));
             }
             Err(join_err) => {
@@ -300,6 +306,12 @@ pub async fn discover_all(
 
     if cancel.load(Ordering::Relaxed) {
         result.cancelled = true;
+    }
+
+    // A partial inventory from an expired session is never safe to reconcile.
+    // In particular, do not issue further detail requests with the stale cookie.
+    if result.auth_expired {
+        return result;
     }
 
     // ---- Phase 3: details (announcements, files, folders) ---------------
@@ -475,8 +487,10 @@ async fn fetch_courses(
     if courses.is_empty() {
         // Some themes only list courses on the dedicated "My courses" page.
         if let Ok(url) = origin.join("/my/courses.php") {
-            if let Ok(page) = client.fetch(&url).await {
-                courses = parse::parse_courses(&page.body, origin);
+            match client.fetch(&url).await {
+                Ok(page) => courses = parse::parse_courses(&page.body, origin),
+                Err(QuantaError::AuthExpired) => return Err(QuantaError::AuthExpired),
+                Err(_) => {}
             }
         }
     }
@@ -491,6 +505,10 @@ pub async fn discover(
 ) -> Discovery {
     discover_all(client, limits, cancel, noop_progress()).await
 }
+
+#[cfg(test)]
+#[path = "../../../tests/session_expiry.rs"]
+mod expiry_tests;
 
 #[cfg(test)]
 mod tests {

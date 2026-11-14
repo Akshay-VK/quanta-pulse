@@ -135,12 +135,17 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
     if discovery.auth_expired {
         let state = app.state::<AppState>();
         state.sync.set_auth_state("expired");
+        *state.sync.last_error.lock().unwrap() = Some(
+            "Quanta session expired. Sign in again to resume monitoring.".into(),
+        );
         {
             let conn = state.conn();
             let now = db::now_rfc3339();
             let _ = db::finish_scan(&conn, scan_id, "auth_expired", 0, 0, 0, 0, 0, 0, Some("Session expired"), false, &now);
         }
-        notify::notify_auth_expired(app);
+        if state.sync.note_auth_expired() {
+            notify::notify_auth_expired(app);
+        }
         emit_status(app);
         return outcome;
     }
@@ -170,9 +175,11 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
         return outcome;
     }
 
-    // Discovery completed without an authentication redirect, so the current
-    // session has been verified. Do not clear an expired state at scan start.
-    app.state::<AppState>().sync.set_auth_state("authenticated");
+    // Only successful discovery can clear expiry and re-arm its notification.
+    // A failed manual scan (e.g. offline) does not verify the stale session.
+    if !discovery.cancelled && (discovery.errors.is_empty() || discovery.courses_scanned > 0) {
+        app.state::<AppState>().sync.set_auth_state("authenticated");
+    }
 
     let now = db::now_rfc3339();
     let mut new_count = 0i64;

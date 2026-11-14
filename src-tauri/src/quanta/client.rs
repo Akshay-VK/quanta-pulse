@@ -139,6 +139,33 @@ pub struct QuantaClient {
 }
 
 impl QuantaClient {
+    /// Local HTTP fixture client; production always uses the official origin.
+    #[cfg(test)]
+    pub(crate) fn fixture_client(address: std::net::SocketAddr) -> Self {
+        let mut client = Self::from_session(
+            SessionInfo {
+                email: "fixture".into(),
+                method: "password".into(),
+                user_id: None,
+                fullname: None,
+                session_cookie: "fixture".into(),
+                sesskey: None,
+                acquired_at: String::new(),
+            },
+            5,
+        ).unwrap();
+        client.origin = Url::parse(&format!(
+            "http://quanta.bits-pilani.ac.in:{}", address.port(),
+        )).unwrap();
+        client.http = Client::builder()
+            .no_proxy()
+            .resolve("quanta.bits-pilani.ac.in", address)
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap();
+        client
+    }
+
     /// Build a client seeded with an existing session cookie.
     pub fn from_session(session: SessionInfo, timeout_secs: u64) -> Result<Self, QuantaError> {
         let origin = Url::parse(QUANTA_ORIGIN).expect("valid origin");

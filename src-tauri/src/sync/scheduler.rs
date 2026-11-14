@@ -54,9 +54,8 @@ async fn run_loop(app: AppHandle) {
                 // Do not hammer an expired session; wait for re-authentication.
                 consecutive_errors = 0;
                 tracing::info!("scheduler paused: authentication required");
-                if sleep_secs(&app, 300).await {
-                    break;
-                }
+                // The readiness gate below parks the worker until verified
+                // sign-in. No fixed retry delay should postpone recovery.
                 continue;
             }
 
@@ -89,7 +88,7 @@ fn shutdown(app: &AppHandle) -> bool {
 
 fn client_ready(app: &AppHandle) -> bool {
     let state = app.state::<AppState>();
-    !state.sync.auth_resetting.load(Ordering::SeqCst) && state.client().is_some()
+    state.sync.can_schedule(state.client().is_some())
 }
 
 /// True when the stored `next_scan_at` is absent or in the past.
@@ -111,7 +110,7 @@ async fn wait_until_due(app: &AppHandle) -> bool {
         if shutdown(app) {
             return true;
         }
-        if due(app) {
+        if client_ready(app) && due(app) {
             return false;
         }
         if sleep_secs(app, TICK.as_secs()).await {

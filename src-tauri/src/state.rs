@@ -39,6 +39,9 @@ pub struct SyncControl {
     pub last_error: Mutex<Option<String>>,
     /// "unauthenticated" | "authenticated" | "expired"
     pub auth_state: Mutex<String>,
+    /// Set once the user has been told about the current expiry episode, so a
+    /// scan that keeps hitting the login page does not re-notify every interval.
+    pub auth_notified: AtomicBool,
 }
 
 impl SyncControl {
@@ -51,6 +54,25 @@ impl SyncControl {
     }
     pub fn set_auth_state(&self, s: &str) {
         *self.auth_state.lock().unwrap() = s.to_string();
+        if s == "authenticated" {
+            self.auth_notified.store(false, Ordering::SeqCst);
+        }
+    }
+
+    /// Claim the single session-expired notification for this episode. The first
+    /// call after (re)authentication returns true; later calls return false until
+    /// [`Self::set_auth_state`] sees "authenticated" again.
+    pub fn note_auth_expired(&self) -> bool {
+        !self.auth_notified.swap(true, Ordering::SeqCst)
+    }
+
+    /// Whether the scheduler can use the current client. An expired client is
+    /// retained for explicit session checks, but must never trigger retries.
+    pub fn can_schedule(&self, has_client: bool) -> bool {
+        !self.auth_resetting.load(Ordering::SeqCst)
+            && !self.is_running()
+            && self.auth_state() == "authenticated"
+            && has_client
     }
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::SeqCst)
@@ -206,5 +228,60 @@ impl AppState {
             last_error: self.sync.last_error.lock().unwrap().clone(),
             auth_state: self.sync.auth_state(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SyncControl;
+
+    #[test]
+    fn auth_expiry_notifies_once_per_episode() {
+        let sync = SyncControl::default();
+        assert!(sync.note_auth_expired());
+        assert!(!sync.note_auth_expired());
+        sync.set_auth_state("expired");
+        assert!(!sync.note_auth_expired());
+        sync.set_auth_state("authenticated");
+        assert!(sync.note_auth_expired());
+    }
+
+    #[test]
+    fn scheduled_scans_pause_until_verified_login() {
+        let sync = SyncControl::default();
+        assert!(!sync.can_schedule(false));
+        sync.set_auth_state("authenticated");
+        assert!(sync.can_schedule(true));
+        sync.running.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(!sync.can_schedule(true));
+        sync.running.store(false, std::sync::atomic::Ordering::SeqCst);
+        assert!(!sync.can_schedule(false));
+        sync.set_auth_state("expired");
+        for _ in 0..100 {
+            assert!(!sync.can_schedule(true));
+        }
+        sync.set_auth_state("authenticated");
+        assert!(sync.can_schedule(true));
+        sync.auth_resetting.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(!sync.can_schedule(true));
+        sync.auth_resetting.store(false, std::sync::atomic::Ordering::SeqCst);
+        sync.set_auth_state("unauthenticated");
+        assert!(!sync.can_schedule(false));
+    }
+
+    #[test]
+    fn concurrent_expiry_reports_claim_only_one_notification() {
+        let sync = std::sync::Arc::new(SyncControl::default());
+        let claims: Vec<_> = (0..16)
+            .map(|_| {
+                let sync = sync.clone();
+                std::thread::spawn(move || sync.note_auth_expired())
+            })
+            .collect();
+        let notifications = claims.into_iter()
+            .map(|claim| claim.join().unwrap())
+            .filter(|claimed| *claimed)
+            .count();
+        assert_eq!(notifications, 1);
     }
 }
