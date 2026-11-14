@@ -36,3 +36,7 @@ The assembled application tree at `8170285` contains the current main workspace 
 The Linux full-application Cargo attempt could not complete because host DBus/GTK development libraries are absent; the installed Windows Rust toolchain supplied the successful native-target checks above. Windows emitted an incremental-cache access note but both native commands exited successfully. Frontend dependencies were restored from the existing lockfile to make the Linux test/build environment usable; no dependency version change is included.
 
 The existing pitch source, final PDF, source archive, and screenshot assets are included in the baseline. Compiler intermediates and review renders remain locally available under their ignored build directory. No installer, packaged app, signed-in Quanta flow, visual preview, or new UI implementation was run as part of this specification/integration task.
+
+## Superseding implementation authorization
+
+The subsequent user request explicitly authorizes implementation of the approved overhaul, beginning with the appearance vertical slice. This supersedes the spec-publication-only authorization above; see [the implementation record](2026-11-14-appearance-implementation.md) for code commits, decisions, verification and remaining acceptance. Historical publication claims remain unchanged.
