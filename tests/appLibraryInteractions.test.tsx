@@ -66,7 +66,7 @@ describe("App Library interactions", () => {
     expect(document.querySelector(".peek")).toBeNull();
     expect(document.activeElement).toBe(document.querySelector("main h1"));
     await click(button("Show details for Course activity"));
-    await click(button("Contents"));
+    await click(button("Materials"));
     expect(document.querySelector(".peek")).toBeNull();
     expect(document.activeElement).toBe(document.querySelector("main h1"));
   });

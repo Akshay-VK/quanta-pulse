@@ -5,12 +5,11 @@
 // Scans are the persisted `scan_runs` table, shown as a data table.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Copy, ExternalLink, MoreHorizontal } from "lucide-react";
+import { Copy, MoreHorizontal } from "lucide-react";
 import type { ChangeEvent, Course, Resource, ScanRun } from "../lib/types";
 import { dayKeyOf, eventKindMeta, groupEventsByDay, todayKey } from "../lib/events";
 import { formatCompact, formatTimeOfDay } from "../lib/format";
 import { courseTitle } from "../lib/courseName";
-import { eventLinks, primaryUrl } from "../lib/open";
 import { scanStatusMeta, type DetailsAdapter } from "../lib/details";
 import PageHeader from "../components/PageHeader";
 import ResourceRow from "../components/ResourceRow";
@@ -94,8 +93,8 @@ export default function HistoryView({
   courses,
   events,
   scans,
-  onOpen,
-  onOpenLocal,
+  onOpen: _onOpen,
+  onOpenLocal: _onOpenLocal,
   onMarkAllRead,
   onClearAll,
   onSyncNow,
@@ -331,10 +330,11 @@ export default function HistoryView({
                 {group.items.map((e) => {
                   const meta = eventKindMeta(e.changeType);
                   const course = e.courseId != null ? courseById.get(e.courseId) : undefined;
-                  const primary = primaryUrl(eventLinks(e));
                   const currentResource = resources.find((resource) => resource.id === e.resourceId);
                   return (
                     <ResourceRow
+                      resource={currentResource ?? null}
+                      recorded={e}
                       key={e.id}
                       title={eventTitle(e)}
                       type={e.resourceType}
@@ -351,45 +351,11 @@ export default function HistoryView({
                           ? () => onOpenCourse(e.courseId as number)
                           : undefined
                       }
-                      openLabel={
-                        e.changeType === "deadline"
-                          ? "Open course"
-                          : e.changeType === "announcement"
-                            ? "Read post"
-                            : "Open file"
-                      }
-                      showOpen={Boolean(primary)}
                       local={
-                        currentResource ? mirror?.statusOf(currentResource.id) : undefined
-                      }
-                      onOpenLocal={
-                        currentResource && onOpenLocal
-                          ? () => onOpenLocal(currentResource.id)
-                          : undefined
+                        currentResource && !currentResource.isExternal ? mirror?.statusOf(currentResource.id) : undefined
                       }
                       onSelect={(origin) => details.selectChange(e, origin, currentResource ?? null)}
-                      onOpen={primary ? () => onOpen(primary) : undefined}
                       menu={[
-                        ...(e.resourceUrl
-                          ? [
-                              {
-                                id: "open-file",
-                                label: "Open file",
-                                icon: <ExternalLink aria-hidden="true" />,
-                                onSelect: () => onOpen(e.resourceUrl as string),
-                              },
-                            ]
-                          : []),
-                        ...(e.sourcePageUrl
-                          ? [
-                              {
-                                id: "open-page",
-                                label: "Open Quanta page",
-                                icon: <ExternalLink aria-hidden="true" />,
-                                onSelect: () => onOpen(e.sourcePageUrl as string),
-                              },
-                            ]
-                          : []),
                         {
                           id: "copy",
                           label: "Copy link",

@@ -32,8 +32,8 @@ import { courseTitle } from "../lib/courseName";
 import type { ChangeEvent, Course, Digest, Resource } from "../lib/types";
 import type { DetailsAdapter } from "../lib/details";
 import PageHeader from "../components/PageHeader";
-import MaterialResourceRow from "../components/MaterialResourceRow";
-import type { MaterialRowHandlers } from "../components/MaterialResourceRow";
+import ResourceRow from "../components/ResourceRow";
+import type { MaterialRowHandlers } from "../lib/materialHandlers";
 import StatBlock from "../components/StatBlock";
 import { Banner } from "../components/ui/Banner";
 import { Button } from "../components/ui/Button";
@@ -107,10 +107,6 @@ export default function CalendarView({
   timeZone = resolveTimezone(),
   courses,
   resources = [],
-  onOpen,
-  onOpenLocal,
-  onDownloadOpen,
-  onPreview,
   onOpenScan,
   onOpenCourse,
   details,
@@ -435,7 +431,7 @@ export default function CalendarView({
                   const course = e.courseId != null ? courseById.get(e.courseId) : undefined;
                   const resource = e.resourceId == null ? null : resourceById.get(e.resourceId) ?? null;
                   return (
-                    <MaterialResourceRow
+                    <ResourceRow
                       key={e.id}
                       title={e.resourceTitle ?? e.title}
                       type={e.resourceType}
@@ -452,16 +448,16 @@ export default function CalendarView({
                           ? () => onOpenCourse(e.courseId as number)
                           : undefined
                       }
-                      resource={resource} recordedUrl={e.resourceUrl ?? e.sourcePageUrl}
+                      resource={resource} recorded={e}
                       density="compact"
-                      onOpenLocal={onOpenLocal} onDownloadOpen={onDownloadOpen} onPreview={onPreview}
+                      
                       onSelect={(origin) =>
                         details.selectChange(e, origin, e.resourceId == null ? null : resourceById.get(e.resourceId) ?? null, () => {
                           panelRef.current?.focus();
                           return true;
                         })
                       }
-                      onOpen={onOpen}
+                      
                       menu={[
                         {
                           id: "copy",

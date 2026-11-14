@@ -64,7 +64,11 @@ export function SearchField({
         placeholder={placeholder}
         aria-label={label}
         autoFocus={autoFocus}
-        onChange={(event) => setText(event.target.value)}
+        onChange={(event) => {
+          const next = event.target.value;
+          setText(next);
+          if (debounceMs === 0) { emitted.current = next; onChange(next); }
+        }}
         onKeyDown={(event) => {
           if (event.key === "Escape" && text) {
             event.stopPropagation();

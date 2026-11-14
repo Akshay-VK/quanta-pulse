@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import PageHeader from '../components/PageHeader';
-import MaterialResourceRow from '../components/MaterialResourceRow';
+import ResourceRow from '../components/ResourceRow';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { Button } from '../components/ui/Button';
 import { FilterTabs } from '../components/ui/Tabs';
@@ -16,7 +16,7 @@ import { courseTitle } from '../lib/courseName';
 import type { DetailsAdapter } from '../lib/details';
 import type { InboxState, DueState } from '../hooks/useAttention';
 import type { Course, InboxFilter, InboxItem, Resource } from '../lib/types';
-import type { MaterialRowHandlers } from '../components/MaterialResourceRow';
+import type { MaterialRowHandlers } from '../lib/materialHandlers';
 
 export const CHANGE_OPTIONS = [
   { value: 'all', label: 'All types' }, { value: 'new', label: 'New files' },
@@ -28,7 +28,7 @@ export function inboxScope(filter: InboxFilter): string {
   return [filter.attention === 'unread' ? 'unread items' : 'all items', filter.courseId ? `course ${courseTitle(filter.courseId)}` : 'all courses', filter.changeType ? CHANGE_OPTIONS.find(o => o.value === filter.changeType)?.label : 'all types', filter.search ? `search “${filter.search}”` : ''].filter(Boolean).join(', ');
 }
 
-export default function InboxView({ inbox, due, courses, resources, storedCount, baseline, contextError, details, now, timeZone, onOpen, onOpenLocal, onDownloadOpen, onPreview, onOpenCourse, onAgenda, onLibrary, onSync, onChanged }: MaterialRowHandlers & {
+export default function InboxView({ inbox, due, courses, resources, storedCount, baseline, contextError, details, now, timeZone, onOpenCourse, onAgenda, onLibrary, onSync, onChanged }: MaterialRowHandlers & {
   inbox: InboxState; due: DueState; courses: Course[]; resources: Resource[]; storedCount: number; baseline: boolean; contextError: string | null;
   details: DetailsAdapter; now: Date; timeZone: string;
   onOpen: (url: string) => void; onOpenLocal: (id: number) => void; onOpenCourse: (id: number) => void;
@@ -98,14 +98,13 @@ export default function InboxView({ inbox, due, courses, resources, storedCount,
       const resource = resources.find(r => r.id === item.resourceId);
       const title = event.resourceTitle ?? event.title;
       return <div className="attention-item" key={item.key}>
-        <MaterialResourceRow title={title} type={event.resourceType} courseId={item.courseId} courseName={event.courseName} courseCode={courseTitle(item.courseId, event.courseName)}
+        <ResourceRow title={title} type={event.resourceType} courseId={item.courseId} courseName={event.courseName} courseCode={courseTitle(item.courseId, event.courseName)}
           unread={item.unread} selected={selected?.kind === 'change' && item.eventIds.includes(selected.change.id)} unavailable={resource ? resource.availabilityStatus !== 'available' : event.changeType === 'unavailable'}
           status={resource?.availabilityStatus !== undefined && resource.availabilityStatus !== 'available' ? { kind: 'unavailable', label: 'Source unavailable' } : { kind: event.changeType === 'announcement' ? 'note' : event.changeType === 'new' ? 'new' : 'updated', label: item.eventIds.length > 1 ? `${item.eventIds.length} changes` : eventKindMeta(event.changeType).label }}
           timeLabel={new Intl.DateTimeFormat('en-GB', { timeZone, day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' }).format(new Date(event.detectedAt))}
-          resource={resource ?? null} recordedUrl={event.resourceUrl ?? event.sourcePageUrl}
-          onDownloadOpen={onDownloadOpen} onPreview={onPreview}
+          resource={resource ?? null} recorded={event}
           onSelect={origin => details.selectChange(event, origin, resource ?? null)}
-          onOpen={onOpen} onOpenLocal={onOpenLocal}
+           
           onCourse={item.courseId ? () => onOpenCourse(item.courseId!) : undefined}
           menu={[{ id: 'read', label: item.unread ? 'Mark as read' : 'Mark as unread', disabled: busy || capture !== null, onSelect: () => void toggle(item) }]}
         />

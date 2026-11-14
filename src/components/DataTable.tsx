@@ -1,3 +1,4 @@
+import { useSessionScroll } from "../hooks/useSessionViews";
 import { useRef, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ChevronDown, ChevronUp } from "lucide-react";
@@ -32,6 +33,7 @@ interface DataTableProps<T> {
   virtual?: boolean;
   /** Viewport height of the scroll box when virtual. */
   height?: number;
+  sessionKey?: string;
 }
 
 const ROW_H = 40;
@@ -52,6 +54,7 @@ export default function DataTable<T>({
   ariaLabel,
   virtual = false,
   height = 560,
+  sessionKey,
 }: DataTableProps<T>) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const active = virtual && rows.length > VIRTUAL_THRESHOLD;
@@ -63,6 +66,8 @@ export default function DataTable<T>({
   });
 
   const items = active ? virtualizer.getVirtualItems() : [];
+  // Wait for measured virtual rows to give the scroll box its full height.
+  useSessionScroll(sessionKey ?? "table", scrollRef, Boolean(sessionKey) && rows.length > 0 && (!active || items.length > 0));
   const padTop = items.length > 0 ? items[0].start : 0;
   const padBottom =
     items.length > 0 ? virtualizer.getTotalSize() - items[items.length - 1].end : 0;
@@ -128,7 +133,10 @@ export default function DataTable<T>({
             <tr
               key={getKey(row)}
               className={cx(selectedKey === getKey(row) && "selected")}
-              onClick={onRowClick ? () => onRowClick(row) : undefined}
+              onClick={onRowClick ? (event) => {
+                if ((event.target as HTMLElement).closest("button, a, input, select, textarea, [role=menuitem]")) return;
+                onRowClick(row);
+              } : undefined}
             >
               {columns.map((column) => (
                 <td

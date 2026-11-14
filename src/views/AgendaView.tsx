@@ -4,9 +4,9 @@ import type { DueState } from '../hooks/useAttention';
 import type { DetailsAdapter } from '../lib/details';
 import type { Course } from '../lib/types';
 import { courseTitle } from '../lib/courseName';
-import type { MaterialRowHandlers } from '../components/MaterialResourceRow';
+import type { MaterialRowHandlers } from '../lib/materialHandlers';
 import PageHeader from '../components/PageHeader';
-import MaterialResourceRow from '../components/MaterialResourceRow';
+import ResourceRow from '../components/ResourceRow';
 import { Button } from '../components/ui/Button';
 import { Select } from '../components/ui/Select';
 import { SearchField } from '../components/ui/SearchField';
@@ -15,7 +15,7 @@ import { EmptyState } from '../components/ui/EmptyState';
 import { Skeleton } from '../components/ui/Skeleton';
 import type { DueFilter } from '../lib/types';
 
-export default function AgendaView({ due, filter, setFilter, courses, now, timeZone, details, onOpen, onOpenLocal, onDownloadOpen, onPreview, onOpenCourse }: MaterialRowHandlers & {
+export default function AgendaView({ due, filter, setFilter, courses, now, timeZone, details, onOpenCourse }: MaterialRowHandlers & {
   due: DueState; filter: DueFilter; setFilter: (filter: DueFilter) => void; courses: Course[];
   now: Date; timeZone: string; details: DetailsAdapter; onOpen: (url: string) => void; onOpenLocal?: (id: number) => void; onOpenCourse?: (id: number) => void;
 }) {
@@ -46,12 +46,12 @@ export default function AgendaView({ due, filter, setFilter, courses, now, timeZ
         <div className="attention-section-title">{past ? <button className="agenda-collapse" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{expanded ? '▾' : '▸'} {group} <span className="result-count">{items.length}</span></button> : <h2>{group} <span className="result-count">{items.length}</span></h2>}</div>
         {(!past || expanded) && <>{items.slice(0, limit).map(entry => {
           const resource = entry.item.resource;
-          return <div key={resource.externalResourceId} className="agenda-entry"><MaterialResourceRow title={resource.title} type={resource.resourceType} courseId={resource.courseId} courseCode={courseTitle(resource.courseId, resource.courseName)} courseName={resource.courseName}
+          return <div key={resource.externalResourceId} className="agenda-entry"><ResourceRow title={resource.title} type={resource.resourceType} courseId={resource.courseId} courseCode={courseTitle(resource.courseId, resource.courseName)} courseName={resource.courseName}
             unread={false} selected={selected?.kind === 'resource' && selected.resource.externalResourceId === resource.externalResourceId}
             unavailable={resource.availabilityStatus !== 'available'} status={resource.availabilityStatus !== 'available' ? { kind: 'unavailable', label: 'Source unavailable' } : entry.item.coursePaused ? { kind: 'note', label: 'Course paused' } : null}
             timeLabel={`${entry.label}${entry.item.dateKind === 'date' ? ' (date only)' : ''}`}
-            resource={resource} onDownloadOpen={onDownloadOpen} onPreview={onPreview} onSelect={origin => details.selectResource(resource, origin)}
-            onOpen={onOpen} onOpenLocal={onOpenLocal}
+            resource={resource} onSelect={origin => details.selectResource(resource, origin)}
+             
             onCourse={resource.courseId && onOpenCourse ? () => onOpenCourse(resource.courseId!) : undefined}
             menu={[]} />
           </div>;

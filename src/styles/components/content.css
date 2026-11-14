@@ -7,7 +7,7 @@
   .resource-row {
     display: grid;
     /* title | metadata | local indicator | time | actions */
-    grid-template-columns: minmax(0, 1fr) 240px 24px 104px 80px;
+    grid-template-columns: minmax(0, 1fr) 240px 24px 104px 92px;
     align-items: center;
     column-gap: var(--sp-3);
     min-width: 0;
@@ -69,14 +69,20 @@
     white-space: nowrap;
   }
 
+  .material-buttons {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+  }
+
   .row-actions {
     grid-column: 5;
-    width: 80px;
+    width: 92px;
     display: flex;
     align-items: center;
     justify-content: flex-end;
     gap: 2px;
-    opacity: 0;
+    opacity: 1;
   }
 
   /* Policy destinations, including overflow, remain discoverable without hover. */
@@ -346,7 +352,7 @@
   }
 
   .data-table .row-actions {
-    opacity: 0;
+    opacity: 1;
   }
 
   .data-table tr:hover .row-actions,
@@ -632,7 +638,7 @@
     flex: 0 0 auto;
     display: inline-flex;
     color: var(--link);
-    opacity: 0;
+    opacity: 1;
   }
 
   .tree-row:hover .tree-external,

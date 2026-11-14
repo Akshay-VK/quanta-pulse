@@ -2,23 +2,37 @@ import type { Resource } from "./types";
 import { formatSectionPath } from "./sectionPath";
 
 /** The shared destinations available for one material identity and its current capabilities. */
-export type MaterialActionId = "preview" | "open-saved" | "download-open" | "open-quanta";
+export type MaterialActionId = "preview" | "open-saved" | "download-open" | "open-quanta" | "open-recorded-file";
 export interface MaterialAction { id: MaterialActionId; label: string }
 export type MaterialLocalState = "saved" | "missing" | "unavailable" | "pending" | "unsupported";
+
+/** Only stored HTTP(S) destinations may reach the system browser. */
+export function materialSource(resource: Resource | null, recordedUrl?: string | null): string | null {
+  for (const value of [resource?.sourcePageUrl, resource?.url, recordedUrl]) {
+    try { if (value && ["https:", "http:"].includes(new URL(value).protocol)) return value; } catch { /* Invalid metadata has no destination. */ }
+  }
+  return null;
+}
 
 /** Derives truthful destinations; callers keep execution in the existing owners. */
 export function materialActions(
   resource: Resource | null,
-  state: { preview?: boolean; local?: MaterialLocalState; recordedUrl?: string | null },
+  state: { preview?: boolean; local?: MaterialLocalState; recordedUrl?: string | null; recordedFileUrl?: string | null },
   recorded = false,
 ): MaterialAction[] {
-  const source = resource?.url ?? state.recordedUrl ?? null;
-  if (!resource) return recorded && source ? [{ id: "open-quanta", label: "Open in Quanta" }] : [];
-  if (resource.isExternal) return source ? [{ id: "open-quanta", label: "Open in Quanta" }] : [];
+  const file = materialSource(null, state.recordedFileUrl);
+  const source = materialSource(resource, state.recordedUrl) ?? file;
+  if (!resource) return recorded && source ? [
+    { id: "open-quanta", label: "Open in Quanta" },
+    ...(file && file !== source ? [{ id: "open-recorded-file" as const, label: "Open recorded file in Quanta" }] : []),
+  ] : [];
+  const fileSource = materialSource({ ...resource, sourcePageUrl: null });
+  const offOrigin = fileSource && new URL(fileSource).origin !== "https://quanta.bits-pilani.ac.in";
+  if (resource.isExternal || offOrigin) return source ? [{ id: "open-quanta", label: "Open in Quanta" }] : [];
   const actions: MaterialAction[] = [];
-  if (state.preview) actions.push({ id: "preview", label: "Preview" });
+  if (state.preview && fileSource) actions.push({ id: "preview", label: "Preview" });
   if (state.local === "saved") actions.push({ id: "open-saved", label: "Open saved copy" });
-  else if (state.local !== "pending" && state.local !== "unsupported") actions.push({ id: "download-open", label: "Download and open" });
+  else if (state.local !== "pending" && state.local !== "unsupported" && fileSource) actions.push({ id: "download-open", label: "Download and open" });
   if (source) actions.push({ id: "open-quanta", label: "Open in Quanta" });
   return actions;
 }

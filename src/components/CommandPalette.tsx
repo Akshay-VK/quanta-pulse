@@ -1,3 +1,6 @@
+import { useMirror } from "../hooks/useMirror";
+import { isLocal, mirrorTip } from "../lib/mirrorState";
+import { formatSectionPath } from "../lib/sectionPath";
 import { Command } from "cmdk";
 import { Calendar, History, Library, Search, Settings, Sun } from "lucide-react";
 import { useState, type ReactNode } from "react";
@@ -46,6 +49,7 @@ export default function CommandPalette({
   onSeeAllFiles: (query: string) => void;
   actions: PaletteAction[];
 }) {
+  const mirror = useMirror();
   const [query, setQuery] = useState("");
   const needle = query.trim().toLowerCase();
 
@@ -141,7 +145,8 @@ export default function CommandPalette({
                 >
                   <span>{resource.title}</span>
                   <span className="palette-extra">
-                    <span className="faint">{resource.courseName}</span>
+                    <span className="faint">{resource.courseName} / {formatSectionPath(resource)}</span>
+                    {!resource.isExternal && mirror?.statusOf(resource.id) && <span className="faint">{isLocal(mirror.statusOf(resource.id)) ? "Saved copy" : mirrorTip(mirror.statusOf(resource.id))}</span>}
                   </span>
                 </Command.Item>
               ))}

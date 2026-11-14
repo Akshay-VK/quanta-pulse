@@ -1,15 +1,5 @@
-/**
- * Central resource navigation.
- *
- * Every "open this resource" action across the app resolves its URL through
- * this module so behaviour stays consistent:
- *
- * - A primary click/button opens `sourcePageUrl` — the page where the
- *   resource's link is actually listed (course, section or folder page).
- * - An explicit "Open File" action always opens the direct file URL.
- * - When no listing page is known a plain click falls back to the direct file
- *   URL, but the visible action is still labelled "Open File" so opening a
- *   file is never a silent or ambiguous action.
+/** Legacy URL-shape helpers retained for compatibility. Production material
+ * destinations are defined by materialActions.ts; row selection opens details.
  */
 
 /** The two URLs a resource/event row can carry. */

@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
-import { ExternalLink, MoreHorizontal } from "lucide-react";
+import { useSessionValue } from "../../hooks/useSessionViews";
+import { useMaterialActions } from "../../hooks/useMaterialActions";
+import { MaterialButtons } from "../../components/MaterialButtons";
+import { useEffect, useMemo } from "react";
 import { cx } from "../../lib/cx";
 import { typeOptions } from "../../lib/courseLibrary";
 import { dedupeCourseResources } from "../../lib/courseTree";
@@ -7,14 +9,11 @@ import { activityTimestamp } from "../../lib/filter";
 import { fileTone } from "../../lib/filetype";
 import { describeUpload, formatBytes, parseTimestamp } from "../../lib/format";
 import { formatSectionPath } from "../../lib/sectionPath";
-import { canPreview } from "../../lib/preview";
 import type { DetailsAdapter } from "../../lib/details";
 import type { Course, Resource } from "../../lib/types";
 import DataTable, { type DataColumn } from "../../components/DataTable";
 import { Button } from "../../components/ui/Button";
-import { IconButton } from "../../components/ui/IconButton";
 import { Select } from "../../components/ui/Select";
-import { Menu, type MenuItemSpec } from "../../components/ui/Menu";
 import { CoursePill } from "../../components/ui/CoursePill";
 import { StatusTag } from "../../components/ui/StatusTag";
 import { EmptyState } from "../../components/ui/EmptyState";
@@ -27,6 +26,7 @@ interface AllFilesProps {
   onPreview: (resource: Resource) => void;
   details?: DetailsAdapter;
   onClearSearch?: () => void;
+  onCourse?: (courseId: number) => void;
 }
 
 type SortId = "title" | "course" | "section" | "type" | "uploaded";
@@ -55,40 +55,6 @@ function availabilityCell(resource: Resource) {
   return <span className="cell-title-sub">Available</span>;
 }
 
-function actionItems(
-  resource: Resource,
-  onOpen: (url: string) => void,
-  onPreview: (resource: Resource) => void,
-): MenuItemSpec[] {
-  const items: MenuItemSpec[] = [];
-  if (canPreview(resource.resourceType, resource.url)) {
-    items.push({
-      id: "preview",
-      label: "Preview",
-      onSelect: () => onPreview(resource),
-    });
-  }
-  items.push({
-    id: "file",
-    label: "Open file",
-    icon: <ExternalLink aria-hidden="true" />,
-    onSelect: () => onOpen(resource.url),
-  });
-  if (resource.sourcePageUrl) {
-    items.push({
-      id: "page",
-      label: "Open Quanta page",
-      onSelect: () => onOpen(resource.sourcePageUrl as string),
-    });
-  }
-  items.push({
-    id: "copy",
-    label: "Copy link",
-    onSelect: () => void navigator.clipboard?.writeText(resource.sourcePageUrl ?? resource.url),
-  });
-  return items;
-}
-
 /** Every discovered resource as one sortable, filterable table. */
 export default function AllFiles({
   resources,
@@ -98,10 +64,12 @@ export default function AllFiles({
   onPreview,
   details,
   onClearSearch,
+  onCourse,
 }: AllFilesProps) {
-  const [courseFilter, setCourseFilter] = useState("all");
-  const [typeFilter, setTypeFilter] = useState("all");
-  const [sort, setSort] = useState<{ id: SortId; dir: "asc" | "desc" }>({
+  const destinations = useMaterialActions({ onOpen, onPreview });
+  const [courseFilter, setCourseFilter] = useSessionValue("library:files:course", "all");
+  const [typeFilter, setTypeFilter] = useSessionValue("library:files:type", "all");
+  const [sort, setSort] = useSessionValue<{ id: SortId; dir: "asc" | "desc" }>("library:files:sort", {
     id: "uploaded",
     dir: "desc",
   });
@@ -217,6 +185,7 @@ export default function AllFiles({
         <span className="row-course-pill">
           <CoursePill
             courseId={resource.courseId}
+            onOpen={resource.courseId != null && onCourse ? () => onCourse(resource.courseId!) : undefined}
             code={
               (resource.courseId != null && codeByCourse.get(resource.courseId)) ||
               resource.courseName ||
@@ -268,32 +237,13 @@ export default function AllFiles({
     {
       id: "actions",
       header: "",
-      width: 72,
+      width: 120,
       cell: (resource) => (
         <div className="row-actions">
-          <IconButton
-            label={`Open ${resource.title}`}
-            size={28}
-            onClick={(event) => {
-              event.stopPropagation();
-              onOpen(resource.url);
-            }}
-          >
-            <ExternalLink aria-hidden="true" />
-          </IconButton>
-          <Menu
+          <MaterialButtons
+            actions={destinations?.(resource) ?? []}
             label={`Actions for ${resource.title}`}
-            items={actionItems(resource, onOpen, onPreview)}
-            trigger={
-              <IconButton
-                label={`Actions for ${resource.title}`}
-                size={28}
-                tooltip={false}
-                onClick={(event) => event.stopPropagation()}
-              >
-                <MoreHorizontal aria-hidden="true" />
-              </IconButton>
-            }
+            menu={[{ id: "copy", label: "Copy link", onSelect: () => void navigator.clipboard?.writeText(resource.sourcePageUrl ?? resource.url) }]}
           />
         </div>
       ),
@@ -342,6 +292,7 @@ export default function AllFiles({
       </div>
 
       <DataTable
+        sessionKey="library:files:table"
         columns={columns}
         rows={rows}
         getKey={(resource) => resource.id}

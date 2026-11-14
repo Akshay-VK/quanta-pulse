@@ -109,7 +109,7 @@ describe("ResourceRow stylesheet contract", () => {
   it("lays the row out as a grid with a shrinkable main column and fixed tracks", () => {
     const row = rule(contentCss, ".resource-row");
     expect(row).toContain("display: grid");
-    expect(row).toContain("grid-template-columns: minmax(0, 1fr) 240px 24px 104px 80px");
+    expect(row).toContain("grid-template-columns: minmax(0, 1fr) 240px 24px 104px 92px");
   });
 
   it("repeats the dot, icon and title tracks inside the select button", () => {

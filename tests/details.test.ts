@@ -33,3 +33,11 @@ describe("historical detail presentation", () => {
     expect(details.properties).toContainEqual({ label: "Errors", value: "Course 3 timed out; Course 4 unavailable" });
   });
 });
+
+it("shows preview capability and a real due date without substituting detection time", () => {
+  const missing = todayPresentation(resource());
+  expect(missing.properties).toContainEqual({ label: "Due date", value: "Due date unavailable" });
+  expect(missing.properties).toContainEqual({ label: "Preview", value: "PDF" });
+  expect(todayPresentation(resource({ dueAt: "2026-11-20" })).properties).toContainEqual({ label: "Due date", value: "2026-11-20" });
+  expect(todayPresentation(resource({ dueAt: "invalid" })).properties).toContainEqual({ label: "Due date", value: "Due date unavailable" });
+});
