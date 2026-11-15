@@ -499,6 +499,8 @@
     border-radius: var(--radius-md);
     padding: var(--sp-1);
     max-height: 320px;
+    width: 240px;
+    max-width: calc(100vw - 16px);
     overflow: hidden;
     z-index: var(--z-popover);
   }

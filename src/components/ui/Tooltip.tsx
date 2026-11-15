@@ -1,5 +1,6 @@
 import * as TooltipPrimitive from "@radix-ui/react-tooltip";
 import type { ReactNode } from "react";
+import { formatShortcut } from "../../lib/platform";
 
 /** Wrap the app once so tooltips share the open/close delay. */
 export function TooltipProvider({ children }: { children: ReactNode }) {
@@ -15,12 +16,15 @@ export function Tooltip({
   content,
   children,
   side = "bottom",
+  shortcut,
 }: {
   content: ReactNode;
   children: ReactNode;
   side?: "top" | "right" | "bottom" | "left";
+  /** Optional shortcut rendered as a readable keycap beside the label. */
+  shortcut?: string;
 }) {
-  if (!content) return <>{children}</>;
+  if (!content && !shortcut) return <>{children}</>;
   return (
     <TooltipPrimitive.Root>
       <TooltipPrimitive.Trigger asChild>{children}</TooltipPrimitive.Trigger>
@@ -31,7 +35,8 @@ export function Tooltip({
           sideOffset={6}
           collisionPadding={8}
         >
-          {content}
+          <span>{content}</span>
+          {shortcut && <kbd className="tooltip-keycap">{formatShortcut(shortcut)}</kbd>}
         </TooltipPrimitive.Content>
       </TooltipPrimitive.Portal>
     </TooltipPrimitive.Root>

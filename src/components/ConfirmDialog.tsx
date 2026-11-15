@@ -14,6 +14,7 @@ export default function ConfirmDialog({
   confirmLabel,
   cancelLabel = "Cancel",
   destructive = false,
+  scopeList = false,
   onConfirm,
 }: {
   open: boolean;
@@ -23,6 +24,8 @@ export default function ConfirmDialog({
   confirmLabel: string;
   cancelLabel?: string;
   destructive?: boolean;
+  /** Set when the body includes a bordered list of affected items. */
+  scopeList?: boolean;
   onConfirm: () => void | Promise<void>;
 }) {
   const [running, setRunning] = useState(false);
@@ -62,8 +65,8 @@ export default function ConfirmDialog({
       role="alertdialog"
       labelledBy={titleId}
       describedBy={bodyId}
-      className="dialog-confirm"
-      initialFocusRef={cancelRef}
+      className={scopeList ? "dialog-confirm dialog-confirm-scope" : "dialog-confirm"}
+      initialFocusRef={destructive ? cancelRef : undefined}
     >
       <h2 id={titleId} className="dialog-title">
         {title}
@@ -83,6 +86,7 @@ export default function ConfirmDialog({
         </button>
         <Button
           variant={destructive ? "danger" : "primary"}
+          className="dialog-primary"
           onClick={() => void confirm()}
           loading={running}
         >

@@ -9,7 +9,7 @@
     inset: 0;
     background: var(--overlay);
     z-index: var(--z-dialog);
-    animation: dialog-overlay-in var(--dur-base) var(--ease-out);
+    animation: dialog-overlay-in 150ms var(--ease-out);
   }
 
   .dialog-overlay.closing {
@@ -27,7 +27,7 @@
     color: var(--ink);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-dialog);
-    animation: dialog-in var(--dur-base) var(--ease-out);
+    animation: dialog-in 150ms var(--ease-out);
     max-width: calc(100vw - 32px);
     max-height: calc(100vh - 48px);
     display: flex;
@@ -35,8 +35,13 @@
   }
 
   .dialog-content.dialog-confirm {
-    width: 440px;
-    padding: var(--sp-6);
+    width: min(480px, calc(100vw - 32px));
+    padding: 20px;
+    border-radius: var(--radius-dialog);
+  }
+
+  .dialog-content.dialog-confirm-scope {
+    width: min(520px, calc(100vw - 32px));
   }
 
   .dialog-title {
@@ -90,7 +95,7 @@
     box-shadow: var(--shadow-pop);
     padding: 9px 16px;
     font: 500 13px/18px var(--type-caption);
-    max-width: 80ch;
+    width: min(330px, calc(100vw - 32px));
   }
 
   .toast-error {
@@ -99,7 +104,7 @@
   }
 
   .toast[data-state="open"] {
-    animation: toast-in var(--dur-slow) var(--ease-out);
+    animation: toast-in 150ms var(--ease-out);
   }
 
   .toast[data-state="closed"] {
@@ -157,10 +162,26 @@
     font: 500 12px/16px var(--type-caption);
     z-index: var(--z-dialog);
     max-width: 260px;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-2);
+  }
+
+  .tooltip-keycap {
+    display: inline-flex;
+    align-items: center;
+    min-height: 18px;
+    padding: 0 4px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-xs);
+    background: var(--raised);
+    color: var(--ink);
+    font: 500 10px/16px var(--type-mono);
+    white-space: nowrap;
   }
 
   .tooltip[data-state="delayed-open"] {
-    animation: fade-in var(--dur-fast) var(--ease-out);
+    animation: fade-in 120ms var(--ease-out);
   }
 
   @keyframes fade-in {
@@ -180,12 +201,13 @@
     box-shadow: var(--shadow-pop);
     border-radius: var(--radius-md);
     padding: var(--sp-1);
-    min-width: 180px;
+    width: 240px;
+    max-width: calc(100vw - 16px);
     z-index: var(--z-popover);
   }
 
   .menu[data-state="open"] {
-    animation: menu-in var(--dur-fast) var(--ease-out);
+    animation: menu-in 120ms var(--ease-out);
   }
 
   @keyframes menu-in {
@@ -203,7 +225,7 @@
     display: flex;
     align-items: center;
     gap: var(--sp-2);
-    height: 28px;
+    height: 34px;
     padding: 0 var(--sp-2);
     border-radius: var(--radius-xs);
     font: 14px/20px var(--type-ui);
@@ -216,6 +238,8 @@
 
   .menu-item[data-highlighted] {
     background: var(--hover);
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
   }
 
   .menu-item[data-disabled] {
@@ -250,11 +274,18 @@
     box-shadow: var(--shadow-pop);
     border-radius: var(--radius-md);
     padding: var(--sp-3);
+    width: 320px;
+    max-width: calc(100vw - 16px);
     z-index: var(--z-popover);
   }
 
+  .popover > .appearance-popover {
+    width: 100%;
+    box-sizing: border-box;
+  }
+
   .popover[data-state="open"] {
-    animation: menu-in var(--dur-fast) var(--ease-out);
+    animation: menu-in 120ms var(--ease-out);
   }
 
   /* ------------------------------------------------------------ peek panel */
@@ -348,6 +379,29 @@
     }
     to {
       opacity: 1;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .dialog-overlay,
+    .dialog-content,
+    .menu,
+    .popover,
+    .tooltip,
+    .toast {
+      animation: none !important;
+      transition: none !important;
+    }
+
+    .dialog-content,
+    .menu,
+    .popover,
+    .toast[data-swipe="move"] {
+      transform: none !important;
+    }
+
+    .dialog-content {
+      translate: -50% -50%;
     }
   }
 

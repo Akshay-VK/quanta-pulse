@@ -12,7 +12,7 @@ export interface ToastItem {
 
 /**
  * Shows one toast at a time from the head of `toasts`; the rest stay queued.
- * Auto-dismisses (6 s errors, 4 s otherwise), pauses on hover and supports
+ * Auto-dismisses after six seconds, pauses during interaction, and supports
  * swipe / Escape dismissal.
  */
 export function Toaster({
@@ -24,7 +24,7 @@ export function Toaster({
 }) {
   const head = toasts[0] ?? null;
   const [rendered, setRendered] = useState<ToastItem | null>(head);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(Boolean(head));
 
   useEffect(() => {
     if (head && (!rendered || head.id !== rendered.id)) {
@@ -50,7 +50,7 @@ export function Toaster({
   return (
     <ToastPrimitive.Provider
       swipeDirection="down"
-      duration={rendered?.error ? 6000 : 4000}
+      duration={6000}
     >
       {rendered && (
         <ToastPrimitive.Root

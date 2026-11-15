@@ -36,21 +36,35 @@ export function Dialog({
   children,
 }: DialogProps) {
   const returnFocus = useRef<HTMLElement | null>(null);
+  const wasOpen = useRef(false);
+  const contentRef = useRef<HTMLDivElement>(null);
+  if (open && !wasOpen.current) {
+    returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    wasOpen.current = true;
+  } else if (!open) {
+    wasOpen.current = false;
+  }
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="dialog-overlay" />
         <DialogPrimitive.Content
+          ref={contentRef}
           className={cx("dialog-content", className)}
           role={role}
           aria-label={label}
           aria-labelledby={labelledBy}
           aria-describedby={describedBy}
           onOpenAutoFocus={(event) => {
-            returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
             if (initialFocusRef) {
               event.preventDefault();
               initialFocusRef.current?.focus();
+              return;
+            }
+            const primary = contentRef.current?.querySelector<HTMLElement>("[data-dialog-primary], .dialog-primary");
+            if (primary) {
+              event.preventDefault();
+              primary.focus();
             }
           }}
           onCloseAutoFocus={(event) => {

@@ -3,6 +3,7 @@
 This wiki preserves dated decisions and their evidence. It is not the live tracker; use GitHub Issues for current work state.
 
 - [2026-11-15: Redesign foundation acceptance and shared-controls split](2026-11-15-redesign-foundation-and-controls.md) — accepted foundation/B01 evidence, bounded 02A/02B task graph, protected B02 lease, and small-context/screenshot milestone preference.
+- [2026-11-15: Redesign split acceptance: 02A and 02B](2026-11-15-redesign-02A-and-02B.md) — 02A integration at `83fbbc5`, 02B overlay contract and rendered evidence, and preserved B02 ownership.
 
 ## Product decisions
 
