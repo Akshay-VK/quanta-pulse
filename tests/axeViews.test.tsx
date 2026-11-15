@@ -90,6 +90,7 @@ function course(overrides: Partial<Course> = {}): Course {
     externalCourseId: "cs-f213",
     name: "Object Oriented Programming",
     shortName: "CS F213",
+    displayName: null,
     url: "https://quanta.bits-pilani.ac.in/course/view.php?id=1",
     firstSeenAt: "2026-09-01T00:00:00Z",
     lastScannedAt: "2026-10-12T00:00:00Z",

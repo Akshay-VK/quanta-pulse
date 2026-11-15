@@ -12,6 +12,8 @@ pub struct Course {
     pub external_course_id: String,
     pub name: String,
     pub short_name: Option<String>,
+    /// Local presentation override; never used as the Quanta identity.
+    pub display_name: Option<String>,
     pub url: String,
     pub first_seen_at: Timestamp,
     pub last_scanned_at: Option<Timestamp>,

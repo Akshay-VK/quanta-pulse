@@ -50,6 +50,8 @@ export const api = {
     invoke<DuePage>("query_due_resources", { filter }),
 
   listCourses: () => invoke<Course[]>("list_courses"),
+  setCourseDisplayName: (courseId: number, displayName: string | null) =>
+    invoke<Course>("set_course_display_name", { courseId, displayName }),
   listResources: (filter: ResourceFilter = {}) =>
     invoke<Resource[]>("list_resources", { filter }),
   listDashboardResources: () => invoke<Resource[]>("list_dashboard_resources"),

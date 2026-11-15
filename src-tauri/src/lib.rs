@@ -55,6 +55,7 @@ pub fn run() {
             commands::delete_history,
             commands::query_due_resources,
             commands::list_courses,
+            commands::set_course_display_name,
             commands::list_resources,
             commands::list_dashboard_resources,
             commands::list_events,

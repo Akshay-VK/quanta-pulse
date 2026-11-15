@@ -29,6 +29,7 @@ function buildCourse(overrides: Partial<Course> = {}): Course {
     externalCourseId: "math-f211",
     name: "Discrete Mathematics",
     shortName: "MATH F211",
+    displayName: null,
     url: "https://quanta.bits-pilani.ac.in/course/view.php?id=1",
     firstSeenAt: "2026-09-01T06:00:00Z",
     lastScannedAt: "2026-10-12T06:00:00Z",

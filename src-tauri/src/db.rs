@@ -181,6 +181,15 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     // the event flag, with no rolling timestamp rule.
     apply_course_tree_incident_cleanup(conn, &now_rfc3339())?;
     conn.execute_batch(include_str!("../migrations/0005_inbox_dismissals.sql"))?;
+    // 0006: add the durable local presentation override to existing databases.
+    let has_display_name: bool = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('courses') WHERE name = 'display_name'",
+        [],
+        |r| r.get::<_, i64>(0),
+    )? > 0;
+    if !has_display_name {
+        conn.execute_batch(include_str!("../migrations/0006_course_display_name.sql"))?;
+    }
     Ok(())
 }
 
@@ -422,6 +431,41 @@ pub fn set_monitoring(conn: &Connection, course_id: i64, status: &str) -> rusqli
     Ok(())
 }
 
+/// Set or reset a local display-name override without changing source identity.
+pub fn set_course_display_name(
+    conn: &Connection,
+    course_id: i64,
+    display_name: Option<&str>,
+) -> Result<Course, String> {
+    let display_name = match display_name {
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Err("Course display name cannot be empty.".to_string());
+            }
+            if trimmed.chars().count() > 120 {
+                return Err("Course display name cannot exceed 120 characters.".to_string());
+            }
+            Some(trimmed)
+        }
+        None => None,
+    };
+    let changed = conn
+        .execute(
+            "UPDATE courses SET display_name = ?1 WHERE id = ?2",
+            params![display_name, course_id],
+        )
+        .map_err(|e| e.to_string())?;
+    if changed == 0 {
+        return Err("Course not found.".to_string());
+    }
+    list_courses(conn)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|course| course.id == course_id)
+        .ok_or_else(|| "Course not found.".to_string())
+}
+
 pub fn course_id_for_external(conn: &Connection, external_id: &str) -> Option<i64> {
     conn.query_row(
         "SELECT id FROM courses WHERE external_course_id = ?1",
@@ -435,7 +479,7 @@ pub fn course_id_for_external(conn: &Connection, external_id: &str) -> Option<i6
 
 pub fn list_courses(conn: &Connection) -> rusqlite::Result<Vec<Course>> {
     let mut stmt = conn.prepare(
-        "SELECT c.id, c.external_course_id, c.name, c.short_name, c.url, c.first_seen_at,
+        "SELECT c.id, c.external_course_id, c.name, c.short_name, c.display_name, c.url, c.first_seen_at,
                 c.last_scanned_at, c.last_scan_status, c.monitoring_status,
                 (SELECT COUNT(*) FROM resources r WHERE r.course_id = c.id) AS resource_count
          FROM courses c
@@ -447,12 +491,13 @@ pub fn list_courses(conn: &Connection) -> rusqlite::Result<Vec<Course>> {
             external_course_id: r.get(1)?,
             name: r.get(2)?,
             short_name: r.get(3)?,
-            url: r.get(4)?,
-            first_seen_at: r.get(5)?,
-            last_scanned_at: r.get(6)?,
-            last_scan_status: r.get(7)?,
-            monitoring_status: r.get(8)?,
-            resource_count: r.get(9)?,
+            display_name: r.get(4)?,
+            url: r.get(5)?,
+            first_seen_at: r.get(6)?,
+            last_scanned_at: r.get(7)?,
+            last_scan_status: r.get(8)?,
+            monitoring_status: r.get(9)?,
+            resource_count: r.get(10)?,
         })
     })?;
     rows.collect()
@@ -1633,6 +1678,67 @@ mod tests {
         let conn = mem();
         migrate(&conn).unwrap();
         assert_eq!(count_courses(&conn), 0);
+    }
+
+    #[test]
+    fn course_display_name_is_durable_and_discovery_preserves_source_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("course-name.sqlite");
+        let conn = Connection::open(&path).unwrap();
+        migrate(&conn).unwrap();
+        let id = upsert_course(
+            &conn,
+            "external-42",
+            "Original Quanta name",
+            Some("CS F111"),
+            "https://quanta.bits-pilani.ac.in/course/42",
+            "2026-11-15T00:00:00Z",
+        )
+        .unwrap();
+
+        let updated = set_course_display_name(&conn, id, Some("  Álgebra 東京  ")).unwrap();
+        assert_eq!(updated.display_name.as_deref(), Some("Álgebra 東京"));
+        assert_eq!(updated.name, "Original Quanta name");
+        assert_eq!(updated.short_name.as_deref(), Some("CS F111"));
+        assert_eq!(updated.external_course_id, "external-42");
+        upsert_course(
+            &conn,
+            "external-42",
+            "Updated Quanta source name",
+            Some("CS F111"),
+            "https://quanta.bits-pilani.ac.in/course/42",
+            "2026-11-16T00:00:00Z",
+        )
+        .unwrap();
+        assert_eq!(list_courses(&conn).unwrap()[0].display_name.as_deref(), Some("Álgebra 東京"));
+        drop(conn);
+
+        let reopened = Connection::open(path).unwrap();
+        migrate(&reopened).unwrap();
+        let course = &list_courses(&reopened).unwrap()[0];
+        assert_eq!(course.display_name.as_deref(), Some("Álgebra 東京"));
+        assert_eq!(course.name, "Updated Quanta source name");
+
+        let reset = set_course_display_name(&reopened, id, None).unwrap();
+        assert_eq!(reset.display_name, None);
+    }
+
+    #[test]
+    fn course_display_name_rejects_empty_overlong_and_unknown_without_mutation() {
+        let conn = mem();
+        let id = upsert_course(&conn, "external-7", "Original", None, "u", "t").unwrap();
+        assert!(set_course_display_name(&conn, id, Some(" \u{2003} ")).is_err());
+        assert!(set_course_display_name(&conn, id, Some(&"é".repeat(121))).is_err());
+        assert!(set_course_display_name(&conn, id + 100, Some("No course")).is_err());
+        assert_eq!(list_courses(&conn).unwrap()[0].display_name, None);
+        let max_length = "é".repeat(120);
+        assert_eq!(
+            set_course_display_name(&conn, id, Some(&max_length))
+                .unwrap()
+                .display_name
+                .as_deref(),
+            Some(max_length.as_str())
+        );
     }
 
     /// A file-backed database whose recorded version is older than the running

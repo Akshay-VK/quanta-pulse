@@ -93,6 +93,16 @@ pub fn list_courses(state: State<AppState>) -> Result<Vec<Course>, String> {
 }
 
 #[tauri::command]
+pub fn set_course_display_name(
+    state: State<AppState>,
+    course_id: i64,
+    display_name: Option<String>,
+) -> Result<Course, String> {
+    let conn = state.conn();
+    db::set_course_display_name(&conn, course_id, display_name.as_deref())
+}
+
+#[tauri::command]
 pub fn list_resources(
     state: State<AppState>,
     filter: ResourceFilterInput,

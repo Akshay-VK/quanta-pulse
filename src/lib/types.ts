@@ -8,6 +8,7 @@ export interface Course {
   externalCourseId: string;
   name: string;
   shortName: string | null;
+  displayName: string | null;
   url: string;
   firstSeenAt: string;
   lastScannedAt: string | null;

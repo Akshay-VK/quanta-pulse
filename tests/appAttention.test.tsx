@@ -188,7 +188,7 @@ describe('filter scope and due request authority', () => {
     expect(appApi.setEventReadState).toHaveBeenCalledWith([10, 9999], true);
   });
   it('guards old due responses when explicitly opening a paused course', async () => {
-    appApi.listCourses.mockResolvedValue([{ id: 2, externalCourseId: 'paused', name: 'Paused Physics', shortName: 'Physics', url: '', firstSeenAt: '', lastScannedAt: null, lastScanStatus: null, monitoringStatus: 'paused', resourceCount: 1 }]);
+    appApi.listCourses.mockResolvedValue([{ id: 2, externalCourseId: 'paused', name: 'Paused Physics', shortName: 'Physics', displayName: null, url: '', firstSeenAt: '', lastScannedAt: null, lastScanStatus: null, monitoringStatus: 'paused', resourceCount: 1 }]);
     app = await renderApp();
     await click(button('Calendar'));
     const old = deferred<{ items: []; total: number }>();

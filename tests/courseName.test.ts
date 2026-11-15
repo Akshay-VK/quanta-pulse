@@ -25,6 +25,7 @@ function course(overrides: Partial<Course> = {}): Course {
     externalCourseId: "1166",
     name: "1166_ECE_INSTR_EEE_ECOM F215",
     shortName: "ECOM F215",
+    displayName: null,
     url: "https://quanta.bits-pilani.ac.in/course/view.php?id=1",
     firstSeenAt: "2026-09-01T00:00:00Z",
     lastScannedAt: null,
@@ -52,6 +53,11 @@ describe("displayName", () => {
   it("prefers a user alias over the derived code", () => {
     const aliases = { "1": "VLSI Design" };
     expect(displayName(course(), aliases)).toBe("VLSI Design");
+  });
+
+  it("prefers the durable course override over legacy aliases and derived names", () => {
+    expect(displayName(course({ displayName: "  My renamed course  " }), { "1": "Old alias" }))
+      .toBe("My renamed course");
   });
 
   it("falls back to the derived code when the alias is blank", () => {
@@ -120,6 +126,12 @@ describe("the registry views read", () => {
     expect(courseTitle(99, "Fallback")).toBe("Fallback");
     expect(courseTooltip(1)).toContain("1166_ECE_INSTR_EEE_ECOM F215");
     expect(courseDot(1)).toBe(0);
+  });
+
+  it("propagates the durable override through the shared course-label registry", () => {
+    registerCourseLabels([course({ displayName: "My durable name" })]);
+    expect(courseTitle(1)).toBe("My durable name");
+    expect(courseTooltip(1)).toBe("My durable name — 1166_ECE_INSTR_EEE_ECOM F215");
   });
 
   it("round-trips aliases and colours through localStorage", () => {

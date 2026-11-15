@@ -55,6 +55,7 @@ const COURSE: Course = {
   externalCourseId: "1124",
   name: "1124_MATH_INSTR_MATH F111",
   shortName: "MATH F111",
+  displayName: null,
   url: "https://quanta.bits-pilani.ac.in/course/view.php?id=1",
   firstSeenAt: "2026-09-01T00:00:00Z",
   lastScannedAt: null,

@@ -40,8 +40,10 @@ function qualifier(raw: string): string | null {
   return prefix.length > 0 ? prefix.join("/") : null;
 }
 
-/** A course's own name, with a user alias winning over the derived code. */
+/** A course's own name, with the durable override winning over legacy aliases. */
 export function displayName(course: Course, aliases: CourseAliases = {}): string {
+  const saved = course.displayName?.trim();
+  if (saved) return saved;
   const alias = aliases[String(course.id)]?.trim();
   if (alias) return alias;
   return deriveDisplayName(course.name) || course.shortName || course.name;

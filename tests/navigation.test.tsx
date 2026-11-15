@@ -38,6 +38,7 @@ function course(overrides: Partial<Course> = {}): Course {
     externalCourseId: "1166",
     name: "1166_ECE_INSTR_EEE_ECOM F215",
     shortName: "ECOM F215",
+    displayName: null,
     url: "https://quanta.bits-pilani.ac.in/course/view.php?id=7",
     firstSeenAt: "2026-09-01T00:00:00Z",
     lastScannedAt: "2026-10-12T00:00:00Z",
