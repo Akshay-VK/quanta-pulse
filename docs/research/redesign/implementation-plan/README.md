@@ -1,8 +1,8 @@
 # Redesign implementation: subagent execution plan
 
-Planning artifact, 15 November 2026. Application implementation has not started. Code baseline: `1bd0e8b5a24b05733295b5751a7bc42de7b90b43`. Planning branch: `docs/redesign-subagent-plan`. Existing untracked `docs/research/` inputs are user material and must be preserved.
+Planning artifact, 15 November 2026. Planning-source baseline: `1bd0e8b5a24b05733295b5751a7bc42de7b90b43`. Redesign implementation is in progress: task 01 is accepted at `985b1a9`, B01 at `23bf0ce`, and B02 is active. Existing untracked `docs/research/` inputs are user material and must be preserved.
 
-The plan uses fresh, narrowly scoped workers and one coordinator/integrator. Dispatch one packet at a time to a worker; do not give workers this entire directory or the planning conversation. There are 34 task packets, with all 98 exported screens assigned exactly once. Shared foundations precede screen work; missing backend capabilities are explicit prerequisites.
+The plan uses fresh, narrowly scoped workers and one coordinator/integrator. Dispatch one packet at a time to a worker; do not give workers this entire directory or the planning conversation. Task 02 is an umbrella split into native child packets 02A (shared controls) and 02B (overlays); 02A depends on 01, 02B depends on accepted 02A, and 02 completes after 02B. Downstream dependencies remain on 02. All 98 exported screens retain their existing single ownership rows. Shared foundations precede screen work; missing backend capabilities are explicit prerequisites.
 
 ## Read in this order
 
@@ -37,7 +37,7 @@ The coordinator alone writes `App.tsx`, global keyboard wiring, `main.tsx` impor
 Dependency lists in packets are hard prerequisites; all refer to accepted integrated results. This order is a scheduling guide, not a mandate to wait for unrelated branches.
 
 1. **00** reconciles sources and decisions, inventories actual exports and publishes frozen contract excerpts. Missing product decisions block only named consumers.
-2. **01 → 02 → 03 → 04** establishes tokens/appearance, primitives, shell and rows/keyboard. Coordinator wires shell first. Backend capability tasks **B01–B10** can proceed after 00, serialized over shared files.
+2. **01 → 02A → 02B → 02 → 03 → 04** establishes tokens/appearance, shared controls, overlays, shell and rows/keyboard. Coordinator wires shell first. Backend capability tasks **B01–B10** can proceed after 00, serialized over shared files.
 3. **05** establishes inspector after B02. **13** can establish Settings structure after 01/02. **16** can proceed after shell and B08. Screen work may use existing safe APIs, but acceptance requiring an unimplemented contract must wait.
 4. Once 04/05 are accepted, eligible independent screen workers are **06** Inbox, **07** Agenda, **08** Activity, **09** Library, **15** History after B04/B05. Run at most two at a time with view/CSS leases. For 07/08, freeze Calendar wrapper and panel contract first; serialize `CalendarView.tsx` or assign it to integrator.
 5. **10** follows Library and B01/B06. **11** follows Library search/navigation contracts. **12** follows inspector and approved PDF decision. **14 → 14A → 14B → 14C** serializes draft lifecycle, account/notifications/Telegram, storage/destructive recovery, then About/updater. The packets list exact backend prerequisites. **17** follows shell/B02; reserve DownloadsPopover until 14B releases it; 17 also waits for B08 cancellation.
@@ -47,9 +47,9 @@ No dependency cycle exists. Tasks 13/14/14A/14B/14C deliberately serialize Setti
 
 ## Ticket publication and acceptance
 
-Use GitHub Issues in **Akshay-VK/quanta-pulse** as the live tracker per [issue-tracker guidance](../../../agents/issue-tracker.md). These files are reusable planning/dispatch references, not a second status board. The dedicated redesign parent is [#14](https://github.com/Akshay-VK/quanta-pulse/issues/14), with [task 00 as native sub-issue #15](https://github.com/Akshay-VK/quanta-pulse/issues/15). The earlier accepted themes/workflows issue #12 remains untouched.
+Use GitHub Issues in **Akshay-VK/quanta-pulse** as the live tracker per [issue-tracker guidance](../../../agents/issue-tracker.md). These files are reusable planning/dispatch references, not a second status board. The dedicated redesign parent is [#14](https://github.com/Akshay-VK/quanta-pulse/issues/14), with [task 00 as native sub-issue #15](https://github.com/Akshay-VK/quanta-pulse/issues/15). Task 02 is published as an umbrella with native 02A/02B children. Only fully specified 02A receives ready-for-agent; 02B remains not ready until 02A is accepted. The earlier accepted themes/workflows issue #12 remains untouched.
 
-Repository/Issues availability and duplicate titles were checked with the explicit repository target before publication. Only the fully specified task-00 child currently has `ready-for-agent`; unresolved future tasks remain unpublished and not ready. Publish each future native sub-issue after prerequisites/contracts are ready, use native blocking relationships with readable parent/blocker links, preserve labels, and read back every issue/label/parent/blocker after publication. Every `gh` command uses `--repo Akshay-VK/quanta-pulse` explicitly. Do not close issues until their accepted integration workflow is satisfied. Current task-00 decisions/blockers are in [decisions](decisions.md); its source-frozen consumer excerpts are in [contracts/00.md](contracts/00.md).
+Repository/Issues availability and duplicate titles were checked with the explicit repository target before publication. Task 00 and fully specified child task 02A have `ready-for-agent`; task 02B is published but remains not ready for dispatch until 02A is accepted. Use native blocking relationships with readable parent/blocker links, preserve labels, and read back every issue/label/parent/blocker after publication. Every `gh` command uses `--repo Akshay-VK/quanta-pulse` explicitly. Do not close issues until their accepted integration workflow is satisfied. Current task-00 decisions/blockers are in [decisions](decisions.md); its source-frozen consumer excerpts are in [contracts/00.md](contracts/00.md).
 
 ## Acceptance gates
 

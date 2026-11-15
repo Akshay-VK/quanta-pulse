@@ -16,7 +16,7 @@ interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 /** A square, icon-only button. Always labelled and, by default, tooltipped. */
 export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(
   function IconButton(
-    { label, size = 32, pressed, tooltip, className, children, type = "button", ...rest },
+    { label, size = 28, pressed, tooltip, className, children, type = "button", ...rest },
     ref,
   ) {
     const button = (

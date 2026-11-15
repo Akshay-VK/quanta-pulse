@@ -37,20 +37,59 @@
   },
   {
     "id": "02",
-    "title": "Shared controls and overlays",
-    "deps": "01",
+    "title": "Shared controls and overlays (umbrella)",
+    "deps": "02B",
     "spec": "3, 4, 6",
+    "files": [],
+    "tests": [],
+    "accept": "Umbrella acceptance is complete only after native child tasks 02A (shared controls) and 02B (overlays) are accepted and integrated. Downstream task dependencies remain on 02."
+  },
+  {
+    "id": "02A",
+    "title": "Shared controls",
+    "deps": "01",
+    "spec": "3, 6 (focus)",
     "files": [
-      "src/components/ui/",
-      "src/components/ConfirmDialog.tsx",
+      "src/components/ui/Button.tsx",
+      "src/components/ui/IconButton.tsx",
+      "src/components/ui/TextField.tsx",
+      "src/components/ui/PasswordField.tsx",
+      "src/components/ui/SearchField.tsx",
+      "src/components/ui/TimeField.tsx",
+      "src/components/ui/Switch.tsx",
+      "src/components/ui/Checkbox.tsx",
+      "src/components/ui/Select.tsx",
+      "src/components/ui/ToggleGroup.tsx",
+      "src/components/ui/Tabs.tsx",
+      "src/components/ui/Kbd.tsx",
+      "src/components/ui/StatusTag.tsx",
+      "src/components/ui/CoursePill.tsx",
       "src/styles/components/ui.css",
+      "tests/redesignControls.test.tsx"
+    ],
+    "tests": [
+      "tests/redesignControls.test.tsx"
+    ],
+    "accept": "Restyle only Button, IconButton, TextField, PasswordField, SearchField, TimeField, Switch, Checkbox, Select, ToggleGroup, Tabs, Kbd, StatusTag and CoursePill plus their exact ui.css selectors. Preserve public props and presentational Radix behavior. Buttons 28px, inputs 32px, switches 32\u00d718, checkboxes 16px, keycaps 18px, tags/course pills 20px. Apply semantic/size/radius tokens, readable text, disabled/loading/mixed/error/keyboard states and 2px focus outline with 2px offset (inputs also retain 3px accent-soft ring). Course dot rendering may consume --course-1/2/3 tokens; do not change persisted color assignment. Add meaningful interaction/ARIA regressions. No overlays, app shell, views, global hotkeys or overlays.css."
+  },
+  {
+    "id": "02B",
+    "title": "Shared overlays",
+    "deps": "02A",
+    "spec": "3, 4, 6 (focus)",
+    "files": [
+      "src/components/ui/Menu.tsx",
+      "src/components/ui/Popover.tsx",
+      "src/components/ui/Tooltip.tsx",
+      "src/components/ui/Dialog.tsx",
+      "src/components/ui/Toast.tsx",
+      "src/components/ConfirmDialog.tsx",
       "src/styles/components/overlays.css"
     ],
     "tests": [
-      "tests/axeViews.test.tsx",
-      "new tests/redesignControls.test.tsx"
+      "tests/redesignOverlays.test.tsx"
     ],
-    "accept": "Restyle existing Radix wrappers: buttons 28px, inputs 32px, toggles 32\u00d718, keycaps 18px, tags 20px, menus 230\u2013250px, popovers 320px, dialogs 480/520px. Include error, disabled, mixed, loading and keyboard states. Dialog primary gets initial focus; destructive Cancel gets focus. Toast duration 6s, accessible action and Undo; reduced motion removes transforms. Preserve focus restoration and ARIA labels."
+    "accept": "After 02A acceptance, own overlay primitives and overlays.css only. Implement menu/popover/dialog/toast sizing, focus behavior, timing, keyboard/ARIA states and reduced motion from task 02. Do not change shell, views, global hotkeys or shared control ownership without an explicit serialized handoff."
   },
   {
     "id": "03",

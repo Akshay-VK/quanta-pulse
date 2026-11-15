@@ -2,6 +2,8 @@
 
 This wiki preserves dated decisions and their evidence. It is not the live tracker; use GitHub Issues for current work state.
 
+- [2026-11-15: Redesign foundation acceptance and shared-controls split](2026-11-15-redesign-foundation-and-controls.md) — accepted foundation/B01 evidence, bounded 02A/02B task graph, protected B02 lease, and small-context/screenshot milestone preference.
+
 ## Product decisions
 
 - [2026-11-15: Redesign appearance and interval decisions approved](2026-11-15-redesign-appearance-and-interval-approvals.md) — Explicit monospace behavior and 5/10/15/30/60-minute polling approval, with task ownership boundaries.
