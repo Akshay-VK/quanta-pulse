@@ -10,7 +10,10 @@ use tauri_plugin_opener::OpenerExt;
 use zeroize::Zeroizing;
 
 use crate::db::{self, EventFilter, ResourceFilter};
-use crate::models::{AuthStatus, CacheStats, ChangeEvent, Course, Digest, Resource, ScanOutcome, ScanRun, SessionRefreshResult, SessionResetResult, SyncStatus};
+use crate::models::{
+    AuthStatus, CacheStats, ChangeEvent, Course, Digest, Resource, ScanOutcome, ScanRun,
+    SessionRefreshResult, SessionResetResult, SyncStatus,
+};
 use crate::quanta::client::QuantaError;
 use crate::quanta::parse::extract_readable_text;
 use crate::quanta::preview::{
@@ -134,8 +137,12 @@ pub fn list_events(
     limit: Option<i64>,
 ) -> Result<Vec<ChangeEvent>, String> {
     let conn = state.conn();
-    db::list_events(&conn, unread_only.unwrap_or(false), limit.unwrap_or(200).clamp(1, 1000))
-        .map_err(|e| e.to_string())
+    db::list_events(
+        &conn,
+        unread_only.unwrap_or(false),
+        limit.unwrap_or(200).clamp(1, 1000),
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -198,7 +205,10 @@ pub fn list_scans(state: State<AppState>, limit: Option<i64>) -> Result<Vec<Scan
 }
 
 #[tauri::command]
-pub fn list_history_scans(state: State<AppState>, limit: Option<i64>) -> Result<Vec<ScanRun>, String> {
+pub fn list_history_scans(
+    state: State<AppState>,
+    limit: Option<i64>,
+) -> Result<Vec<ScanRun>, String> {
     let conn = state.conn();
     db::list_history_scans(&conn, limit.unwrap_or(50).clamp(1, 500)).map_err(|e| e.to_string())
 }
@@ -317,8 +327,12 @@ pub fn rebuild_baseline(state: State<AppState>, course_id: Option<i64>) -> Resul
         if !list.contains(&id) {
             list.push(id);
         }
-        db::set_kv(&conn, "rebaseline_courses", &serde_json::to_string(&list).unwrap())
-            .map_err(|e| e.to_string())?;
+        db::set_kv(
+            &conn,
+            "rebaseline_courses",
+            &serde_json::to_string(&list).unwrap(),
+        )
+        .map_err(|e| e.to_string())?;
     } else {
         db::del_kv(&conn, "baseline_established").map_err(|e| e.to_string())?;
     }
@@ -385,7 +399,11 @@ const PREVIEW_MAX_TEXT_CHARS: usize = 200_000;
 /// - `unsupported` — a type the webview cannot render; open it externally.
 /// - `tooLarge` — exceeded `limitBytes`; open it externally.
 #[derive(Debug, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum ResourcePreview {
     Text {
         text: String,
@@ -467,10 +485,9 @@ pub async fn preview_resource(
 
     // From here the network is needed, so take the lease (it pauses scanning)
     // and require a session.
-    let _preview_lease = state
-        .sync
-        .begin_preview()
-        .ok_or_else(|| "Quanta authentication is being reset. Try again after sign-in.".to_string())?;
+    let _preview_lease = state.sync.begin_preview().ok_or_else(|| {
+        "Quanta authentication is being reset. Try again after sign-in.".to_string()
+    })?;
     let Some(client) = state.client() else {
         return Err("Sign in to Quanta to preview resources.".to_string());
     };
@@ -662,7 +679,9 @@ pub fn test_notification(app: AppHandle) {
 #[tauri::command]
 pub fn db_info(state: State<AppState>) -> DbInfo {
     let conn = state.conn();
-    let size = std::fs::metadata(&state.db_path).map(|m| m.len()).unwrap_or(0);
+    let size = std::fs::metadata(&state.db_path)
+        .map(|m| m.len())
+        .unwrap_or(0);
     let log_dir = crate::logging::log_dir().map(|p| p.to_string_lossy().to_string());
     DbInfo {
         path: state.db_path.to_string_lossy().to_string(),
@@ -783,7 +802,10 @@ fn local_midnight_to_utc(date: chrono::NaiveDate) -> Result<String, String> {
         LocalResult::None => None,
     };
     resolved
-        .map(|dt| dt.with_timezone(&chrono::Utc).to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+        .map(|dt| {
+            dt.with_timezone(&chrono::Utc)
+                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        })
         .ok_or_else(|| "Could not resolve local timezone.".to_string())
 }
 
@@ -799,20 +821,46 @@ pub fn mirror_status(state: State<AppState>) -> crate::models::MirrorStats {
 /// One status per indexed resource, so rows can show their own mirror state
 /// without one command per row.
 #[tauri::command]
-pub fn mirror_local_files(
-    state: State<'_, AppState>,
-) -> Vec<crate::models::LocalFileStatus> {
+pub fn mirror_local_files(state: State<'_, AppState>) -> Vec<crate::models::LocalFileStatus> {
     let conn = state.conn();
     state
         .mirror
         .statuses(&conn)
         .into_iter()
-        .map(|(resource_id, status, error)| crate::models::LocalFileStatus {
-            resource_id,
-            status,
-            error,
-        })
+        .map(
+            |(resource_id, status, error)| crate::models::LocalFileStatus {
+                resource_id,
+                status,
+                error,
+            },
+        )
         .collect()
+}
+
+/// Current per-resource download attempts and known mirror states.
+#[tauri::command]
+pub fn mirror_download_progress(
+    state: State<'_, AppState>,
+) -> Vec<crate::models::MirrorDownloadProgress> {
+    let conn = state.conn();
+    state.mirror.download_progress(&conn)
+}
+
+/// Cancel one resource's current mirror attempt.
+#[tauri::command]
+pub fn cancel_mirror_download(state: State<'_, AppState>, resource_id: i64) {
+    let conn = state.conn();
+    state.mirror.cancel_download(&conn, resource_id);
+}
+
+/// Queue a fresh attempt for one resource.
+#[tauri::command]
+pub fn retry_mirror_download(
+    state: State<'_, AppState>,
+    resource_id: i64,
+) -> crate::models::MirrorDownloadProgress {
+    let conn = state.conn();
+    state.mirror.retry_download(&conn, resource_id)
 }
 
 /// The resolved local copy of one resource, for the peek panel. `null` when
@@ -890,7 +938,10 @@ pub async fn mirror_move_files(
 ) -> Result<crate::models::MirrorStats, String> {
     let moved = {
         let conn = state.conn();
-        state.mirror.move_to_new_root(&conn).map_err(|e| e.to_string())?
+        state
+            .mirror
+            .move_to_new_root(&conn)
+            .map_err(|e| e.to_string())?
     };
     tracing::info!(moved, "mirror files moved to new root");
     let conn = state.conn();

@@ -246,6 +246,19 @@ pub struct LocalFileStatus {
     pub error: Option<String>,
 }
 
+/// One in-memory mirror download attempt's observed progress.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MirrorDownloadProgress {
+    pub resource_id: i64,
+    /// Unique to this attempt so consumers can discard late updates.
+    pub attempt_id: String,
+    pub state: String,
+    pub bytes_done: u64,
+    pub bytes_total: Option<u64>,
+    pub error: Option<String>,
+}
+
 /// Mirror occupancy and queue state, for Settings > Files and the sidebar.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

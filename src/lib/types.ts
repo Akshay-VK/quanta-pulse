@@ -211,6 +211,16 @@ export interface LocalFileStatus {
   error: string | null;
 }
 
+/** Byte progress for one uniquely identified mirror attempt. */
+export interface MirrorDownloadProgress {
+  resourceId: number;
+  attemptId: string;
+  state: "queued" | "downloading" | "failed" | "cancelled" | "saved";
+  bytesDone: number;
+  bytesTotal: number | null;
+  error: string | null;
+}
+
 /** One resource's permanent local copy, resolved to an absolute path. */
 export interface LocalFile {
   resourceId: number;

@@ -18,6 +18,7 @@ import type {
   LocalFile,
   LocalFileStatus,
   MirrorStats,
+  MirrorDownloadProgress,
   Resource,
   ResourceFilter,
   ResourcePreview,
@@ -132,6 +133,11 @@ export const api = {
   mirrorStats: () => invoke<MirrorStats>("mirror_status"),
   /** One status per indexed resource, for row icons. */
   mirrorLocalFiles: () => invoke<LocalFileStatus[]>("mirror_local_files"),
+  mirrorDownloadProgress: () => invoke<MirrorDownloadProgress[]>("mirror_download_progress"),
+  cancelMirrorDownload: (resourceId: number) =>
+    invoke<void>("cancel_mirror_download", { resourceId }),
+  retryMirrorDownload: (resourceId: number) =>
+    invoke<MirrorDownloadProgress>("retry_mirror_download", { resourceId }),
   /** The resolved copy of one resource, for the peek panel's path and size. */
   mirrorLocalFile: (resourceId: number) =>
     invoke<LocalFile | null>("mirror_local_file", { resourceId }),

@@ -14,17 +14,20 @@ import {
 } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "../lib/api";
-import type { LocalFile, LocalFileStatus, MirrorStats } from "../lib/types";
+import type { LocalFile, LocalFileStatus, MirrorDownloadProgress, MirrorStats } from "../lib/types";
 
 interface MirrorValue {
   stats: MirrorStats | null;
   /** resourceId -> status row; absent when nothing is known about it. */
   statuses: Map<number, LocalFileStatus>;
+  downloads: Map<number, MirrorDownloadProgress>;
   refresh: () => Promise<void>;
   /** Reconcile a point lookup with events received while it was pending. */
   lookupLocalFile: (resourceId: number) => Promise<LocalFile | null>;
   /** Publish an on-demand download result to all rows and details. */
   ensureLocal: (resourceId: number) => Promise<LocalFile>;
+  cancelDownload: (resourceId: number) => Promise<void>;
+  retryDownload: (resourceId: number) => Promise<MirrorDownloadProgress>;
   startBackfill: () => Promise<void>;
   pause: () => Promise<void>;
   resume: () => Promise<void>;
@@ -57,6 +60,12 @@ function emptyStats(): MirrorStats {
 export function MirrorProvider({ children }: { children: ReactNode }) {
   const [stats, setStats] = useState<MirrorStats | null>(null);
   const [statuses, setStatuses] = useState<Map<number, LocalFileStatus>>(() => new Map());
+  const [downloads, setDownloads] = useState<Map<number, MirrorDownloadProgress>>(() => new Map());
+  const attempts = useRef(new Map<number, string>());
+  const downloadRevisions = useRef(new Map<number, number>());
+  const downloadAttemptRevisions = useRef(new Map<number, number>());
+  const reconcilingDownloads = useRef(false);
+  const reconcileDownloadsAgain = useRef(false);
   const alive = useRef(true);
   const fileRevision = useRef(0);
   const fileRevisions = useRef(new Map<number, number>());
@@ -99,10 +108,25 @@ export function MirrorProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     const generation = ++refreshGeneration.current;
     const revision = fileRevision.current;
+    const downloadRevision = new Map(downloadRevisions.current);
+    const attemptRevision = new Map(downloadAttemptRevisions.current);
     try {
-      const [next, rows] = await Promise.all([api.mirrorStats(), api.mirrorLocalFiles()]);
+      const [next, rows, progressResult] = await Promise.all([api.mirrorStats(), api.mirrorLocalFiles(), api.mirrorDownloadProgress()]);
       if (!alive.current || generation !== refreshGeneration.current) return;
+      const progress = Array.isArray(progressResult) ? progressResult : [];
       setStats(next);
+      setDownloads((current) => {
+        const snapshot = new Map(progress.map((item) => [item.resourceId, item]));
+        for (const [id, item] of current) {
+          const retryCompleted = downloadAttemptRevisions.current.get(id) !== attemptRevision.get(id);
+          const sameAttemptAdvanced = downloadRevisions.current.get(id) !== downloadRevision.get(id) &&
+            snapshot.get(id)?.attemptId === item.attemptId;
+          if (retryCompleted || sameAttemptAdvanced) snapshot.set(id, item);
+        }
+        attempts.current.clear();
+        for (const item of snapshot.values()) attempts.current.set(item.resourceId, item.attemptId);
+        return snapshot;
+      });
       setStatuses((current) => {
         const snapshot = new Map(rows.map((row) => [row.resourceId, row]));
         // File events received after this request began are fresher than its snapshot.
@@ -118,6 +142,21 @@ export function MirrorProvider({ children }: { children: ReactNode }) {
       // Stats are a convenience; rows still work off the events below.
     }
   }, []);
+
+  // Attempt IDs are opaque. Verify an unfamiliar event against the backend
+  // instead of letting an old queued event establish or replace its identity.
+  const reconcileDownloads = useCallback(() => {
+    if (!alive.current) return;
+    reconcileDownloadsAgain.current = true;
+    if (reconcilingDownloads.current) return;
+    reconcilingDownloads.current = true;
+    void (async () => {
+      do {
+        reconcileDownloadsAgain.current = false;
+        await refresh();
+      } while (alive.current && reconcileDownloadsAgain.current);
+    })().finally(() => { reconcilingDownloads.current = false; });
+  }, [refresh]);
 
   // Backend events keep both halves current without polling.
   useEffect(() => {
@@ -135,11 +174,24 @@ export function MirrorProvider({ children }: { children: ReactNode }) {
           recordFile(resourceId, { resourceId, status, error: error ?? null });
         },
       );
+      const stopFileProgress = await listen<MirrorDownloadProgress>("mirror:file-progress", (event) => {
+        const item = event.payload;
+        if (!alive.current || cancelled) return;
+        const currentAttempt = attempts.current.get(item.resourceId);
+        if (currentAttempt !== item.attemptId) {
+          reconcileDownloads();
+          return;
+        }
+        downloadRevisions.current.set(item.resourceId, (downloadRevisions.current.get(item.resourceId) ?? 0) + 1);
+        setDownloads((current) => new Map(current).set(item.resourceId, item));
+      });
       if (cancelled) {
         stopProgress();
         stopFile();
+        stopFileProgress();
       } else {
-        unlisten.push(stopProgress, stopFile);
+        unlisten.push(stopProgress, stopFile, stopFileProgress);
+        reconcileDownloads();
       }
     })();
 
@@ -147,11 +199,7 @@ export function MirrorProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       unlisten.forEach((stop) => stop());
     };
-  }, [recordFile]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
+  }, [recordFile, reconcileDownloads]);
 
   const value = useMemo<MirrorValue>(() => {
     const apply = async (action: () => Promise<MirrorStats>) => {
@@ -167,6 +215,17 @@ export function MirrorProvider({ children }: { children: ReactNode }) {
       refresh,
       lookupLocalFile,
       ensureLocal,
+      downloads,
+      cancelDownload: async (resourceId) => { await api.cancelMirrorDownload(resourceId); },
+      retryDownload: async (resourceId) => {
+        const next = await api.retryMirrorDownload(resourceId);
+        if (!alive.current) return next;
+        attempts.current.set(resourceId, next.attemptId);
+        downloadAttemptRevisions.current.set(resourceId, (downloadAttemptRevisions.current.get(resourceId) ?? 0) + 1);
+        downloadRevisions.current.set(resourceId, (downloadRevisions.current.get(resourceId) ?? 0) + 1);
+        setDownloads((current) => new Map(current).set(resourceId, next));
+        return next;
+      },
       startBackfill: () => apply(() => api.mirrorStartBackfill()),
       pause: () => apply(() => api.mirrorPause()),
       resume: () => apply(() => api.mirrorResume()),
@@ -176,7 +235,7 @@ export function MirrorProvider({ children }: { children: ReactNode }) {
       statusOf: (resourceId) =>
         resourceId == null ? null : statuses.get(resourceId) ?? null,
     };
-  }, [stats, statuses, refresh, lookupLocalFile, ensureLocal]);
+  }, [stats, statuses, downloads, refresh, lookupLocalFile, ensureLocal]);
 
   return <MirrorContext.Provider value={value}>{children}</MirrorContext.Provider>;
 }
