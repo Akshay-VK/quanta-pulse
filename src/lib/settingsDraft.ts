@@ -36,8 +36,8 @@ export function isValidChatId(s: string | null | undefined): boolean {
 export function validateSettingsDraft(draft: Settings): SettingsDraftValidation {
   const errors: SettingsDraftValidation = {};
   const sync = draft.syncIntervalMinutes;
-  if (!Number.isFinite(sync) || sync < 15 || sync > 24 * 60) {
-    errors.syncIntervalMinutes = "Sync interval must be between 15 and 1440 minutes.";
+  if (!Number.isFinite(sync) || !Number.isInteger(sync) || sync < 5 || sync > 24 * 60) {
+    errors.syncIntervalMinutes = "Sync interval must be a whole number between 5 and 1440 minutes.";
   }
   const deadline = draft.deadlineReminderHours;
   if (!Number.isFinite(deadline) || deadline < 1 || deadline > 24 * 30) {

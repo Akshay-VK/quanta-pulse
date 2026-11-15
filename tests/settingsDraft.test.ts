@@ -50,11 +50,21 @@ describe("settingsDraft", () => {
     expect(isSettingsDirty(changed, base)).toBe(true);
   });
 
-  it("validates ranges", () => {
+  it("accepts offered and persisted monitoring intervals", () => {
+    for (const interval of [5, 10, 15, 30, 60, 61, 120, 1440]) {
+      expect(validateSettingsDraft({ ...base, syncIntervalMinutes: interval }).syncIntervalMinutes).toBeUndefined();
+    }
+  });
+
+  it("rejects invalid monitoring intervals and other out-of-range settings", () => {
+    for (const interval of [Number.NaN, Number.POSITIVE_INFINITY, 0, -1, 4, 1441, 5.5]) {
+      expect(validateSettingsDraft({ ...base, syncIntervalMinutes: interval }).syncIntervalMinutes).toBeDefined();
+    }
+
     const bad = { ...base, syncIntervalMinutes: 10, deadlineReminderHours: 0 };
     const errs = validateSettingsDraft(bad);
     expect(hasValidationErrors(errs)).toBe(true);
-    expect(errs.syncIntervalMinutes).toBeDefined();
+    expect(errs.syncIntervalMinutes).toBeUndefined();
     expect(errs.deadlineReminderHours).toBeDefined();
   });
 

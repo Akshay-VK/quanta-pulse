@@ -118,7 +118,7 @@ impl Settings {
         // Floor at 64 MB so eviction cannot thrash, ceiling at 64 GB so a typo
         // cannot promise more disk than a machine has.
         self.cache_limit_bytes = self.cache_limit_bytes.clamp(64 * 1024 * 1024, 64 * 1024 * 1024 * 1024);
-        self.sync_interval_minutes = self.sync_interval_minutes.clamp(15, 24 * 60);
+        self.sync_interval_minutes = self.sync_interval_minutes.clamp(5, 24 * 60);
         self.max_courses = self.max_courses.clamp(1, 500);
         self.max_resources_per_course = self.max_resources_per_course.clamp(1, 5000);
         self.max_detail_fetches = self.max_detail_fetches.clamp(0, 10_000);
@@ -322,13 +322,49 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_clamps_intervals() {
+    fn sanitize_preserves_offered_and_legacy_intervals() {
+        for interval in [5, 10, 15, 30, 60, 61, 120, 1440] {
+            let mut s = Settings { sync_interval_minutes: interval, ..Settings::default() };
+            s.sanitize();
+            assert_eq!(s.sync_interval_minutes, interval);
+        }
+    }
+
+    #[test]
+    fn sanitize_clamps_invalid_interval_bounds() {
         let mut s = Settings::default();
-        s.sync_interval_minutes = 1;
+        s.sync_interval_minutes = 0;
         s.concurrency = 99;
         s.sanitize();
-        assert_eq!(s.sync_interval_minutes, 15);
+        assert_eq!(s.sync_interval_minutes, 5);
         assert_eq!(s.concurrency, 8);
+
+        let mut s = Settings { sync_interval_minutes: 1441, ..Settings::default() };
+        s.sanitize();
+        assert_eq!(s.sync_interval_minutes, 1440);
+    }
+
+    #[test]
+    fn unsigned_interval_rejects_negative_and_fractional_wire_values() {
+        for invalid in ["-1", "5.5"] {
+            let mut json = serde_json::to_value(Settings::default()).unwrap();
+            json["syncIntervalMinutes"] = serde_json::from_str(invalid).unwrap();
+            assert!(serde_json::from_value::<Settings>(json).is_err());
+        }
+    }
+
+    #[test]
+    fn save_reload_preserves_five_and_ten_minute_intervals() {
+        for interval in [5, 10] {
+            let conn = rusqlite::Connection::open_in_memory().unwrap();
+            conn.execute_batch("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);").unwrap();
+            let mut settings = Settings { sync_interval_minutes: interval, ..Settings::default() };
+            settings.sanitize();
+            crate::db::save_settings(&conn, &settings).unwrap();
+            let mut reloaded = crate::db::load_settings(&conn);
+            reloaded.sanitize();
+            assert_eq!(reloaded.sync_interval_minutes, interval);
+        }
     }
 
     #[test]
