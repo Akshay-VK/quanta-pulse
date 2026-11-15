@@ -1681,6 +1681,34 @@ mod tests {
     }
 
     #[test]
+    fn course_display_name_migrates_a_populated_legacy_database() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(include_str!("../migrations/0001_init.sql"))
+            .unwrap();
+        conn.execute(
+            "INSERT INTO courses (id, external_course_id, name, short_name, url, first_seen_at)
+             VALUES (42, 'legacy-42', 'Original Quanta name', 'CS F111', 'https://quanta.bits-pilani.ac.in/course/42', '2026-11-15T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        assert!(conn.prepare("SELECT display_name FROM courses").is_err());
+
+        migrate(&conn).unwrap();
+        migrate(&conn).unwrap();
+
+        let courses = list_courses(&conn).unwrap();
+        assert_eq!(courses.len(), 1);
+        let course = &courses[0];
+        assert_eq!(course.id, 42);
+        assert_eq!(course.external_course_id, "legacy-42");
+        assert_eq!(course.name, "Original Quanta name");
+        assert_eq!(course.short_name.as_deref(), Some("CS F111"));
+        assert_eq!(course.display_name, None);
+        assert_eq!(course.url, "https://quanta.bits-pilani.ac.in/course/42");
+        assert_eq!(course.first_seen_at, "2026-11-15T00:00:00Z");
+    }
+
+    #[test]
     fn course_display_name_is_durable_and_discovery_preserves_source_identity() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("course-name.sqlite");

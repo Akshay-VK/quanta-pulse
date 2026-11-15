@@ -1,6 +1,7 @@
 // Typed wrappers around the Tauri command surface.
 
 import { invoke } from "@tauri-apps/api/core";
+import { loadAliases, saveAliases } from "./courseName";
 import type {
   InboxFilter,
   InboxPage,
@@ -50,8 +51,16 @@ export const api = {
     invoke<DuePage>("query_due_resources", { filter }),
 
   listCourses: () => invoke<Course[]>("list_courses"),
-  setCourseDisplayName: (courseId: number, displayName: string | null) =>
-    invoke<Course>("set_course_display_name", { courseId, displayName }),
+  setCourseDisplayName: async (courseId: number, displayName: string | null) => {
+    const course = await invoke<Course>("set_course_display_name", { courseId, displayName });
+    // A successful durable rename/reset supersedes this course's old local alias.
+    const aliases = loadAliases();
+    if (aliases[String(courseId)] !== undefined) {
+      delete aliases[String(courseId)];
+      saveAliases(aliases);
+    }
+    return course;
+  },
   listResources: (filter: ResourceFilter = {}) =>
     invoke<Resource[]>("list_resources", { filter }),
   listDashboardResources: () => invoke<Resource[]>("list_dashboard_resources"),
