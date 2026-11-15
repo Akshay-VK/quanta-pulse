@@ -18,8 +18,9 @@
   body {
     margin: 0;
     font-family: var(--type-ui);
-    font-size: 14px;
-    line-height: 20px;
+    font-size: var(--fs-ui);
+    font-weight: var(--weight-body);
+    line-height: var(--lh-ui);
     color: var(--ink);
     background: var(--bg);
     -webkit-font-smoothing: antialiased;
@@ -117,8 +118,8 @@
   .mono,
   .type-mono {
     font-family: var(--type-mono);
-    font-size: 12px;
-    line-height: 16px;
+    font-size: var(--fs-meta);
+    line-height: var(--lh-ui);
     font-variant-numeric: tabular-nums;
   }
 

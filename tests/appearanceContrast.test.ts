@@ -13,10 +13,27 @@ describe("All 72 authored appearance combinations", () => {
       for (const text of ["ink", "muted", "faint", "link"] as const) {
         expect(contrast(t[text], t[surface]), `${text} on ${surface}`).toBeGreaterThanOrEqual(4.5);
       }
+      for (const text of ["ok", "warn", "danger", "info"] as const) {
+        expect(t[text], `${text} is resolved for ${preference.mode}`).toMatch(/^#[0-9a-f]{6}$/i);
+        expect(contrast(t[text], t[surface]), `${text} on ${surface}`).toBeGreaterThanOrEqual(4.5);
+      }
       expect(contrast(t.focus, t[surface]), `focus on ${surface}`).toBeGreaterThanOrEqual(3);
       expect(contrast(t["line-strong"], t[surface]), `control on ${surface}`).toBeGreaterThanOrEqual(3);
     }
     expect(contrast(t["on-accent"], t.accent), "text on accent").toBeGreaterThanOrEqual(4.5);
     expect(contrast(t["disabled-fg"], t["disabled-bg"]), "disabled text").toBeGreaterThanOrEqual(4.5);
+    for (const kind of ["new", "upd", "red", "note", "gone", "ok", "warn"]) {
+      expect(contrast(t[`t-${kind}-fg`], t[`t-${kind}-bg`]), `${kind} tag text`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+  it("keeps selection surfaces neutral when accents change", () => {
+    for (const palette of PALETTES) {
+      for (const mode of ["light", "dark"] as const) {
+        const selections = ACCENTS.map(accent => resolveAppearance({
+          ...DEFAULT_APPEARANCE, palette: palette.value, mode, accent: accent.value,
+        }, false).tokens.selected);
+        expect(new Set(selections).size, `${palette.value} / ${mode}`).toBe(1);
+      }
+    }
   });
 });

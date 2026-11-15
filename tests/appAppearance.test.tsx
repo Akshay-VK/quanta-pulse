@@ -34,7 +34,7 @@ describe("Appearance in the real application", () => {
       expect(document.documentElement.dataset.theme).toBe(mode);
     }
     const saved = localStorage.getItem(APPEARANCE_KEY)!;
-    expect(JSON.parse(saved)).toEqual({ version: 1, mode: "light", palette: "ocean", accent: "teal", density: "compact" });
+    expect(JSON.parse(saved)).toEqual({ version: 1, mode: "light", palette: "ocean", accent: "teal", density: "compact", monospace: false });
     app.unmount(); setupApp(); localStorage.setItem(APPEARANCE_KEY, saved);
     applyAppearance(document.documentElement, JSON.parse(saved), true);
     const firstPaint = document.documentElement.style.cssText;
@@ -43,6 +43,15 @@ describe("Appearance in the real application", () => {
     await click(button("Appearance"));
     await click(button("Reset appearance"));
     expect(JSON.parse(localStorage.getItem(APPEARANCE_KEY)!)).toEqual(DEFAULT_APPEARANCE);
+  });
+  it("applies a saved monospace appearance before the application first paints", async () => {
+    const preference = { ...DEFAULT_APPEARANCE, monospace: true };
+    localStorage.setItem(APPEARANCE_KEY, JSON.stringify(preference));
+    app = await renderApp();
+    expect(document.documentElement.dataset.monospace).toBe("true");
+    for (const role of ["type-display", "type-title", "type-dialog", "type-lead", "type-ui", "type-ui-strong", "type-small", "type-caption"]) {
+      expect(document.documentElement.style.getPropertyValue(`--${role}`)).toBe('"Geist Mono Variable", ui-monospace, monospace');
+    }
   });
   it("keeps Settings named and reachable in the narrow sidebar rail", async () => {
     setupApp({ width: 820 });

@@ -76,23 +76,44 @@
     --type-small: "Geist Variable", system-ui, sans-serif;
     --type-caption: "Geist Variable", system-ui, sans-serif;
     --type-mono: "Geist Mono Variable", ui-monospace, monospace;
+    --fs-title: 20px;
+    --fs-section: 15px;
+    --fs-inspector: 17px;
+    --fs-ui: 13px;
+    --fs-label: 12px;
+    --fs-meta: 11px;
+    --fs-caps: 10px;
+    --weight-body: 400;
+    --weight-label: 500;
+    --weight-heading: 600;
+    --lh-ui: 1.4;
+    --lh-inspector: 1.3;
+    --tracking-caps: 0.06em;
 
     /* 4.3 Spacing and layout */
-    --sp-1: 4px;
-    --sp-2: 8px;
-    --sp-3: 12px;
-    --sp-4: 16px;
-    --sp-5: 20px;
-    --sp-6: 24px;
-    --sp-7: 28px;
-    --sp-8: 32px;
-    --sp-10: 40px;
-    --sp-12: 48px;
-    --sp-16: 64px;
+    /* Canonical spacing steps. Legacy aliases below remain composed from
+     * these values so existing layouts retain their measured dimensions. */
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-6: 24px;
+    --space-8: 32px;
+    --sp-1: var(--space-1);
+    --sp-2: var(--space-2);
+    --sp-3: var(--space-3);
+    --sp-4: var(--space-4);
+    --sp-5: calc(var(--space-3) + var(--space-2));
+    --sp-6: var(--space-6);
+    --sp-7: calc(var(--space-4) + var(--space-3));
+    --sp-8: var(--space-8);
+    --sp-10: calc(var(--space-8) + var(--space-2));
+    --sp-12: calc(var(--space-8) + var(--space-4));
+    --sp-16: calc(var(--space-8) + var(--space-8));
     --sidebar-w: 240px;
     --sidebar-rail: 56px;
     --topbar-h: 48px;
-    --row-h: 44px;
+    --row-h: 36px;
     --peek-w: 360px;
     --page-pad-x: 24px;
     --control-h-sm: 28px;
@@ -101,12 +122,15 @@
 
     /* 4.4 Shape, elevation, motion, z-index */
     --radius-xs: 4px;
+    --radius-chip: 5px;
     --radius-sm: 6px;
     --radius-md: 8px;
     --radius-lg: 10px;
+    --radius-dialog: 12px;
     --radius-pill: 999px;
-    --shadow-pop: 0 4px 16px rgba(0, 0, 0, 0.08), 0 0 0 1px var(--line);
-    --shadow-dialog: 0 16px 48px rgba(0, 0, 0, 0.16), 0 0 0 1px var(--line);
+    --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.12);
+    --shadow-modal: 0 24px 48px rgba(0, 0, 0, 0.18);
+    --shadow-dialog: var(--shadow-modal);
     --dur-fast: 120ms;
     --dur-base: 160ms;
     --dur-slow: 220ms;
@@ -130,9 +154,6 @@
     --red: var(--t-red-fg);
     --violet: var(--t-note-fg);
     --radius: var(--radius-sm);
-    --fs-ui: 14px;
-    --fs-meta: 13px;
-    --fs-label: 13px;
     --ok: var(--dot-ok);
     --warn: var(--dot-warn);
     --danger: var(--dot-danger);
@@ -179,7 +200,7 @@
     --t-ok-bg: #1f3d2b;
     --t-ok-fg: #8fd1a5;
 
-    --shadow-pop: 0 4px 16px rgba(0, 0, 0, 0.4), 0 0 0 1px var(--line);
-    --shadow-dialog: 0 16px 48px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--line);
+    --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.5);
+    --shadow-modal: 0 24px 48px rgba(0, 0, 0, 0.55);
   }
 }

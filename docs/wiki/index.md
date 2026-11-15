@@ -4,6 +4,7 @@ This wiki preserves dated decisions and their evidence. It is not the live track
 
 ## Product decisions
 
+- [2026-11-15: Redesign appearance and interval decisions approved](2026-11-15-redesign-appearance-and-interval-approvals.md) — Explicit monospace behavior and 5/10/15/30/60-minute polling approval, with task ownership boundaries.
 - [2026-11-15: Redesign implementation planning and task 00 contracts](2026-11-15-redesign-task00-contracts.md) — Dedicated tracker parent/sub-issue, source-frozen contracts, implementation blockers, model fallback and isolated-worktree staging boundary.
 - [2026-11-14: Windows native development startup verified](2026-11-14-windows-development-smoke.md) — Isolated WebView2 login smoke, cleanup evidence, and limits; supersedes the earlier startup-isolation preflight concern.
 - [2026-11-14: Final themes and workflow integration](2026-11-14-final-ui-integration.md) — Assembled code, AC/story audit, full gates, rendered matrices, superseding updater diagnosis and native verification limits.
