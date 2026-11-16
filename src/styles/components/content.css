@@ -445,8 +445,8 @@
   }
 
   .data-table.keyboard-list tbody tr:focus {
-    outline: 1px solid var(--focus);
-    outline-offset: -1px;
+    outline: 2px solid var(--focus);
+    outline-offset: -2px;
   }
 
   .data-table .num {
