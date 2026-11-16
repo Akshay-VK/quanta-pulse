@@ -11,10 +11,11 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::db::{self, ResourceWrite};
-use crate::models::ScanOutcome;
+use crate::models::{ScanDetails, ScanOutcome};
 use crate::notify;
 use crate::quanta::discover::{self, CrawlLimits, Progress, ProgressFn};
 use crate::state::AppState;
+use crate::sync::diagnostics::Collector;
 use crate::sync::diff::{self, Detected};
 
 /// How many consecutive misses before a resource is considered unavailable.
@@ -100,7 +101,12 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
     let Some(client) = app.state::<AppState>().client() else {
         let state = app.state::<AppState>();
         state.sync.set_auth_state("unauthenticated");
-        state.sync.last_error.lock().unwrap().replace("Not signed in.".into());
+        state
+            .sync
+            .last_error
+            .lock()
+            .unwrap()
+            .replace("Not signed in.".into());
         return outcome;
     };
 
@@ -123,7 +129,9 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
     };
 
     let cancel = { app.state::<AppState>().sync.cancel.clone() };
-    let discovery = discover::discover_all(client, limits, cancel, progress).await;
+    let collector = Collector::default();
+    let discovery =
+        discover::discover_all(client, limits, cancel, progress, collector.observer()).await;
 
     outcome.auth_expired = discovery.auth_expired;
     outcome.courses_scanned = discovery.courses_scanned;
@@ -135,14 +143,35 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
     if discovery.auth_expired {
         let state = app.state::<AppState>();
         state.sync.set_auth_state("expired");
-        *state.sync.last_error.lock().unwrap() = Some(
-            "Quanta session expired. Sign in again to resume monitoring.".into(),
-        );
+        *state.sync.last_error.lock().unwrap() =
+            Some("Quanta session expired. Sign in again to resume monitoring.".into());
         {
             let conn = state.conn();
             let now = db::now_rfc3339();
-            let _ = db::finish_scan(&conn, scan_id, "auth_expired", 0, 0, 0, 0, 0, 0, Some("Session expired"), false, &now);
+            let _ = db::finish_scan(
+                &conn,
+                scan_id,
+                "auth_expired",
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                Some("Session expired"),
+                false,
+                &now,
+            );
         }
+        persist_diagnostics(
+            app,
+            &collector,
+            scan_id,
+            &HashMap::new(),
+            false,
+            true,
+            &mut outcome,
+        );
         if state.sync.note_auth_expired() {
             notify::notify_auth_expired(app);
         }
@@ -153,7 +182,13 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
     // A reset cancels discovery because its partial result is not a reliable
     // inventory snapshot. Record the cancelled run without changing resources
     // or generating events from an interrupted traversal.
-    if discovery.cancelled && app.state::<AppState>().sync.auth_resetting.load(Ordering::SeqCst) {
+    if discovery.cancelled
+        && app
+            .state::<AppState>()
+            .sync
+            .auth_resetting
+            .load(Ordering::SeqCst)
+    {
         let state = app.state::<AppState>();
         let conn = state.conn();
         let now = db::now_rfc3339();
@@ -172,6 +207,15 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
             &now,
         );
         outcome.cancelled = true;
+        persist_diagnostics(
+            app,
+            &collector,
+            scan_id,
+            &HashMap::new(),
+            true,
+            false,
+            &mut outcome,
+        );
         return outcome;
     }
 
@@ -213,7 +257,9 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
                 Ok(id) => {
                     course_ids.insert(course.external_id.clone(), id);
                 }
-                Err(e) => outcome.errors.push(format!("course {}: {e}", course.external_id)),
+                Err(e) => outcome
+                    .errors
+                    .push(format!("course {}: {e}", course.external_id)),
             }
         }
 
@@ -224,7 +270,11 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
         for r in &discovery.resources {
             let course_id = course_ids.get(&r.course_external_id).copied();
             let previous = db::get_resource(&conn, &r.external_id);
-            let availability = if r.available { "available" } else { "unavailable" };
+            let availability = if r.available {
+                "available"
+            } else {
+                "unavailable"
+            };
             let section_path_json = if r.section_path.is_empty() {
                 None
             } else {
@@ -253,7 +303,9 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
             let resource_id = match db::upsert_resource(&conn, &write, &now) {
                 Ok(id) => id,
                 Err(e) => {
-                    outcome.errors.push(format!("resource {}: {e}", r.external_id));
+                    outcome
+                        .errors
+                        .push(format!("resource {}: {e}", r.external_id));
                     continue;
                 }
             };
@@ -292,7 +344,16 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
             };
             let key = diff::dedup_key(kind, &r.external_id, &discriminator);
 
-            match db::insert_event(&conn, Some(resource_id), course_id, kind, &title, Some(&description), &key, &now) {
+            match db::insert_event(
+                &conn,
+                Some(resource_id),
+                course_id,
+                kind,
+                &title,
+                Some(&description),
+                &key,
+                &now,
+            ) {
                 Ok(true) => match kind {
                     "new" | "announcement" => new_count += 1,
                     "updated" | "deadline" => updated_count += 1,
@@ -331,7 +392,8 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
                             let key = diff::dedup_key("deadline-reminder", &r.external_id, due);
                             if !db::event_exists(&conn, &key) {
                                 let course_id = course_ids.get(&r.course_external_id).copied();
-                                let resource_id = db::get_resource(&conn, &r.external_id).map(|x| x.id);
+                                let resource_id =
+                                    db::get_resource(&conn, &r.external_id).map(|x| x.id);
                                 let _ = db::insert_event(
                                     &conn,
                                     resource_id,
@@ -354,7 +416,11 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
         for course in &discovery.courses {
             if let Some(id) = course_ids.get(&course.external_id) {
                 let partial_prefix = format!("course {} page:", course.external_id);
-                let status = if discovery.errors.iter().any(|error| error.starts_with(&partial_prefix)) {
+                let status = if discovery
+                    .errors
+                    .iter()
+                    .any(|error| error.starts_with(&partial_prefix))
+                {
                     "partial"
                 } else {
                     "ok"
@@ -434,12 +500,30 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
             baseline,
             &now,
         );
-        *state.sync.last_error.lock().unwrap() = if status == "ok" {
-            None
-        } else {
-            summary
-        };
+        *state.sync.last_error.lock().unwrap() = if status == "ok" { None } else { summary };
     }
+
+    let observed_course_ids: HashMap<String, i64> = {
+        let state = app.state::<AppState>();
+        let conn = state.conn();
+        discovery
+            .courses
+            .iter()
+            .filter_map(|course| {
+                db::course_id_for_external(&conn, &course.external_id)
+                    .map(|id| (course.external_id.clone(), id))
+            })
+            .collect()
+    };
+    persist_diagnostics(
+        app,
+        &collector,
+        scan_id,
+        &observed_course_ids,
+        discovery.cancelled,
+        false,
+        &mut outcome,
+    );
 
     outcome.new = new_count as usize;
     outcome.updated = updated_count as usize;
@@ -449,6 +533,40 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
     notify::dispatch(app);
 
     outcome
+}
+
+/// Persist observed diagnostics after aggregate scan history has been finalized.
+/// The callback/collector never touches SQLite and failures do not rewrite the
+/// aggregate row; they are surfaced to the caller and redacted in logs.
+fn persist_diagnostics(
+    app: &AppHandle,
+    collector: &Collector,
+    scan_id: i64,
+    course_ids: &HashMap<String, i64>,
+    cancelled: bool,
+    auth_expired: bool,
+    outcome: &mut ScanOutcome,
+) {
+    let interrupted_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let details: ScanDetails = collector.finish(
+        scan_id,
+        cancelled,
+        auth_expired,
+        &interrupted_at,
+        course_ids,
+    );
+    if details.courses.is_empty() {
+        return;
+    }
+    let state = app.state::<AppState>();
+    let conn = state.conn();
+    if let Err(error) = crate::sync::diagnostics::persist(&conn, &details) {
+        let redacted = crate::logging::redact(&error.to_string());
+        let message = format!("scan diagnostics persistence failed: {redacted}");
+        tracing::warn!(error = %message, "could not persist observed scan diagnostics");
+        outcome.errors.push(message.clone());
+        *state.sync.last_error.lock().unwrap() = Some(message);
+    }
 }
 
 fn event_copy(
@@ -481,7 +599,11 @@ fn event_copy(
         ),
         "unavailable" => (
             format!("{} is unavailable", r.title),
-            format!("{} no longer appears available in {}", r.title, course_label(r)),
+            format!(
+                "{} no longer appears available in {}",
+                r.title,
+                course_label(r)
+            ),
         ),
         "restored" => (
             format!("{} is available again", r.title),
