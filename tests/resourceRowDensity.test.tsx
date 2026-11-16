@@ -78,6 +78,11 @@ async function render(density?: "comfortable" | "compact") {
 }
 
 describe("ResourceRow layout", () => {
+  it("keeps native keyboard access when a caller does not opt into roving focus", async () => {
+    await render();
+    expect(container.querySelector<HTMLButtonElement>(".row-select")?.tabIndex).toBe(0);
+  });
+
   it("switches at the approved 800px container threshold after resize", async () => {
     let resize!: ResizeObserverCallback;
     vi.stubGlobal("ResizeObserver", class {

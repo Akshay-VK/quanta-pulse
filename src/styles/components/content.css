@@ -26,6 +26,27 @@
     box-shadow: inset 3px 0 0 var(--focus);
   }
 
+  .resource-row.keyboard-focused {
+    background: var(--hover);
+    box-shadow: inset 2px 0 0 var(--focus);
+  }
+
+  .resource-row.multi-selected {
+    background: var(--selected);
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+
+  .row-focus-hint {
+    display: inline-block;
+    margin-inline-start: 6px;
+    padding: 0 4px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-xs);
+    color: var(--muted);
+    font: 10px/14px var(--type-mono);
+    vertical-align: middle;
+  }
+
   /* The whole selectable region: unread dot 7px, file icon 16px, title. Its
      tracks repeat the row's own so the columns line up across every row without
      subgrid, which our minimum webview does not support. */
@@ -973,6 +994,7 @@
   .attention-item { display: flex; align-items: center; border-bottom: 1px solid var(--line); }
   .attention-item > .resource-row { flex: 1; min-width: 0; border-bottom: 0; }
   .attention-read { flex-shrink: 0; margin-inline: 8px; }
+  .attention-multiselect { flex-shrink: 0; }
   .attention-section-title { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-block: 12px; }
   .attention-section-title h2, .agenda-collapse { font: 600 16px/24px var(--type-ui); }
   .due-soon, .agenda-group { margin-block: 24px; }
@@ -992,6 +1014,10 @@
   .inbox-view .result-count, .agenda-view .result-count { font-family: var(--type-ui); white-space: normal; }
   .inbox-view .row-time { width: auto; white-space: normal; }
   .inbox-view .resource-row:not(.row-material):not(.row-compact), .agenda-entry .resource-row:not(.row-material):not(.row-compact) { grid-template-columns: minmax(0, 1fr) 240px 24px 160px 92px; }
+  .inbox-view .row-material { grid-template-columns: minmax(0, 1fr) 240px 52px 24px 40px 92px; }
+  .inbox-view .row-material.row-compact { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) 52px 24px 40px 92px; }
   .agenda-entry .row-time { width: auto; }
   .inbox-view .row-material .row-time, .agenda-entry .row-material .row-time { width: 40px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .inbox-view .row-focus-hint { flex: 0 0 auto; }
+  .inbox-view .row-time-focused { font-size: 0; }
 }

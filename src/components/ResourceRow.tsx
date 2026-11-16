@@ -78,6 +78,12 @@ export default function ResourceRow({
   onPreview,
   onCourse,
   menu,
+  keyboardFocused = false,
+  multiSelected = false,
+  showFocusHint = false,
+  tabStop,
+  selectRef,
+  onKeyboardFocus,
 }: {
   /** Pass identity to use the App-owned policy; null plus recorded is an orphan. */
   resource?: Resource | null;
@@ -113,6 +119,16 @@ export default function ResourceRow({
   /** Opens the course this row belongs to; the course pill becomes a button. */
   onCourse?: () => void;
   menu: MenuItemSpec[];
+  /** Surface-owned roving focus marker; does not imply inspection. */
+  keyboardFocused?: boolean;
+  /** Surface-owned bulk selection marker; does not imply inspection. */
+  multiSelected?: boolean;
+  /** Show the surface keyboard hint in the time slot. */
+  showFocusHint?: boolean;
+  /** Keep this row in the tab order without implying that it is focused. */
+  tabStop?: boolean;
+  selectRef?: (node: HTMLButtonElement | null) => void;
+  onKeyboardFocus?: () => void;
 }) {
   const destinations = useMaterialActions();
   const actions = destinations && (resource !== undefined || recorded) ? destinations(resource ?? null, recorded) : null;
@@ -131,13 +147,18 @@ export default function ResourceRow({
         actions !== null && "row-material",
         compact && "row-compact",
         selected && "selected",
+        keyboardFocused && "keyboard-focused",
+        multiSelected && "multi-selected",
         unread && "row-unread",
         unavailable && "row-unavailable",
       )}
     >
       <button
+        ref={selectRef}
+        onFocus={onKeyboardFocus}
         type="button"
         className="row-select"
+        tabIndex={tabStop === undefined ? undefined : tabStop ? 0 : -1}
         aria-label={`Show details for ${title}`}
         onClick={(event) => onSelect(event.currentTarget)}
       >
@@ -174,7 +195,7 @@ export default function ResourceRow({
         </span>
       )}
 
-      <span className="row-time" title={timeLabel}>{timeLabel}</span>
+      <span className={cx("row-time", showFocusHint && "row-time-focused")} title={timeLabel}>{timeLabel}{showFocusHint && <kbd className="row-focus-hint">E</kbd>}</span>
 
       <span className="row-actions">
         {actions ? <MaterialButtons actions={actions} menu={menu} /> : <>
