@@ -101,7 +101,11 @@ export function assignDotIndices(
   let cursor = 0;
   for (const course of courses) {
     if (index.has(course.id)) continue;
-    while (used.has(cursor % DOT_COUNT)) cursor += 1;
+    let searched = 0;
+    while (used.has(cursor % DOT_COUNT) && searched < DOT_COUNT) {
+      cursor += 1;
+      searched += 1;
+    }
     const value = cursor % DOT_COUNT;
     index.set(course.id, value);
     next[String(course.id)] = value;

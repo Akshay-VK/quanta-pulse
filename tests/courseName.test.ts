@@ -2,6 +2,7 @@
 // that need a suffix, and first-sight colour assignment (spec 12, Task 3).
 
 import { beforeEach, describe, expect, it } from "vitest";
+import { Worker } from "node:worker_threads";
 import {
   ALIASES_KEY,
   COLORS_KEY,
@@ -112,6 +113,40 @@ describe("assignDotIndices", () => {
   it("ignores a nonsense stored index", () => {
     const { index } = assignDotIndices(courses, { "1": 99 });
     expect(index.get(1)).toBe(0);
+  });
+
+  it("finishes beyond the palette without changing saved colours or order", async () => {
+    const runBounded = (count: number, stored: Record<string, number> = {}, reverse = false) =>
+      new Promise<{ index: [number, number][]; stored: Record<string, number> }>((resolve, reject) => {
+        const fn = assignDotIndices.toString();
+        const worker = new Worker(`const { parentPort, workerData } = require('node:worker_threads'); const DOT_COUNT = ${DOT_COUNT}; const assign = (${fn}); parentPort.postMessage(assign(workerData.courses, workerData.stored));`, {
+          eval: true,
+          workerData: {
+            courses: Array.from({ length: count }, (_, i) => ({ id: i + 1 })).sort((a, b) =>
+              reverse ? b.id - a.id : a.id - b.id,
+            ),
+            stored,
+          },
+        });
+        const timer = setTimeout(() => { void worker.terminate(); reject(new Error("allocator exceeded worker deadline")); }, 500);
+        worker.once("message", (result) => { clearTimeout(timer); void worker.terminate(); resolve({ index: [...result.index], stored: result.stored }); });
+        worker.once("error", (error) => { clearTimeout(timer); void worker.terminate(); reject(error); });
+      });
+
+    const first = await runBounded(65);
+    expect(first.index).toHaveLength(65);
+    expect(first.index.slice(0, DOT_COUNT).map(([, value]) => value)).toEqual(
+      Array.from({ length: DOT_COUNT }, (_, i) => i),
+    );
+    expect(first.index.slice(DOT_COUNT).every(([, value]) => value >= 0 && value < DOT_COUNT)).toBe(true);
+    expect((await runBounded(65)).index).toEqual(first.index);
+    const reordered = await runBounded(65, first.stored, true);
+    expect(Object.fromEntries(reordered.index)).toEqual(Object.fromEntries(first.index));
+    const fullPalette: Record<string, number> = Object.fromEntries(
+      Array.from({ length: DOT_COUNT }, (_, i) => [String(i + 1), i]),
+    );
+    expect((await runBounded(13, fullPalette)).index.slice(0, DOT_COUNT).map(([, value]) => value))
+      .toEqual(Array.from({ length: DOT_COUNT }, (_, i) => i));
   });
 });
 
