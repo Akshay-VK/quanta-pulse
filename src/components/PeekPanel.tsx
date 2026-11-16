@@ -45,7 +45,10 @@ export default function PeekPanel({
   onClose,
   selectionKey,
   onCopy,
+  focusOnOpen = true,
 }: {
+  /** Modal containers own initial focus; inline inspectors focus their title. */
+  focusOnOpen?: boolean;
   selectionKey?: string;
   open: boolean;
   details: PeekDetails | null;
@@ -58,12 +61,12 @@ export default function PeekPanel({
   const previousKey = useRef(selectionKey);
 
   useEffect(() => {
-    if (open && details && (!wasOpen.current || previousKey.current !== selectionKey)) {
+    if (focusOnOpen && open && details && (!wasOpen.current || previousKey.current !== selectionKey)) {
       titleRef.current?.focus();
     }
     previousKey.current = selectionKey;
     wasOpen.current = open && Boolean(details);
-  }, [open, details, selectionKey]);
+  }, [open, details, selectionKey, focusOnOpen]);
 
   if (!open || !details) return null;
 
@@ -92,7 +95,7 @@ export default function PeekPanel({
           </IconButton>
         </div>
 
-        <h2 id={titleId} className="peek-title" tabIndex={-1} ref={titleRef}>
+        <h2 data-dialog-primary id={titleId} className="peek-title" tabIndex={-1} ref={titleRef}>
           {details.title}
         </h2>
 

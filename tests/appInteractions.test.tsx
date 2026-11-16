@@ -206,6 +206,7 @@ describe("App details lifecycle", () => {
     expect(appApi.openExternal).not.toHaveBeenCalled();
     expect(appApi.markRead).not.toHaveBeenCalled();
     await escape();
+    expect(document.querySelector(".peek")).toBeNull();
     expect(document.activeElement).toBe(button("Show details for Lecture 4"));
   });
 

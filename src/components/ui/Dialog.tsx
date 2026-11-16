@@ -13,6 +13,9 @@ interface DialogProps {
   describedBy?: string;
   role?: "dialog" | "alertdialog";
   className?: string;
+  /** Keep a modal portal inside a shell-owned container when needed. */
+  container?: HTMLElement;
+  overlayClassName?: string;
   /** Element to focus when the dialog opens. */
   initialFocusRef?: RefObject<HTMLElement>;
   onCloseAutoFocus?: (event: Event) => void;
@@ -31,6 +34,8 @@ export function Dialog({
   describedBy,
   role = "dialog",
   className,
+  container,
+  overlayClassName,
   initialFocusRef,
   onCloseAutoFocus,
   children,
@@ -46,15 +51,24 @@ export function Dialog({
   }
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
-      <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="dialog-overlay" />
+      <DialogPrimitive.Portal container={container}>
+        <DialogPrimitive.Overlay className={cx("dialog-overlay", overlayClassName)} />
         <DialogPrimitive.Content
           ref={contentRef}
           className={cx("dialog-content", className)}
           role={role}
+          aria-modal="true"
           aria-label={label}
           aria-labelledby={labelledBy}
           aria-describedby={describedBy}
+          onKeyDown={(event) => {
+            // A background toast can become the highest Radix layer. Escape
+            // from this modal still belongs here unless a nested layer used it.
+            if (event.key === "Escape" && !event.defaultPrevented) {
+              event.preventDefault();
+              onOpenChange(false);
+            }
+          }}
           onOpenAutoFocus={(event) => {
             if (initialFocusRef) {
               event.preventDefault();

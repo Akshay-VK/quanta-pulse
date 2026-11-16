@@ -44,6 +44,38 @@
     width: min(520px, calc(100vw - 32px));
   }
 
+  .dialog-overlay.workspace-inspector-scrim {
+    display: block;
+    z-index: calc(var(--z-popover) - 2);
+  }
+
+  .dialog-content.workspace-inspector-dialog {
+    top: 8px;
+    right: 8px;
+    bottom: 8px;
+    left: auto;
+    width: 320px;
+    max-width: calc(100vw - 16px);
+    max-height: none;
+    height: auto;
+    padding: 0;
+    overflow: hidden;
+    z-index: calc(var(--z-popover) - 1);
+    transform: none;
+    animation: none;
+  }
+
+  .workspace-inspector-dialog .peek {
+    position: relative;
+    inset: auto;
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    border-left: 1px solid var(--line);
+    z-index: auto;
+    transform: none;
+  }
+
   .dialog-title {
     font: 600 16px/24px var(--type-dialog);
     color: var(--ink);
@@ -299,6 +331,10 @@
     min-width: 0;
   }
 
+  .peek-inner > * {
+    flex-shrink: 0;
+  }
+
   .peek-header {
     display: flex;
     align-items: center;
@@ -405,16 +441,8 @@
     }
   }
 
-  @media (max-width: 1179px) {
-    .peek-inner {
-      width: var(--peek-w);
-    }
-
-    @media (max-width: 759px) {
-      .peek-inner {
-        width: 100%;
-      }
-    }
+  .peek-inner {
+    width: 100%;
   }
 
   /* -------------------------------------------------------- preview dialog */

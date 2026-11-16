@@ -10,7 +10,8 @@ import {
   Settings,
   Sun,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
+import { useEffect, useRef } from "react";
 import { cx } from "../lib/cx";
 import { NAV, type ViewId } from "../lib/nav";
 import { courseDotClass } from "./ui/CoursePill";
@@ -151,6 +152,50 @@ export default function Sidebar({
   /** The narrow-width drawer is open over the content. */
   overlay?: boolean;
 }) {
+  const sidebarRef = useRef<HTMLDivElement>(null);
+  const wasOverlay = useRef(false);
+  const returnFocus = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (overlay && !wasOverlay.current) {
+      returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      sidebarRef.current?.querySelector<HTMLElement>(
+        'button:not([disabled]):not([tabindex="-1"])',
+      )?.focus();
+    } else if (!overlay && wasOverlay.current) {
+      const active = document.activeElement;
+      const anotherModalOpen = document.querySelector(
+        '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]',
+      );
+      const focusStayedInDrawer = sidebarRef.current?.contains(active) || active === document.body;
+      if (returnFocus.current?.isConnected && focusStayedInDrawer && !anotherModalOpen) {
+        returnFocus.current.focus();
+      }
+      returnFocus.current = null;
+    }
+    wasOverlay.current = overlay;
+  }, [overlay]);
+
+  const trapDrawerFocus = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (!overlay || event.key !== "Tab") return;
+    const focusable = [...(sidebarRef.current?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]):not([tabindex="-1"]), a[href], input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ) ?? [])];
+    if (focusable.length === 0) {
+      event.preventDefault();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && (document.activeElement === first || !sidebarRef.current?.contains(document.activeElement))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (document.activeElement === last || !sidebarRef.current?.contains(document.activeElement))) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
   const topCourses = [...courses]
     .sort((a, b) => {
       const code = (course: Course) => courseLabel(course.id)?.name ?? course.shortName ?? course.name;
@@ -160,14 +205,21 @@ export default function Sidebar({
     .slice(0, 8);
 
   return (
-    <div className={cx("sidebar", overlay && "overlay")}>
+    <div
+      ref={sidebarRef}
+      className={cx("sidebar", overlay && "overlay")}
+      role={overlay ? "dialog" : undefined}
+      aria-modal={overlay ? true : undefined}
+      aria-label={overlay ? "Primary navigation" : undefined}
+      onKeyDown={trapDrawerFocus}
+    >
       {/* The logo doubles as the expand affordance in the rail. */}
       <button
         type="button"
         className="sidebar-brand"
         data-tauri-drag-region
         onClick={collapsed ? onToggle : undefined}
-        aria-label={collapsed ? `Expand sidebar (${formatShortcut("Mod+\\")})` : undefined}
+        aria-label={collapsed ? (overlay ? "Close navigation" : `Expand sidebar (${formatShortcut("Mod+\\")})`) : undefined}
         tabIndex={collapsed ? 0 : -1}
       >
         <Activity className="brand-mark" aria-hidden="true" />
@@ -190,13 +242,13 @@ export default function Sidebar({
               // Library is the course list only; a course page is its own place.
               active={view === item.id && (item.id !== "library" || activeCourseId == null)}
               badge={item.id === "today" ? unreadTotal : undefined}
-              collapsed={collapsed}
+              collapsed={collapsed && !overlay}
               onClick={() => onView(item.id)}
             />
           ))}
         </nav>
 
-        {!collapsed && courses.length > 0 && (
+        {(!collapsed || overlay) && courses.length > 0 && (
           <div className="course-nav-section">
             <p className="nav-section-label">Courses</p>
             <div className="course-nav-list">
@@ -206,7 +258,7 @@ export default function Sidebar({
                   course={course}
                   unread={unreadByCourse.get(course.id) ?? 0}
                   active={view === "library" && activeCourseId === course.id}
-                  collapsed={collapsed}
+                  collapsed={collapsed && !overlay}
                   onSelect={() => onCourse(course.id)}
                 />
               ))}
@@ -224,12 +276,12 @@ export default function Sidebar({
 
       <div className="sidebar-footer">
         <SyncStatus sync={sync} onOpenScans={onOpenScans} />
-        <SyncButton running={Boolean(sync?.running)} onSync={onSync} collapsed={collapsed} />
+        <SyncButton running={Boolean(sync?.running)} onSync={onSync} collapsed={collapsed && !overlay} />
 
         {collapsed ? (
           // Always visible: the rail must always offer a way back out.
           <Tooltip content="Expand sidebar (Ctrl+\\)" side="right">
-            <IconButton label="Expand sidebar (Ctrl+\\)" size={28} tooltip={false} onClick={onToggle}>
+            <IconButton label={overlay ? "Close navigation" : "Expand sidebar (Ctrl+\\)"} size={28} tooltip={false} onClick={onToggle}>
               <PanelLeftOpen aria-hidden="true" />
             </IconButton>
           </Tooltip>

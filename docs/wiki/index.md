@@ -26,3 +26,7 @@ This wiki preserves dated decisions and their evidence. It is not the live track
 - [2026-11-13: User-requested pause](2026-11-13-paused-handoff.md) — Historical pause record and safe resume point.
 - [2026-11-13: Implementation resumed and integrated](2026-11-13-resume-and-merge.md) — Historical ticket merge checkpoints and gates.
 - [2026-11-13: Final workflow acceptance](2026-11-13-resume-and-merge.md#2026-11-13-final-workflow-acceptance) — Final code and rendered evidence, limits, completed ticket status, and PR handoff; supersedes earlier pending-status entries.
+- [2026-11-16: Redesign implementation checkpoint](2026-11-16-redesign-checkpoint.md) — accepted B02/B03/02B evidence, combined gates, consumer contract, and native verification limits.
+- [2026-11-16: Workspace shell implementation](2026-11-16-workspace-shell.md) — task 03 shell geometry, exported slot contract, drawer focus behavior, rendered evidence, and tracker limits.
+
+- [2026-11-16: Observed scan diagnostics acceptance](2026-11-16-scan-diagnostics.md) — B04 integration, native Windows runtime proof, and remaining UI scope.

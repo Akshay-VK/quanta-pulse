@@ -8,6 +8,7 @@ import { Moon, Sun } from "lucide-react";
 import { AppearancePopover, AppearanceControls } from "./components/Appearance";
 import Sidebar from "./components/Sidebar";
 import TopBar from "./components/TopBar";
+import WorkspacePanel from "./components/WorkspacePanel";
 import PeekPanel, { type PeekDetails } from "./components/PeekPanel";
 import CommandPalette, { type PaletteAction } from "./components/CommandPalette";
 import SessionRefreshBanner from "./components/SessionRefreshBanner";
@@ -146,6 +147,7 @@ function AppShell() {
 
   // Below this width the sidebar is a rail and expands over the content.
   const narrow = useMediaQuery("(max-width: 959px)");
+  const inspectorOverlay = useMediaQuery("(max-width: 1099px)");
   const collapsed = narrow || sidebarCollapsed;
 
   const backStack = useRef<Route[]>([]);
@@ -554,12 +556,7 @@ function AppShell() {
     [notify, copyText],
   );
 
-  const closePeek = useCallback(() => {
-    if (!selectionRef.current) return;
-    selectionRef.current = null;
-    ++selectionGeneration.current;
-    setSelection(null);
-    setPeekLocal(null);
+  const restorePeekFocus = useCallback(() => {
     const origin = lastRow.current;
     const visible = (element: HTMLElement) =>
       element.isConnected &&
@@ -574,6 +571,15 @@ function AppShell() {
       heading?.focus();
     }
   }, []);
+
+  const closePeek = useCallback(() => {
+    if (!selectionRef.current) return;
+    selectionRef.current = null;
+    ++selectionGeneration.current;
+    setSelection(null);
+    setPeekLocal(null);
+    restorePeekFocus();
+  }, [restorePeekFocus]);
 
   useEffect(() => {
     const current = selectionRef.current;
@@ -787,25 +793,46 @@ function AppShell() {
         )}
         <Sidebar
           view={route.view}
-          onView={navigate}
+          onView={(view) => {
+            navigate(view);
+            if (narrow) setDrawerOpen(false);
+          }}
           courses={courses}
           unreadByCourse={unreadByCourse}
           unreadTotal={unread}
           activeCourseId={route.courseId}
-          onCourse={navigateToCourse}
+          onCourse={(courseId) => {
+            navigateToCourse(courseId);
+            if (narrow) setDrawerOpen(false);
+          }}
           sync={sync}
           onSync={() => void handleSync()}
-          onOpenScans={() => navigate("history")}
-          onOpenPalette={() => setPaletteOpen(true)}
+          onOpenScans={() => {
+            navigate("history");
+            if (narrow) setDrawerOpen(false);
+          }}
+          onOpenPalette={() => {
+            if (narrow) setDrawerOpen(false);
+            setPaletteOpen(true);
+          }}
           collapsed={collapsed}
-          onToggle={collapsed && narrow ? () => setDrawerOpen(true) : toggleSidebar}
+          onToggle={collapsed && narrow ? () => setDrawerOpen((open) => !open) : toggleSidebar}
           overlay={narrow && drawerOpen}
         />
 
         <div className="work">
+          {sessionExpired && (
+            <div className="banner-region">
+              <SessionRefreshBanner
+                sessionExpired
+                onRestart={restartQuantaSession}
+              />
+            </div>
+          )}
+
           <TopBar
             items={breadcrumb.items}
-            current={breadcrumb.current}
+            current={currentCourse ? breadcrumb.current : ""}
             actions={
               <>
                 <AppearancePopover appearance={appearance} />
@@ -819,105 +846,103 @@ function AppShell() {
             }
           />
 
-          {sessionExpired && (
-            <div className="banner-region">
-              <SessionRefreshBanner
-                sessionExpired
-                onRestart={restartQuantaSession}
-              />
-            </div>
-          )}
-
           <SyncProgress running={Boolean(sync?.running)} progress={sync?.progress ?? 0} />
 
-          <main className="app-main" ref={mainRef}>
-            <div className="page">
-              {route.view === "today" && (
-                <InboxView
-                  inbox={inbox} due={due} contextError={loadError} courses={courses} resources={resources}
-                  storedCount={dbInfo?.resourceCount ?? resources.length}
-                  baseline={dbInfo?.eventCount === 0 && scans.some(scan => scan.isBaseline && scan.status === "ok")}
-                  details={detailsAdapters.today} now={now} timeZone={timeZone}
-                  onOpen={(url) => void open(url)} onOpenLocal={(id) => void openLocal(id)}
-                  onDownloadOpen={(id) => void downloadAndOpen(id)} onPreview={setPreviewResource}
-                  onOpenCourse={navigateToCourse} onAgenda={() => navigate("calendar")}
-                  onLibrary={() => navigate("library")} onSync={() => void handleSync()}
-                  onChanged={refresh}
-                />
-              )}
-              {route.view === "calendar" && (
-                <CalendarView
-                  due={agendaDue} dueFilter={dueFilter} setDueFilter={setDueFilter} now={now} timeZone={timeZone}
-                  courses={courses}
-                  resources={resources}
-                  onOpen={(url) => void open(url)}
-                  onOpenLocal={(resourceId) => void openLocal(resourceId)}
-                  onDownloadOpen={(id) => void downloadAndOpen(id)} onPreview={setPreviewResource}
-                  onOpenScan={() => navigate("history")}
-                  onOpenCourse={navigateToCourse}
-                  details={detailsAdapters.calendar}
-                />
-              )}
-              {route.view === "library" && (
-                <LibraryView
-                  courses={courses}
-                  resources={resources}
-                  courseId={route.courseId}
-                  folderPath={route.folderPath}
-                  onNavigate={navigateToCourse}
-                  unreadByCourse={unreadByCourse}
-                  details={detailsAdapters.library}
-                  loading={loading}
-                  error={loadError}
-                  onRetry={() => void refresh()}
-                  onChanged={() => void refresh()}
-                  onOpen={(url) => void open(url)}
-                  initialSearch={librarySearch}
-                  initialSearchKey={librarySearchRequest}
-                  onSyncNow={() => void handleSync()}
-                />
-              )}
-              {route.view === "history" && (
-                <HistoryView
-                  courses={courses}
-                  scans={scans}
-                  events={historyEvents}
-                  resources={resources}
-                  details={detailsAdapters.history}
-                  loading={loading}
-                  error={loadError}
-                  onRetry={() => void refresh()}
-                  onOpen={(url) => void open(url)}
-                  onOpenLocal={(resourceId) => void openLocal(resourceId)}
-                  onMarkAllRead={markHistoryRead}
-                  onClearAll={clearHistoryActivity}
-                  onSyncNow={() => void handleSync()}
-                  onOpenCourse={navigateToCourse}
-                />
-              )}
-              {route.view === "settings" && settings && (
-                <SettingsView
-                  settings={settings}
-                  auth={auth}
-                  dbInfo={dbInfo}
-                  onSave={saveSettings}
-                  onLogout={handleLogout}
-                  onRefresh={() => void refresh()}
-                  appearance={<AppearanceControls appearance={appearance} />}
-                  onController={registerSettingsController}
-                />
-              )}
-            </div>
-          </main>
+          <WorkspacePanel
+            content={<main className="app-main" ref={mainRef}>
+              <div className="page">
+                {route.view === "today" && (
+                  <InboxView
+                    inbox={inbox} due={due} contextError={loadError} courses={courses} resources={resources}
+                    storedCount={dbInfo?.resourceCount ?? resources.length}
+                    baseline={dbInfo?.eventCount === 0 && scans.some(scan => scan.isBaseline && scan.status === "ok")}
+                    details={detailsAdapters.today} now={now} timeZone={timeZone}
+                    onOpen={(url) => void open(url)} onOpenLocal={(id) => void openLocal(id)}
+                    onDownloadOpen={(id) => void downloadAndOpen(id)} onPreview={setPreviewResource}
+                    onOpenCourse={navigateToCourse} onAgenda={() => navigate("calendar")}
+                    onLibrary={() => navigate("library")} onSync={() => void handleSync()}
+                    onChanged={refresh}
+                  />
+                )}
+                {route.view === "calendar" && (
+                  <CalendarView
+                    due={agendaDue} dueFilter={dueFilter} setDueFilter={setDueFilter} now={now} timeZone={timeZone}
+                    courses={courses}
+                    resources={resources}
+                    onOpen={(url) => void open(url)}
+                    onOpenLocal={(resourceId) => void openLocal(resourceId)}
+                    onDownloadOpen={(id) => void downloadAndOpen(id)} onPreview={setPreviewResource}
+                    onOpenScan={() => navigate("history")}
+                    onOpenCourse={navigateToCourse}
+                    details={detailsAdapters.calendar}
+                  />
+                )}
+                {route.view === "library" && (
+                  <LibraryView
+                    courses={courses}
+                    resources={resources}
+                    courseId={route.courseId}
+                    folderPath={route.folderPath}
+                    onNavigate={navigateToCourse}
+                    unreadByCourse={unreadByCourse}
+                    details={detailsAdapters.library}
+                    loading={loading}
+                    error={loadError}
+                    onRetry={() => void refresh()}
+                    onChanged={() => void refresh()}
+                    onOpen={(url) => void open(url)}
+                    initialSearch={librarySearch}
+                    initialSearchKey={librarySearchRequest}
+                    onSyncNow={() => void handleSync()}
+                  />
+                )}
+                {route.view === "history" && (
+                  <HistoryView
+                    courses={courses}
+                    scans={scans}
+                    events={historyEvents}
+                    resources={resources}
+                    details={detailsAdapters.history}
+                    loading={loading}
+                    error={loadError}
+                    onRetry={() => void refresh()}
+                    onOpen={(url) => void open(url)}
+                    onOpenLocal={(resourceId) => void openLocal(resourceId)}
+                    onMarkAllRead={markHistoryRead}
+                    onClearAll={clearHistoryActivity}
+                    onSyncNow={() => void handleSync()}
+                    onOpenCourse={navigateToCourse}
+                  />
+                )}
+                {route.view === "settings" && settings && (
+                  <SettingsView
+                    settings={settings}
+                    auth={auth}
+                    dbInfo={dbInfo}
+                    onSave={saveSettings}
+                    onLogout={handleLogout}
+                    onRefresh={() => void refresh()}
+                    appearance={<AppearanceControls appearance={appearance} />}
+                    onController={registerSettingsController}
+                  />
+                )}
+              </div>
+            </main>}
+            status={null}
+            inspector={selection?.owner === route.view && peekDetails ? (
+              <PeekPanel
+                focusOnOpen={!inspectorOverlay}
+                selectionKey={selection ? `${selection.identity}:${selectionGeneration.current}` : undefined}
+                open={selection?.owner === route.view && Boolean(peekDetails)}
+                details={peekDetails}
+                onClose={closePeek}
+                onCopy={(text) => void copyText(text, "Copied.")}
+              />
+            ) : null}
+            onCloseInspector={closePeek}
+            onRestoreInspectorFocus={restorePeekFocus}
+          />
         </div>
-
-        <PeekPanel
-          selectionKey={selection ? `${selection.identity}:${selectionGeneration.current}` : undefined}
-          open={selection?.owner === route.view && Boolean(peekDetails)}
-          details={peekDetails}
-          onClose={closePeek}
-          onCopy={(text) => void copyText(text, "Copied.")}
-        />
 
         {previewResource && (
           <PreviewDialog

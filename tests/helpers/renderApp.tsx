@@ -50,10 +50,15 @@ export function setupApp({ width = 1280, dark = false, platform = "Linux" } = {}
   Object.values(appApi).forEach((mock) => (mock as Mock).mockReset().mockResolvedValue(undefined));
   native.listeners.clear();
   localStorage.clear();
-  vi.stubGlobal("matchMedia", (query: string) => ({
-    matches: query.includes("prefers-color") ? dark : query.includes("959") && width <= 959,
-    media: query, addEventListener: () => {}, removeEventListener: () => {},
-  }));
+  vi.stubGlobal("matchMedia", (query: string) => {
+    const max = /max-width:\s*(\d+)px/.exec(query);
+    const min = /min-width:\s*(\d+)px/.exec(query);
+    return {
+      matches: query.includes("prefers-color") ? dark : Boolean(max || min) &&
+        (!max || width <= Number(max[1])) && (!min || width >= Number(min[1])),
+      media: query, addEventListener: () => {}, removeEventListener: () => {},
+    };
+  });
   vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
   appClipboard.writeText.mockReset().mockResolvedValue(undefined);
   vi.stubGlobal("navigator", new Proxy(navigator, {

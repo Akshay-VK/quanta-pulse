@@ -226,6 +226,43 @@ describe("sidebar collapse", () => {
     expect(container.querySelector(".sidebar")?.classList.contains("overlay")).toBe(true);
   });
 
+  it("traps keyboard focus in the narrow navigation drawer and exposes it as modal navigation", async () => {
+    await renderSidebar(null, () => {}, { collapsed: true, overlay: true });
+    const drawer = container.querySelector<HTMLElement>('.sidebar[role="dialog"]');
+    expect(drawer?.getAttribute("aria-modal")).toBe("true");
+    expect(drawer?.querySelector(".course-nav-section")).toBeTruthy();
+    const focusable = [...(drawer?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]):not([tabindex="-1"])',
+    ) ?? [])];
+    expect(focusable.length).toBeGreaterThan(1);
+    focusable[0].focus();
+    await act(async () => focusable[0].dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, shiftKey: true })));
+    expect(document.activeElement).toBe(focusable.at(-1));
+  });
+
+  it("returns focus to the drawer opener after the drawer closes", async () => {
+    const opener = document.createElement("button");
+    document.body.appendChild(opener);
+    opener.focus();
+    await renderSidebar(null, () => {}, { collapsed: true, overlay: true });
+    await renderSidebar(null, () => {}, { collapsed: true, overlay: false });
+    expect(document.activeElement).toBe(opener);
+    opener.remove();
+  });
+
+  it("keeps focus in a newly opened modal when the drawer closes", async () => {
+    const modal = document.createElement("div");
+    modal.setAttribute("role", "dialog");
+    const modalButton = document.createElement("button");
+    modal.appendChild(modalButton);
+    document.body.appendChild(modal);
+    await renderSidebar(null, () => {}, { collapsed: true, overlay: true });
+    modalButton.focus();
+    await renderSidebar(null, () => {}, { collapsed: true, overlay: false });
+    expect(document.activeElement).toBe(modalButton);
+    modal.remove();
+  });
+
   it("remembers the rail preference across a restart", () => {
     localStorage.removeItem(SIDEBAR_KEY);
     expect(loadCollapsed()).toBe(false);

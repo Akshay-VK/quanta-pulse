@@ -217,6 +217,7 @@
   .app.rail .brand-name,
   .app.rail .sidebar-collapse,
   .app.rail .st-kbd,
+  .app.rail .search-trigger .kbd,
   .app.rail .search-trigger .st-hint {
     display: none;
   }
@@ -226,9 +227,68 @@
     padding: 0;
   }
 
+  .app.rail .sidebar-scroll {
+    padding-inline: var(--sp-2);
+  }
+
   .app.rail .sidebar-footer .sync-copy,
   .app.rail .sidebar-footer .sync-btn-label {
     display: none;
+  }
+
+  /* The narrow drawer uses the expanded sidebar presentation over the rail. */
+  .app.rail.drawer-open .sidebar.overlay .nav-section-label,
+  .app.rail.drawer-open .sidebar.overlay .course-nav-section {
+    display: block;
+  }
+
+  .app.rail.drawer-open .sidebar.overlay .nav-label,
+  .app.rail.drawer-open .sidebar.overlay .nav-badge,
+  .app.rail.drawer-open .sidebar.overlay .brand-name,
+  .app.rail.drawer-open .sidebar.overlay .st-kbd,
+  .app.rail.drawer-open .sidebar.overlay .search-trigger .kbd,
+  .app.rail.drawer-open .sidebar.overlay .search-trigger .st-hint,
+  .app.rail.drawer-open .sidebar.overlay .sidebar-footer .sync-copy,
+  .app.rail.drawer-open .sidebar.overlay .sidebar-footer .sync-btn-label {
+    display: inline;
+  }
+
+  .app.rail.drawer-open .sidebar.overlay .all-courses-link {
+    display: flex;
+  }
+
+  .app.rail.drawer-open .sidebar.overlay .sidebar-brand {
+    justify-content: flex-start;
+    padding: 0 var(--sp-3);
+  }
+
+  .app.rail.drawer-open .sidebar.overlay .sidebar-scroll {
+    padding-inline: var(--sp-3);
+  }
+
+  [data-platform="macos"] .app.rail.drawer-open .sidebar.overlay .sidebar-brand {
+    padding-left: calc(76px + var(--sp-3));
+  }
+
+  .app.rail.drawer-open .sidebar.overlay .search-trigger {
+    justify-content: flex-start;
+    padding: 0 var(--sp-2);
+    border-color: var(--line);
+    background: var(--raised);
+  }
+
+  .app.rail.drawer-open .sidebar.overlay .search-trigger .kbd {
+    display: inline-flex;
+  }
+
+  .app.rail.drawer-open .sidebar.overlay .nav-item {
+    justify-content: flex-start;
+    padding: 0 var(--sp-2);
+  }
+
+  .app.rail.drawer-open .sidebar.overlay .sidebar-footer {
+    align-items: stretch;
+    padding: var(--sp-3);
   }
 
   .app.rail .sidebar-footer {

@@ -110,12 +110,12 @@
     --sp-10: calc(var(--space-8) + var(--space-2));
     --sp-12: calc(var(--space-8) + var(--space-4));
     --sp-16: calc(var(--space-8) + var(--space-8));
-    --sidebar-w: 240px;
-    --sidebar-rail: 56px;
-    --topbar-h: 48px;
+    --sidebar-w: 224px;
+    --sidebar-rail: 48px;
+    --topbar-h: 44px;
     --row-h: 36px;
-    --peek-w: 360px;
-    --page-pad-x: 24px;
+    --peek-w: 340px;
+    --page-pad-x: 16px;
     --control-h-sm: 28px;
     --control-h: 32px;
     --control-h-lg: 36px;
