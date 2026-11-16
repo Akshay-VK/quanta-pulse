@@ -151,7 +151,7 @@
   {
     "id": "04C",
     "title": "Serialized list keyboard and collapse integration",
-    "deps": "04C0,04C1,04C2,04C3,04C4,04C5",
+    "deps": "04C0,04C1,04C2,04C3,04C4,04C5,04C6",
     "spec": "3, 4, 6",
     "files": [
       "src/App.tsx",
@@ -912,5 +912,35 @@
       "tests/appHistoryKeyboard.test.tsx"
     ],
     "accept": "Approved native child #51 under #35, BLOCKED / NOT ready-for-agent until RUNNING 04C3 #48 accepted and root adapter/base dispatch. Changes-only lease in contracts/04C5-preflight.md: complete B05A event publication, event identity distinct from resources, captured E/U and Shift+A, Inbox-only Delete, independent focus/inspection/selection, guarded keys, async invalidation and real-App proof. Root owns App/adapter tests/CSS; no #50 dependency. Preserve B05B permanent-deletion APIs and explicit missing/History-hidden event caveats. Scans, header frozen-deletion conversion, collapse, Course Materials/Activity, Courses hub and cross-surface virtual-focus proof remain separate. No screen ownership changes."
+  },
+  {
+    "id": "B05C",
+    "title": "Offset paging preserving Course Activity range membership",
+    "deps": "00,B05A",
+    "spec": "5.4 (Course Activity), 7 (retained events)",
+    "files": [
+      "src-tauri/src/commands.rs",
+      "src-tauri/src/db.rs",
+      "src/lib/api.ts"
+    ],
+    "tests": [
+      "tests/eventsRangePaging-api.test.ts",
+      "focused Rust range paging tests"
+    ],
+    "accept": "Extend existing events_range with optional offset default 0 normalized nonnegative via EventFilter.offset, preserving default limit 2000/clamp 1..5000, dates, errors, and membership. Use raw detected_at DESC,id DESC stable ties after shared caller assessment; B05A instant ordering and accepted B05 umbrella remain unchanged. Exact lease and serialized dispatch requirements are in tasks/B05C.md. Prove >2000/>5000 traversals, exact multiples, ties, course/date/membership, defaults/negative offsets and API forwarding. No new command/DTO/registration/mode; offset traversal remains non-atomic."
+  },
+  {
+    "id": "04C6",
+    "title": "Course Activity keyboard integration",
+    "deps": "04C4,04B,04C0,B05C",
+    "spec": "4 (keys), 5.4 (Course Activity/retained failure), 7 (capture/dismiss/baseline)",
+    "files": [
+      "src/views/library/CoursePage.tsx",
+      "tests/appCourseActivityKeyboard.test.tsx"
+    ],
+    "tests": [
+      "tests/appCourseActivityKeyboard.test.tsx"
+    ],
+    "accept": "After accepted Materials and B05C plus root Activity adapter integration, add Activity-only event-ID keyboard actions and actual-App proof under tasks/04C6.md. Preserve eventsRange membership including History-cleared events; complete App History is incompatible due to its clear watermark. Capture exact eligible event IDs for read/unread/Shift+A and Inbox-only dismissal, exclude baseline actions, avoid sibling expansion, guard keys, separate focus/inspection/selection, invalidate stale generations and retry refresh without replaying successful mutation. Root remains sole integrator; preserve all screen owners and defer other UI/cleanup."
   }
 ]
