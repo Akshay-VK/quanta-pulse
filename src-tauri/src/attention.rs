@@ -155,6 +155,32 @@ pub fn snapshot_inbox(conn: &Connection, f: &InboxFilter) -> Result<Vec<i64>, St
         .collect();
     Ok(ids.into_iter().collect())
 }
+
+/// Capture every unread eligible event for one resource. This inspection
+/// scope intentionally ignores Inbox dismissals and History's clear watermark;
+/// neither action acknowledges an event. Pagination is not applied here.
+pub fn snapshot_resource_unread_event_ids(
+    conn: &Connection,
+    resource_id: i64,
+) -> Result<Vec<i64>, String> {
+    if resource_id <= 0 {
+        return Err("resourceId must be positive".into());
+    }
+    let mut statement = conn
+        .prepare(
+            "SELECT id FROM change_events
+                  WHERE resource_id=?1 AND read_at IS NULL
+                    AND change_type <> 'baseline' AND calendar_suppressed=0
+                  ORDER BY id",
+        )
+        .map_err(|error| error.to_string())?;
+    let ids = statement
+        .query_map([resource_id], |row| row.get(0))
+        .map_err(|error| error.to_string())?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|error| error.to_string())?;
+    Ok(ids)
+}
 fn validate_ids(ids: &[i64]) -> Result<(), String> {
     if ids.iter().any(|id| *id <= 0) {
         return Err("eventIds must contain positive integers".into());

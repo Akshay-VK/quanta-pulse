@@ -9,7 +9,10 @@ use std::path::Path;
 
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::models::{ChangeEvent, Course, Digest, Resource, ScanDetails, ScanRun};
+use crate::models::{
+    ChangeEvent, Course, Digest, HistoryFilter, HistoryPage, Resource, ScanDetails, ScanFilter,
+    ScanPage, ScanRun,
+};
 use crate::settings::Settings;
 
 /// Current UTC time as an RFC 3339 string.
@@ -821,6 +824,102 @@ pub fn list_history_events(conn: &Connection, limit: i64) -> rusqlite::Result<Ve
     list_events_after_id(conn, clear_watermark(conn, HISTORY_CLEAR_EVENT_ID_KEY), limit)
 }
 
+fn history_page_bounds(offset: usize, limit: usize) -> Result<(i64, i64), String> {
+    if !(1..=1000).contains(&limit) {
+        return Err("limit must be between 1 and 1000".into());
+    }
+    let offset = i64::try_from(offset).map_err(|_| "offset is too large".to_string())?;
+    let limit = i64::try_from(limit).map_err(|_| "limit is too large".to_string())?;
+    Ok((offset, limit))
+}
+
+fn history_bound(raw: &Option<String>, label: &str) -> Result<Option<chrono::DateTime<chrono::Utc>>, String> {
+    raw.as_ref()
+        .map(|value| {
+            chrono::DateTime::parse_from_rfc3339(value)
+                .map(|date| date.with_timezone(&chrono::Utc))
+                .map_err(|_| format!("{label} must be an RFC 3339 timestamp"))
+        })
+        .transpose()
+}
+
+/// Query complete History activity before slicing a page. History's clear
+/// watermark and calendar suppression remain view-specific visibility rules.
+pub fn query_history_events(
+    conn: &Connection,
+    filter: &HistoryFilter,
+) -> Result<HistoryPage, String> {
+    let (offset, limit) = history_page_bounds(filter.offset, filter.limit)?;
+    if filter.course_id.is_some_and(|id| id <= 0) {
+        return Err("courseId must be positive".into());
+    }
+    if filter.change_type.as_deref().is_some_and(|kind| {
+        !matches!(
+            kind,
+            "new" | "updated" | "announcement" | "deadline" | "unavailable" | "restored" | "baseline"
+        )
+    }) {
+        return Err("Unknown History changeType".into());
+    }
+    let since = history_bound(&filter.since, "since")?;
+    let until = history_bound(&filter.until, "until")?;
+    if since
+        .as_ref()
+        .zip(until.as_ref())
+        .is_some_and(|(a, b)| a >= b)
+    {
+        return Err("since must precede until".into());
+    }
+    let course_id = filter.course_id;
+    let change_type = filter.change_type.as_deref();
+    let watermark = clear_watermark(conn, HISTORY_CLEAR_EVENT_ID_KEY);
+    let mut statement = conn
+        .prepare("SELECT e.id, e.resource_id, e.course_id, c.name, r.title, r.url, r.resource_type,
+                r.uploaded_at, e.change_type, e.title, e.description, e.detected_at, e.read_at, r.source_page_url,
+                r.section_path, r.section
+         FROM change_events e LEFT JOIN resources r ON r.id=e.resource_id LEFT JOIN courses c ON c.id=e.course_id
+         WHERE e.id > ?1 AND e.calendar_suppressed=0
+           AND (?2 IS NULL OR e.course_id=?2) AND (?3 IS NULL OR e.change_type=?3)
+         ORDER BY e.detected_at DESC, e.id DESC")
+        .map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map(params![watermark, course_id, change_type], map_event)
+        .map_err(|error| error.to_string())?;
+    let search = filter.search.as_deref().unwrap_or("").trim().to_lowercase();
+    // RFC 3339 strings can use different precision and offsets; compare actual
+    // instants so a whole-second suffix cannot sort after a later fraction.
+    let mut timed = rows
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|event| {
+            chrono::DateTime::parse_from_rfc3339(&event.detected_at)
+                .map(|at| (event, at.with_timezone(&chrono::Utc)))
+                .map_err(|_| "Invalid History event timestamp".to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    timed.retain(|(event, at)| {
+        if since.as_ref().is_some_and(|bound| at < bound)
+            || until.as_ref().is_some_and(|bound| at >= bound) {
+            return false;
+        }
+            search.is_empty()
+                || [
+                    event.title.as_str(),
+                    event.description.as_deref().unwrap_or(""),
+                    event.course_name.as_deref().unwrap_or(""),
+                    event.resource_title.as_deref().unwrap_or(""),
+                ]
+                .iter()
+                .any(|field| field.to_lowercase().contains(&search))
+    });
+    timed.sort_by(|(a, at), (b, bt)| bt.cmp(at).then_with(|| b.id.cmp(&a.id)));
+    let total = timed.len();
+    let items = timed.into_iter().skip(offset as usize).take(limit as usize)
+        .map(|(event, _)| event).collect();
+    Ok(HistoryPage { items, total })
+}
+
 fn list_events_after_id(conn: &Connection, watermark: i64, limit: i64) -> rusqlite::Result<Vec<ChangeEvent>> {
     let query = format!(
         "{EVENT_SELECT} WHERE e.id > ?1 AND e.calendar_suppressed = 0
@@ -1183,6 +1282,33 @@ pub fn list_history_scans(conn: &Connection, limit: i64) -> rusqlite::Result<Vec
         map_scan,
     )?;
     rows.collect()
+}
+
+/// Query the complete visible History scan set, then apply explicit paging.
+pub fn query_history_scans(conn: &Connection, filter: &ScanFilter) -> Result<ScanPage, String> {
+    let (offset, limit) = history_page_bounds(filter.offset, filter.limit)?;
+    let watermark = clear_watermark(conn, HISTORY_CLEAR_SCAN_ID_KEY);
+    let total: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM scan_runs WHERE id>?1",
+            [watermark],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    let mut statement = conn
+        .prepare("SELECT id, started_at, completed_at, status, discovered_count, new_count, updated_count,
+                unavailable_count, courses_scanned, courses_failed, error_summary, is_baseline
+         FROM scan_runs WHERE id>?1 ORDER BY started_at DESC, id DESC LIMIT ?2 OFFSET ?3")
+        .map_err(|error| error.to_string())?;
+    let items = statement
+        .query_map(params![watermark, limit, offset], map_scan)
+        .map_err(|error| error.to_string())?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|error| error.to_string())?;
+    Ok(ScanPage {
+        items,
+        total: total as usize,
+    })
 }
 
 /// Save the exact terminal observations supplied by the scan worker.
@@ -2381,6 +2507,220 @@ mod tests {
         )
         .unwrap();
         assert_eq!(limited.len(), 2);
+    }
+
+    #[test]
+    fn paged_history_queries_keep_full_totals_watermarks_filters_and_tie_order() {
+        let conn = mem();
+        insert_event(
+            &conn,
+            None,
+            None,
+            "new",
+            "before clear",
+            None,
+            "before-clear",
+            "2026-11-15T00:00:00Z",
+        )
+        .unwrap();
+        let old_scan = start_scan(&conn, "2026-11-15T00:00:00Z").unwrap();
+        finish_scan(
+            &conn,
+            old_scan,
+            "ok",
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            None,
+            false,
+            "2026-11-15T00:00:01Z",
+        )
+        .unwrap();
+        clear_history_activity(&conn).unwrap();
+
+        let tx = conn.unchecked_transaction().unwrap();
+        for n in 0..1_205 {
+            let kind = if n % 2 == 0 { "new" } else { "updated" };
+            let title = if n == 1_204 { "Needle result" } else { "event" };
+            insert_event(
+                &tx,
+                None,
+                Some(7),
+                kind,
+                title,
+                None,
+                &format!("visible-{n}"),
+                "2026-11-16T10:00:00Z",
+            )
+            .unwrap();
+        }
+        let suppressed_id = tx.last_insert_rowid() + 1;
+        insert_event(
+            &tx,
+            None,
+            Some(7),
+            "new",
+            "suppressed",
+            None,
+            "suppressed",
+            "2026-11-16T10:00:00Z",
+        )
+        .unwrap();
+        tx.execute(
+            "UPDATE change_events SET calendar_suppressed=1 WHERE id=?1",
+            [suppressed_id],
+        )
+        .unwrap();
+        tx.execute(
+            "UPDATE change_events SET read_at='2026-11-16T10:01:00Z' WHERE id=(SELECT MIN(id) FROM change_events WHERE deduplication_key LIKE 'visible-%')",
+            [],
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO inbox_dismissals(event_id,dismissed_at) SELECT id,'2026-11-16T10:01:00Z' FROM change_events WHERE deduplication_key='visible-2'",
+            [],
+        )
+        .unwrap();
+        for n in 0..605 {
+            let id = start_scan(&tx, "2026-11-16T10:00:00Z").unwrap();
+            finish_scan(
+                &tx,
+                id,
+                "ok",
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                None,
+                false,
+                "2026-11-16T10:01:00Z",
+            )
+            .unwrap();
+            assert_eq!(id, old_scan + 1 + n);
+        }
+        tx.commit().unwrap();
+
+        let first = query_history_events(
+            &conn,
+            &HistoryFilter {
+                offset: 0,
+                limit: 5,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(first.total, 1_205);
+        assert_eq!(first.items.len(), 5);
+        assert!(
+            first.items.windows(2).all(|pair| pair[0].id > pair[1].id),
+            "equal timestamps break ties by descending ID"
+        );
+        let later = query_history_events(
+            &conn,
+            &HistoryFilter {
+                offset: 1_000,
+                limit: 20,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(later.total, 1_205);
+        assert_eq!(later.items.len(), 20);
+        let old_attention_rows = query_history_events(
+            &conn,
+            &HistoryFilter {
+                offset: 1_202,
+                limit: 5,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            old_attention_rows
+                .items
+                .iter()
+                .map(|event| event.id)
+                .collect::<Vec<_>>(),
+            vec![4, 3, 2],
+            "read and Inbox-dismissed events remain in History"
+        );
+        assert!(old_attention_rows.items.last().unwrap().read);
+        let search = query_history_events(
+            &conn,
+            &HistoryFilter {
+                search: Some("NEEDLE".into()),
+                offset: 0,
+                limit: 10,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(search.total, 1);
+        assert_eq!(search.items[0].title, "Needle result");
+        let typed = query_history_events(
+            &conn,
+            &HistoryFilter {
+                change_type: Some("updated".into()),
+                course_id: Some(7),
+                offset: 0,
+                limit: 1,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(typed.total, 602);
+        assert_eq!(typed.items.len(), 1);
+        let date_range = query_history_events(
+            &conn,
+            &HistoryFilter {
+                since: Some("2026-11-16T10:00:00Z".into()),
+                until: Some("2026-11-16T10:00:01Z".into()),
+                offset: 0,
+                limit: 10,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(date_range.total, 1_205, "since is inclusive and until exclusive");
+
+        let scans = query_history_scans(&conn, &ScanFilter {
+            offset: 600,
+            limit: 10,
+        })
+        .unwrap();
+        assert_eq!(scans.total, 605);
+        assert_eq!(scans.items.len(), 5);
+        assert!(
+            scans.items.windows(2).all(|pair| pair[0].id > pair[1].id),
+            "equal start times break ties by descending ID"
+        );
+    }
+
+    #[test]
+    fn history_bounds_compare_instants_and_reject_invalid_filters() {
+        let conn = mem();
+        for (n, at) in ["2026-11-16T10:00:00Z", "2026-11-16T10:00:00.500Z", "2026-11-16T10:00:01Z"].iter().enumerate() {
+            insert_event(&conn, None, None, "new", "event", None, &format!("bounds-{n}"), at).unwrap();
+        }
+        let filter = HistoryFilter { offset: 0, limit: 10,
+            since: Some("2026-11-16T15:30:00.500+05:30".into()),
+            until: Some("2026-11-16T10:00:01Z".into()), ..Default::default() };
+        let page = query_history_events(&conn, &filter).unwrap();
+        assert_eq!(page.total, 1, "whole seconds before a fractional lower bound are excluded");
+        assert_eq!(page.items[0].detected_at, "2026-11-16T10:00:00.500Z");
+        for invalid in [
+            HistoryFilter { limit: 0, ..filter.clone() },
+            HistoryFilter { limit: 1001, ..filter.clone() },
+            HistoryFilter { since: Some("not-a-date".into()), ..filter.clone() },
+            HistoryFilter { since: filter.until.clone(), ..filter.clone() },
+            HistoryFilter { course_id: Some(0), ..filter.clone() },
+            HistoryFilter { change_type: Some("unknown".into()), ..filter.clone() },
+        ] { assert!(query_history_events(&conn, &invalid).is_err()); }
     }
 
     #[test]

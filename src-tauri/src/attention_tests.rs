@@ -120,6 +120,39 @@ fn complete_inventory_pagination_and_snapshot_exceed_legacy_caps() {
     .unwrap();
     assert_eq!((due.total, due.items.len()), (5105, 5));
 }
+
+#[test]
+fn resource_unread_snapshot_is_complete_and_independent_of_inbox_and_history_visibility() {
+    let (_dir, conn) = fixture();
+    resource(&conn, 1, 1, None);
+    resource(&conn, 2, 1, None);
+    for id in 1..=1_205 {
+        event(&conn, id, Some(1), "new");
+    }
+    set_event_read_state(&conn, &[1], true, "2026-11-14T13:00:00Z").unwrap();
+    dismiss_inbox(&conn, &[2], "2026-11-14T13:00:00Z").unwrap();
+    conn.execute(
+        "UPDATE change_events SET calendar_suppressed=1 WHERE id=3",
+        [],
+    )
+    .unwrap();
+    event(&conn, 1_206, Some(1), "baseline");
+    event(&conn, 1_207, Some(2), "new");
+    db::clear_history_activity(&conn).unwrap();
+
+    let ids = snapshot_resource_unread_event_ids(&conn, 1).unwrap();
+    assert_eq!(ids.len(), 1_203);
+    assert_eq!(
+        ids.first(),
+        Some(&2),
+        "Inbox dismissal does not acknowledge the event"
+    );
+    assert_eq!(ids.last(), Some(&1_205));
+    assert_eq!(
+        snapshot_resource_unread_event_ids(&conn, 2).unwrap(),
+        vec![1_207]
+    );
+}
 #[test]
 fn state_is_idempotent_validated_and_atomic() {
     let (_dir, conn) = fixture();

@@ -79,6 +79,41 @@ export interface ScanRun {
   isBaseline: boolean;
 }
 
+export type HistoryChangeType =
+  | "new"
+  | "updated"
+  | "announcement"
+  | "deadline"
+  | "unavailable"
+  | "restored"
+  | "baseline";
+
+/** History date bounds are RFC 3339 instants; since is inclusive, until exclusive. */
+export interface HistoryFilter {
+  offset: number;
+  limit: number;
+  changeType?: HistoryChangeType;
+  courseId?: number;
+  since?: string;
+  until?: string;
+  search?: string;
+}
+
+export interface ScanFilter {
+  offset: number;
+  limit: number;
+}
+
+export interface HistoryPage {
+  items: ChangeEvent[];
+  total: number;
+}
+
+export interface ScanPage {
+  items: ScanRun[];
+  total: number;
+}
+
 export type ScanCourseStatus = "success" | "partial" | "failed" | "cancelled";
 
 export interface ScanDetails {

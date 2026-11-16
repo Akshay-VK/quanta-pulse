@@ -119,6 +119,46 @@ pub struct ChangeEvent {
     pub read: bool,
 }
 
+/// Filter and explicit pagination for the History Activity tab.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryFilter {
+    pub change_type: Option<String>,
+    pub course_id: Option<i64>,
+    /// Inclusive RFC 3339 timestamp.
+    pub since: Option<Timestamp>,
+    /// Exclusive RFC 3339 timestamp.
+    pub until: Option<Timestamp>,
+    pub search: Option<String>,
+    pub offset: usize,
+    pub limit: usize,
+}
+
+/// Complete filtered total and one page of History activity.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryPage {
+    pub items: Vec<ChangeEvent>,
+    pub total: usize,
+}
+
+/// Explicit pagination for History scan runs. The History scan recipe has no
+/// additional filters.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanFilter {
+    pub offset: usize,
+    pub limit: usize,
+}
+
+/// Complete History scan total and one page of runs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanPage {
+    pub items: Vec<ScanRun>,
+    pub total: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanRun {

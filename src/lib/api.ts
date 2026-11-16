@@ -5,6 +5,10 @@ import { loadAliases, saveAliases } from "./courseName";
 import type {
   InboxFilter,
   InboxPage,
+  HistoryFilter,
+  HistoryPage,
+  ScanFilter,
+  ScanPage,
   DueFilter,
   DuePage,
   AuthStatus,
@@ -70,6 +74,12 @@ export const api = {
     invoke<ChangeEvent[]>("list_events", { unreadOnly, limit }),
   listDashboardEvents: () => invoke<ChangeEvent[]>("list_dashboard_events"),
   listHistoryEvents: () => invoke<ChangeEvent[]>("list_history_events"),
+  queryHistoryEvents: (filter: HistoryFilter) =>
+    invoke<HistoryPage>("query_history_events", { filter }),
+  queryHistoryScans: (filter: ScanFilter) =>
+    invoke<ScanPage>("query_history_scans", { filter }),
+  snapshotResourceUnreadEventIds: (resourceId: number) =>
+    invoke<number[]>("snapshot_resource_unread_event_ids", { resourceId }),
   eventsRange: (from?: string, to?: string, courseId?: number, limit = 2000) =>
     invoke<ChangeEvent[]>("events_range", {
       from: from ?? null,

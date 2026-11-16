@@ -157,6 +157,15 @@ pub fn list_history_events(state: State<AppState>) -> Result<Vec<ChangeEvent>, S
     db::list_history_events(&conn, 1000).map_err(|e| e.to_string())
 }
 
+/// Query a page of complete filtered History activity.
+#[tauri::command]
+pub fn query_history_events(
+    state: State<AppState>,
+    filter: crate::models::HistoryFilter,
+) -> Result<crate::models::HistoryPage, String> {
+    db::query_history_events(&state.conn(), &filter)
+}
+
 #[tauri::command]
 pub fn clear_dashboard_activity(state: State<AppState>) -> Result<(), String> {
     let conn = state.conn();
@@ -211,6 +220,24 @@ pub fn list_history_scans(
 ) -> Result<Vec<ScanRun>, String> {
     let conn = state.conn();
     db::list_history_scans(&conn, limit.unwrap_or(50).clamp(1, 500)).map_err(|e| e.to_string())
+}
+
+/// Query a page of History scan runs, with a complete filtered total.
+#[tauri::command]
+pub fn query_history_scans(
+    state: State<AppState>,
+    filter: crate::models::ScanFilter,
+) -> Result<crate::models::ScanPage, String> {
+    db::query_history_scans(&state.conn(), &filter)
+}
+
+/// Capture every eligible unread event ID associated with a resource.
+#[tauri::command]
+pub fn snapshot_resource_unread_event_ids(
+    state: State<AppState>,
+    resource_id: i64,
+) -> Result<Vec<i64>, String> {
+    crate::attention::snapshot_resource_unread_event_ids(&state.conn(), resource_id)
 }
 
 /// Fetch observed per-course diagnostics for one scan; legacy scans return none.
