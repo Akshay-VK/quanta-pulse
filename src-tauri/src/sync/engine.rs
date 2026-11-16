@@ -549,6 +549,9 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
         &mut outcome,
     );
 
+    // This helper claims the durable scan row before making a native attempt.
+    notify::notify_scan_failure(app, scan_id);
+
     outcome.new = new_count as usize;
     outcome.updated = updated_count as usize;
     outcome.unavailable = unavailable_count as usize;

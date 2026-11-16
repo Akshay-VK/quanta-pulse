@@ -195,6 +195,15 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     }
     // 0007: old scan rows intentionally have no synthesized course details.
     conn.execute_batch(include_str!("../migrations/0007_scan_details.sql"))?;
+    // 0008: scan failure notifications are claimed on the durable scan row.
+    let has_failure_notification_claim: bool = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('scan_runs') WHERE name = 'failure_notified_at'",
+        [],
+        |r| r.get::<_, i64>(0),
+    )? > 0;
+    if !has_failure_notification_claim {
+        conn.execute_batch(include_str!("../migrations/0008_scan_failure_notifications.sql"))?;
+    }
     Ok(())
 }
 
@@ -1318,6 +1327,24 @@ pub fn finish_scan(
     Ok(())
 }
 
+/// Atomically claim the one native failure-notification attempt for an eligible finalized scan.
+/// Returns false for missing, unfinished, cancelled, authentication-expired, successful, or already
+/// claimed scans. The marker is part of scan History and is deleted with its scan row.
+pub fn claim_scan_failure_notification(
+    conn: &Connection,
+    id: i64,
+    notified_at: &str,
+) -> rusqlite::Result<bool> {
+    let changed = conn.execute(
+        "UPDATE scan_runs SET failure_notified_at = ?1
+         WHERE id = ?2 AND completed_at IS NOT NULL AND failure_notified_at IS NULL
+           AND status NOT IN ('running', 'cancelled', 'auth_expired')
+           AND (status IN ('partial', 'failed') OR courses_failed > 0)",
+        params![notified_at, id],
+    )?;
+    Ok(changed == 1)
+}
+
 pub fn list_scans(conn: &Connection, limit: i64) -> rusqlite::Result<Vec<ScanRun>> {
     let mut stmt = conn.prepare(
         "SELECT id, started_at, completed_at, status, discovered_count, new_count, updated_count,
@@ -2179,6 +2206,146 @@ mod tests {
         assert_eq!(scan_details(&conn, scan_id).unwrap(), None);
         save_scan_details(&conn, &test_scan_details(scan_id)).unwrap();
         assert!(scan_details(&conn, scan_id).unwrap().is_some());
+    }
+
+    #[test]
+    fn populated_scan_rows_get_idempotent_failure_claim_migration() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(include_str!("../migrations/0001_init.sql"))
+            .unwrap();
+        let scan_id = insert_test_scan(&conn);
+        migrate(&conn).unwrap();
+        migrate(&conn).unwrap();
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM scan_runs WHERE id=?1",
+                [scan_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "ok");
+        let marker: Option<String> = conn
+            .query_row(
+                "SELECT failure_notified_at FROM scan_runs WHERE id=?1",
+                [scan_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(marker, None);
+    }
+
+    #[test]
+    fn scan_failure_claim_requires_eligible_finalized_row_and_follows_history_deletion() {
+        let conn = mem();
+        let eligible = start_scan(&conn, "2026-11-16T10:00:00Z").unwrap();
+        finish_scan(
+            &conn,
+            eligible,
+            "partial",
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            None,
+            false,
+            "2026-11-16T10:01:00Z",
+        )
+        .unwrap();
+        let cancelled = start_scan(&conn, "2026-11-16T10:00:00Z").unwrap();
+        finish_scan(
+            &conn,
+            cancelled,
+            "cancelled",
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            None,
+            false,
+            "2026-11-16T10:01:00Z",
+        )
+        .unwrap();
+        let unfinished = start_scan(&conn, "2026-11-16T10:00:00Z").unwrap();
+
+        assert!(
+            claim_scan_failure_notification(&conn, eligible, "2026-11-16T10:02:00Z").unwrap()
+        );
+        assert!(
+            !claim_scan_failure_notification(&conn, eligible, "2026-11-16T10:03:00Z").unwrap()
+        );
+        assert!(
+            !claim_scan_failure_notification(&conn, cancelled, "2026-11-16T10:02:00Z").unwrap()
+        );
+        assert!(
+            !claim_scan_failure_notification(&conn, unfinished, "2026-11-16T10:02:00Z").unwrap()
+        );
+        assert!(
+            !claim_scan_failure_notification(&conn, i64::MAX, "2026-11-16T10:02:00Z").unwrap()
+        );
+
+        conn.execute("DELETE FROM scan_runs WHERE id=?1", [eligible]).unwrap();
+        assert!(!claim_scan_failure_notification(&conn, eligible, "2026-11-16T10:04:00Z").unwrap());
+    }
+
+    #[test]
+    fn scan_failure_claim_includes_failed_course_success_status_and_excludes_nonfailures() {
+        let conn = mem();
+        let failed_course = start_scan(&conn, "2026-11-16T10:00:00Z").unwrap();
+        finish_scan(
+            &conn,
+            failed_course,
+            "ok",
+            0,
+            0,
+            0,
+            0,
+            1,
+            1,
+            None,
+            false,
+            "2026-11-16T10:01:00Z",
+        )
+        .unwrap();
+        let success = start_scan(&conn, "2026-11-16T10:00:00Z").unwrap();
+        finish_scan(
+            &conn,
+            success,
+            "ok",
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            None,
+            true,
+            "2026-11-16T10:01:00Z",
+        )
+        .unwrap();
+        let auth = start_scan(&conn, "2026-11-16T10:00:00Z").unwrap();
+        finish_scan(
+            &conn,
+            auth,
+            "auth_expired",
+            0,
+            0,
+            0,
+            0,
+            0,
+            1,
+            None,
+            false,
+            "2026-11-16T10:01:00Z",
+        )
+        .unwrap();
+
+        assert!(claim_scan_failure_notification(&conn, failed_course, "now").unwrap());
+        assert!(!claim_scan_failure_notification(&conn, success, "now").unwrap());
+        assert!(!claim_scan_failure_notification(&conn, auth, "now").unwrap());
     }
 
     #[test]
