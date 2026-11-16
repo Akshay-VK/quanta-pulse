@@ -5,6 +5,10 @@
 // Scans are the persisted `scan_runs` table, shown as a data table.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent } from "react";
+import { getListNavigationIntent, recoverFocusedId } from "../lib/listNavigation";
+import { useMaterialActions } from "../hooks/useMaterialActions";
+import { Dialog } from "../components/ui/Dialog";
 import { Copy, MoreHorizontal } from "lucide-react";
 import type { ChangeEvent, Course, Resource, ScanRun } from "../lib/types";
 import { dayKeyOf, eventKindMeta, groupEventsByDay, todayKey } from "../lib/events";
@@ -96,6 +100,10 @@ function numberCell(value: number) {
 export default function HistoryView({
   courses,
   events,
+  eventScopeReady,
+  onSetEventReadState,
+  onDismissEvents,
+  onChanged,
   scans,
   onOpen: _onOpen,
   onOpenLocal: _onOpenLocal,
@@ -118,6 +126,66 @@ export default function HistoryView({
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [markingRead, setMarkingRead] = useState(false);
   const readRequest = useRef(false);
+
+  const destinations = useMaterialActions();
+  const [focused, setFocused] = useState<string | null>(() => events.length ? `change:${events[0].id}` : null);
+  const [selected, setSelected] = useState<string[]>([]);
+  type Capture = { ids: readonly number[]; read?: boolean; generation: number; origin: string | null; confirmed: boolean; dialog?: boolean; written: boolean };
+  const [capture, setCapture] = useState<Capture | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const generation = useRef(0);
+  const captureRef = useRef<Capture | null>(null);
+  const dialogOrigin = useRef<string | null>(null);
+  const locked = useRef(false);
+  const rows = useRef(new Map<string, HTMLButtonElement>());
+  const searchRef = useRef<HTMLInputElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const currentIds = useRef<string[]>([]);
+  const previousIds = useRef<string[]>([]);
+  const listOwnedFocus = useRef(false);
+  const invalidate = () => {
+    generation.current += 1;
+    locked.current = false;
+    captureRef.current = null;
+    setCapture(null);
+    setActionError(null);
+    setPending(false);
+  };
+  useEffect(() => () => { generation.current += 1; locked.current = false; }, []);
+  const restore = (id: string | null) => {
+    if (!searchRef.current?.isConnected) return false;
+    if (document.querySelector('[aria-modal="true"], [role="menu"], [role="listbox"]')) return true;
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active !== document.body && !active.matches('.row-select') && !active.closest('.peek')) return true;
+    (id && currentIds.current.includes(id) ? rows.current.get(id) : searchRef.current)?.focus();
+    return true;
+  };
+  async function execute(action: Capture) {
+    if (locked.current || action.generation !== generation.current) return;
+    locked.current = true;
+    action.confirmed = true;
+    setPending(true);
+    setActionError(null);
+    try {
+      if (!action.written) {
+        if (action.read === undefined) await onDismissEvents?.([...action.ids]);
+        else await onSetEventReadState?.([...action.ids], action.read);
+        if (action.generation !== generation.current) return;
+        action.written = true;
+      }
+      await onChanged?.();
+      if (action.generation !== generation.current) return;
+      captureRef.current = null;
+      setCapture(null);
+      // Dialog's close callback resolves the current event identity.
+      requestAnimationFrame(() => { if (action.generation === generation.current) restore(action.origin); });
+    } catch (err) {
+      if (action.generation === generation.current) setActionError(`${action.written ? "Changes saved; refresh failed" : "Changes could not be saved"}: ${String(err)}`);
+    } finally {
+      if (action.generation === generation.current) { locked.current = false; setPending(false); }
+    }
+  }
 
   const courseById = useMemo(() => new Map(courses.map((c) => [c.id, c])), [courses]);
 
@@ -149,6 +217,65 @@ export default function HistoryView({
       .sort((a, b) => b.localeCompare(a))
       .map((key) => ({ key, label: dayLabel(key), items: byDay.get(key) ?? [] }));
   }, [filtered]);
+
+  const navigationIds = useMemo(() => groups.flatMap(group => group.items.map(e => `change:${e.id}`)), [groups]);
+  currentIds.current = navigationIds;
+  useEffect(() => {
+    const recovered = recoverFocusedId(previousIds.current, navigationIds, focused);
+    const ownedFocus = listOwnedFocus.current && (document.activeElement === document.body || (document.activeElement instanceof HTMLElement && document.activeElement.matches('.row-select')));
+    previousIds.current = navigationIds;
+    if (recovered !== focused) {
+      setFocused(recovered);
+      if (ownedFocus) (recovered ? rows.current.get(recovered) : searchRef.current)?.focus();
+    }
+    setSelected(old => {
+      const matching = new Set(navigationIds);
+      const next = old.filter(id => matching.has(id));
+      return next.length === old.length ? old : next;
+    });
+  }, [navigationIds, focused]);
+
+  function onChangesKey(event: KeyboardEvent<HTMLDivElement>) {
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    const rowControl = target?.closest<HTMLButtonElement>('.row-select');
+    const id = [...rows.current].find(([, node]) => node === rowControl)?.[0] ?? focused;
+    const eligible = (ids: readonly string[]) => {
+      const matching = new Set(ids);
+      return filtered.filter(e => matching.has(`change:${e.id}`) && Number.isSafeInteger(e.id) && e.id > 0 && e.changeType !== "baseline").map(e => e.id);
+    };
+    const intent = getListNavigationIntent({
+      ids: navigationIds, focusedId: id, inspectedId: selectedChangeId == null ? null : `change:${selectedChangeId}`, selectedIds: selected,
+      key: event.key, activeSurface: tab === "changes" && !!rowControl,
+      editableTarget: !!target?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])'),
+      nestedControl: !rowControl,
+      modalOpen: !!document.querySelector('[aria-modal="true"], [role="menu"], [role="listbox"], [data-state="open"][role="dialog"]'),
+      isComposing: event.nativeEvent.isComposing, imeKeyCode229: event.keyCode === 229,
+      repeat: event.repeat, defaultPrevented: event.defaultPrevented,
+      shiftKey: event.shiftKey, ctrlKey: event.ctrlKey, altKey: event.altKey, metaKey: event.metaKey,
+      completeEventIds: eligible(navigationIds),
+    });
+    if (!intent) return;
+    event.preventDefault(); event.stopPropagation();
+    if (intent.type === "focus") { setFocused(intent.id); rows.current.get(intent.id)?.focus(); return; }
+    if (intent.type === "toggleSelection") { setSelected(old => old.includes(intent.id) ? old.filter(i => i !== intent.id) : [...old, intent.id]); return; }
+    if (intent.type === "inspect" || intent.type === "preview") {
+      const recorded = filtered.find(e => `change:${e.id}` === intent.id);
+      if (!recorded) return;
+      const resource = resources.find(r => r.id === recorded.resourceId) ?? null;
+      if (intent.type === "preview") destinations?.(resource, recorded).find(item => item.id === "preview" && !("disabled" in item && item.disabled))?.onSelect?.();
+      else { const origin = rows.current.get(intent.id); if (origin) details.selectChange(recorded, origin, resource, () => restore(intent.id)); }
+      return;
+    }
+    if (!eventScopeReady || loading || error || captureRef.current || locked.current || !onChanged) return;
+    const ids = intent.type === "openCapturedScope" ? [...intent.eventIds] : eligible(intent.ids);
+    const read = intent.type === "confirmDelete" ? undefined : intent.type === "setReadState" ? intent.isRead : true;
+    if (!ids.length || (read === undefined ? !onDismissEvents : !onSetEventReadState)) return;
+    const action: Capture = { ids: Object.freeze([...new Set(ids)]), read, generation: generation.current, origin: id, dialog: intent.type !== "setReadState", confirmed: intent.type === "setReadState", written: false };
+    captureRef.current = action;
+    dialogOrigin.current = id;
+    setCapture(action);
+    if (action.confirmed) void execute(action);
+  }
 
   const hasUnread = events.some((e) => !e.read);
   const selectedChangeId = details.selected?.kind === "change" ? details.selected.change.id : null;
@@ -274,7 +401,7 @@ export default function HistoryView({
             { id: "scans", label: "Scan history" },
           ]}
           value={tab}
-          onChange={setTab}
+          onChange={(next) => { invalidate(); setTab(next); }}
           ariaLabel="History views"
         />
       </div>
@@ -288,18 +415,23 @@ export default function HistoryView({
       )}
 
       {tab === "changes" ? (
-        <>
+        <div
+          onKeyDown={onChangesKey}
+          onFocusCapture={(event) => { listOwnedFocus.current = event.target instanceof HTMLElement && event.target.matches('.row-select'); }}
+          onBlurCapture={(event) => { if (event.relatedTarget) listOwnedFocus.current = false; }}
+        >
+          {capture?.confirmed && !capture.dialog && <div role={actionError ? "alert" : "status"} className="result-count">{actionError ?? "Saving captured changes…"}{actionError && <Button disabled={pending} onClick={() => void execute(capture)}>{capture.written ? "Retry refresh" : "Retry captured action"}</Button>}</div>}
           <div className="filter-bar">
             <div className="filter-bar-left">
               <Select
                 value={typeFilter}
-                onValueChange={setTypeFilter}
+                onValueChange={(next) => { invalidate(); setTypeFilter(next); }}
                 options={TYPE_FILTERS}
                 ariaLabel="Filter by change type"
               />
               <Select
                 value={courseFilter}
-                onValueChange={setCourseFilter}
+                onValueChange={(next) => { invalidate(); setCourseFilter(next); }}
                 options={courseOptions}
                 ariaLabel="Filter by course"
               />
@@ -307,7 +439,9 @@ export default function HistoryView({
             <div className="filter-bar-right">
               <SearchField
                 value={search}
-                onChange={setSearch}
+                onChange={(next) => { invalidate(); setSearch(next); }}
+                inputRef={searchRef}
+                debounceMs={0}
                 placeholder="Search changes…"
                 label="Search changes"
               />
@@ -347,6 +481,11 @@ export default function HistoryView({
                       courseName={e.courseName}
                       unread={!e.read}
                       selected={selectedChangeId === e.id}
+                      keyboardFocused={focused === `change:${e.id}`}
+                      multiSelected={selected.includes(`change:${e.id}`)}
+                      tabStop={focused === `change:${e.id}`}
+                      selectRef={(node) => { if (node) rows.current.set(`change:${e.id}`, node); else rows.current.delete(`change:${e.id}`); }}
+                      onKeyboardFocus={() => setFocused(`change:${e.id}`)}
                       unavailable={e.changeType === "unavailable"}
                       status={{ kind: STATUS_KIND[e.changeType] ?? "new", label: meta.label }}
                       timeLabel={formatTimeOfDay(e.detectedAt)}
@@ -358,7 +497,7 @@ export default function HistoryView({
                       local={
                         currentResource && !currentResource.isExternal ? mirror?.statusOf(currentResource.id) : undefined
                       }
-                      onSelect={(origin) => details.selectChange(e, origin, currentResource ?? null)}
+                      onSelect={(origin) => details.selectChange(e, origin, currentResource ?? null, () => restore(`change:${e.id}`))}
                       menu={[
                         {
                           id: "copy",
@@ -376,7 +515,7 @@ export default function HistoryView({
               </div>
             ))
           )}
-        </>
+        </div>
       ) : scans.length === 0 ? (
         <EmptyState
           title={loading ? "Loading scans…" : error ? "Scans unavailable" : "No scans yet"}
@@ -392,6 +531,27 @@ export default function HistoryView({
           ariaLabel="Scan history"
         />
       )}
+
+      <Dialog
+        open={!!capture?.dialog}
+        onOpenChange={(open) => { if (!open && !locked.current) { captureRef.current = null; setCapture(null); setActionError(null); } }}
+        role="alertdialog"
+        label={capture?.read === undefined ? "Dismiss captured changes from Inbox?" : "Mark captured changes read?"}
+        className="dialog-confirm"
+        initialFocusRef={capture?.read === undefined ? cancelRef : undefined}
+        onCloseAutoFocus={(event) => { event.preventDefault(); restore(dialogOrigin.current); }}
+      >
+        <h2 className="dialog-title">{capture?.read === undefined ? "Dismiss captured changes from Inbox?" : "Mark captured changes read?"}</h2>
+        <div className="dialog-body">
+          <p>{capture?.ids.length ?? 0} captured changes</p>
+          <p>{capture?.read === undefined ? "Dismiss these captured changes from Inbox? History, resources, saved files and your baseline are kept." : "Mark only these captured changes read. Later arrivals are excluded."}</p>
+          {actionError && <p role="alert">{actionError}</p>}
+        </div>
+        <div className="dialog-footer">
+          <Button ref={cancelRef} variant="secondary" disabled={pending} onClick={() => { captureRef.current = null; setCapture(null); setActionError(null); }}>Cancel</Button>
+          <Button className="dialog-primary" variant={capture?.read === undefined ? "danger" : "primary"} disabled={pending} onClick={() => { if (capture) void execute(capture); }}>{capture?.written ? "Retry refresh" : capture?.read === undefined ? "Dismiss from Inbox" : "Mark captured changes read"}</Button>
+        </div>
+      </Dialog>
 
       <ConfirmDialog
         open={confirmClear}
