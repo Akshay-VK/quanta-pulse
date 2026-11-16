@@ -10,7 +10,7 @@ Use a fresh context (`fork_turns: none` with native agents) for each task. Targe
 
 ## Steps
 
-1. Verify base and leases. Read current signatures; record discrepancies before implementation.
+1. Distinguish plan task IDs from GitHub issue numbers when updating dependencies (for example issue #18 represents task B02, not task 18). Validate the entire task DAG after a split. Verify base and leases. Read current signatures; record discrepancies before implementation.
 2. Enumerate assigned acceptance bullets and state variants. Add a failing test first for new behavior, using existing fixtures. Keep preserved behaviors covered.
 3. Implement within assigned ownership. Keep pure policy in `src/lib/`; views emit intents; existing App owners execute shared actions. The frontend invokes Tauri only through `src/lib/api.ts`.
 4. Run focused proof, then required gates. Frontend changes require `npm run lint` and `npm test`; accepted integrations also require `npm run build`. Rust changes require `cargo check` from `src-tauri/` and relevant Rust tests. Use temporary data for tests. Report environment failures distinctly from code failures. Do not run the packaged app during development.

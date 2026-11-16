@@ -151,7 +151,7 @@
   {
     "id": "04C",
     "title": "Serialized list keyboard and collapse integration",
-    "deps": "04B,B05A",
+    "deps": "04C1",
     "spec": "3, 4, 6",
     "files": [
       "src/App.tsx",
@@ -168,7 +168,22 @@
       "tests/appKeyboardInteractions.test.tsx",
       "tests/appInteractions.test.tsx"
     ],
-    "accept": "Coordinator dispatches surface-sized child leases after policy acceptance. Wire existing App-owned intents without read-on-inspect change until I01. Prove focus distinct from inspected and multi-selected state, all task04 keys, captured scope, section/time collapse, virtualization/filter/overlay restoration, and editable/modal suppression. Do not accept umbrella before wiring passes."
+    "accept": "Coordinator dispatches surface-sized child leases after policy acceptance. Wire existing App-owned intents without read-on-inspect change until I01. Prove focus distinct from inspected and multi-selected state, all task04 keys, captured scope, section/time collapse, virtualization/filter/overlay restoration, and editable/modal suppression. Do not accept umbrella before wiring passes. Inbox child 04C1 alone is insufficient: Agenda, Library/Course, History and collapse/focus requirements remain explicit pending surface dispatches."
+  },
+  {
+    "id": "04C1",
+    "title": "Inbox keyboard integration",
+    "deps": "04B,B05A",
+    "spec": "4, 6",
+    "files": [
+      "src/views/InboxView.tsx",
+      "src/components/ResourceRow.tsx",
+      "src/styles/components/content.css"
+    ],
+    "tests": [
+      "tests/appInboxKeyboard.test.tsx"
+    ],
+    "accept": "Scope keyboard intents to Inbox, preserve sole App details/material owner, complete captured group/bulk actions, independent focus/multi-selection, accessible native controls and stable restoration. No read-on-inspect change until I01. Other 04C surfaces remain pending."
   },
   {
     "id": "05",
@@ -617,20 +632,43 @@
   {
     "id": "B07",
     "title": "Saved-file deletion reports partial failure",
-    "deps": "00",
+    "deps": "B07B",
+    "spec": "5, 7",
+    "files": [],
+    "tests": [],
+    "accept": "Umbrella completes only after native children B07A (frozen core deletion scope) and B07B (Tauri/frontend API exposure) are accepted and integrated. Downstream task 14B remains dependent on B07."
+  },
+  {
+    "id": "B07A",
+    "title": "Frozen saved-file deletion core",
+    "deps": "00,B02",
     "spec": "5, 7",
     "files": [
       "src-tauri/src/core/mirror.rs",
-      "src-tauri/src/commands.rs",
-      "src/lib/api.ts",
-      "src/lib/types.ts",
-      "src/hooks/useMirror.tsx"
+      "src-tauri/src/core/mirror/deletion.rs",
+      "src-tauri/src/db.rs"
     ],
     "tests": [
-      "tests/mirrorUi.test.tsx",
       "focused Rust temporary-filesystem tests"
     ],
-    "accept": "Define frozen deletion scope with counts/paths. Delete only confirmed saved copies and retain index rows for failed removals; return removed/failed counts and actionable errors. Coordinate with in-flight writes so late downloads are outside captured scope and cannot be falsely reported removed. Cover permission-denied, missing files, partial success, path validation and repeat retry; baseline and History remain unchanged."
+    "accept": "Capture confirmed current copies and retained versions as exact indexed entries under the original root. Keep unfinished queue/attempts out. Use bounded in-memory scopes with documented expiry; unknown/expired/restarted scopes require renewed confirmation. Retry only remaining failed entries from the same scope. Missing files clear only matching rows idempotently without claiming bytes were unlinked. Root/identity changes preserve successor data. Validate traversal and symlink containment, serialize with publication, retain matching rows on filesystem/DB failures, and preserve resources, baselines, History, queue and uncaptured versions/downloads. Prove partial failure/retry, NotFound, unsafe paths, changed root/publication identity, versions, DB failure, repeated retry, and barrier-controlled later publication. No API/command/model/UI registration."
+  },
+  {
+    "id": "B07B",
+    "title": "Expose saved-file deletion scope API",
+    "deps": "B07A",
+    "spec": "5, 7",
+    "files": [
+      "src-tauri/src/commands.rs",
+      "src-tauri/src/lib.rs",
+      "src-tauri/src/models.rs",
+      "src/lib/api.ts",
+      "src/lib/types.ts"
+    ],
+    "tests": [
+      "Tauri command/API contract tests"
+    ],
+    "accept": "After B07A is accepted, expose the frozen snapshot and scoped-delete contracts through Tauri and the frontend API. Preserve the legacy delete-all command signature for existing consumers while routing it through safe core behavior. Leave Settings and Inbox UI ownership to their assigned workers."
   },
   {
     "id": "B08",

@@ -8,6 +8,8 @@ B04 is split into native child packets B04A (storage/query) and B04B (engine obs
 
 B05 is split sequentially into native child packets B05A (complete History reads and resource unread snapshot) and B05B (frozen History deletion scope). B05A depends on task 00; B05B depends on accepted B05A; task 15 remains directly dependent on B05 and I01 consumes that contract through its existing task dependencies. Only B05A is approved/ready. All 98 screen-coverage ownership rows remain unchanged.
 
+B07 is split sequentially into native child packets B07A (frozen saved-file deletion core) and B07B (Tauri/frontend API exposure). B07A depends on task 00 and accepted B02; B07B depends on accepted B07A; downstream task 14B remains dependent on B07. Only B07A is approved/ready. Settings UI ownership stays with task 14B, Inbox ownership is unchanged, and all 98 screen-coverage ownership rows remain unchanged.
+
 ## Read in this order
 
 Coordinator: this document → [decisions](decisions.md) → [screen coverage](screen-coverage.md) → the next eligible packet. Worker: `AGENTS.md` → [worker contract](worker-contract.md) → its single task packet → only named source/spec sections and its assigned screen rows. [task-index.json](task-index.json) is machine-readable dependency/scope data, not live status.
@@ -51,9 +53,9 @@ No dependency cycle exists. Tasks 13/14/14A/14B/14C deliberately serialize Setti
 
 ## Ticket publication and acceptance
 
-Use GitHub Issues in **Akshay-VK/quanta-pulse** as the live tracker per [issue-tracker guidance](../../../agents/issue-tracker.md). These files are reusable planning/dispatch references, not a second status board. The dedicated redesign parent is [#14](https://github.com/Akshay-VK/quanta-pulse/issues/14), with [task 00 as native sub-issue #15](https://github.com/Akshay-VK/quanta-pulse/issues/15). Task 02 is published as an umbrella with native 02A/02B children. Only fully specified 02A receives ready-for-agent; 02B remains not ready until 02A is accepted. The earlier accepted themes/workflows issue #12 remains untouched.
+Use GitHub Issues in **Akshay-VK/quanta-pulse** as the live tracker per [issue-tracker guidance](../../../agents/issue-tracker.md). These files are reusable planning/dispatch references, not a second status board. The dedicated redesign parent is [#14](https://github.com/Akshay-VK/quanta-pulse/issues/14), with [task 00 as native sub-issue #15](https://github.com/Akshay-VK/quanta-pulse/issues/15). Task 02 is published as an umbrella with native 02A/02B children. B07 is native sub-issue [#37](https://github.com/Akshay-VK/quanta-pulse/issues/37) of #14, with B07A #38 blocked by #15 and accepted B02 #18, and B07B #39 blocked by B07A. Only fully specified 02A and B07A receive ready-for-agent; 02B and B07B remain not ready until their preceding child is accepted. The earlier accepted themes/workflows issue #12 remains untouched.
 
-Repository/Issues availability and duplicate titles were checked with the explicit repository target before publication. Task 00 and fully specified child task 02A have `ready-for-agent`; task 02B is published but remains not ready for dispatch until 02A is accepted. Use native blocking relationships with readable parent/blocker links, preserve labels, and read back every issue/label/parent/blocker after publication. Every `gh` command uses `--repo Akshay-VK/quanta-pulse` explicitly. Do not close issues until their accepted integration workflow is satisfied. Current task-00 decisions/blockers are in [decisions](decisions.md); its source-frozen consumer excerpts are in [contracts/00.md](contracts/00.md).
+Repository/Issues availability and duplicate titles were checked with the explicit repository target before publication. Task 00 and 02A carry `ready-for-human` after acceptance; B07A has `ready-for-agent`; 02B and B07B remain not ready until their predecessors are accepted. Use native blocking relationships with readable parent/blocker links, preserve labels, and read back every issue/label/parent/blocker after publication. Every `gh` command uses `--repo Akshay-VK/quanta-pulse` explicitly. Do not close issues until their accepted integration workflow is satisfied. Current task-00 decisions/blockers are in [decisions](decisions.md); its source-frozen consumer excerpts are in [contracts/00.md](contracts/00.md).
 
 ## Acceptance gates
 
@@ -84,3 +86,5 @@ If a scope needs more than one independent lifecycle or cannot fit this context 
 Settings packets are deliberately sequential even where operations are independent: their shared SettingsView file has one writer, and every pass starts with fresh context.
 
 On 2026-11-16, task 04 was split into 04A visual geometry, 04B pure keyboard policy, and 04C serialized surface integration. Dependencies remain on umbrella 04; I01 stays downstream, avoiding a keyboard/read-on-inspect integration cycle. The original 98 screen ownership rows are unchanged.
+
+On 2026-11-16, B07 was split into core B07A and API B07B; 04C’s first surface packet is 04C1 Inbox. The coordinator validated 46 acyclic packets with all 98 unique screen assignments unchanged. B07A depends on plan tasks 00 and B02 (GitHub issues #15 and #18), not final validation task18. Later 04C surfaces remain required before umbrella acceptance.
