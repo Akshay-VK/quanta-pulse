@@ -27,6 +27,11 @@ interface AllFilesProps {
   details?: DetailsAdapter;
   onClearSearch?: () => void;
   onCourse?: (courseId: number) => void;
+  /** Coordinator adapters consumed by the next All files keyboard worker. */
+  onChanged?: () => void | Promise<void>;
+  onFocusSearch?: () => void;
+  inventoryPending?: boolean;
+  inventoryError?: string | null;
 }
 
 type SortId = "title" | "course" | "section" | "type" | "uploaded";

@@ -428,6 +428,27 @@
     background: var(--selected);
   }
 
+  .data-table.keyboard-list tbody tr.multi-selected {
+    background: var(--hover);
+  }
+
+  .data-table.keyboard-list tbody tr.multi-selected > td {
+    border-bottom-color: var(--line-strong);
+  }
+
+  .data-table.keyboard-list tbody tr.selected {
+    background: var(--selected);
+  }
+
+  .data-table.keyboard-list tbody tr.keyboard-focused > td:first-child {
+    box-shadow: inset 2px 0 0 var(--focus);
+  }
+
+  .data-table.keyboard-list tbody tr:focus {
+    outline: 1px solid var(--focus);
+    outline-offset: -1px;
+  }
+
   .data-table .num {
     text-align: right;
     font-family: var(--type-mono);

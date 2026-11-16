@@ -21,7 +21,7 @@ export interface LibraryViewProps {
   folderPath: string[] | null;
   /** The one navigation entry point: a course (or null for the list). */
   onNavigate: (courseId: number | null, folderPath?: string[] | null) => void;
-  onChanged: () => void;
+  onChanged: () => void | Promise<void>;
   onOpen: (url: string) => void;
   /** Empty-state "Sync now" buttons; wired to the app's sync action. */
   onSyncNow?: () => void;
@@ -60,6 +60,7 @@ export default function LibraryView({
 }: LibraryViewProps) {
   // The Courses | All files choice survives navigating into a course page.
   const [tab, setTab] = useSessionValue<"courses" | "files">("library:tab", "courses");
+  const searchRef = useRef<HTMLInputElement>(null);
   const previousTab = useRef(tab);
   useEffect(() => {
     if (previousTab.current !== tab) details?.clear();
@@ -126,6 +127,7 @@ export default function LibraryView({
               ]}
             />
             <SearchField
+              inputRef={searchRef}
               value={search}
               onChange={setSearch}
               placeholder="Search…"
@@ -155,6 +157,10 @@ export default function LibraryView({
         />
       ) : (
         <AllFiles
+          onChanged={onChanged}
+          onFocusSearch={() => searchRef.current?.focus()}
+          inventoryPending={loading}
+          inventoryError={error}
           resources={resources}
           courses={courses}
           search={search}

@@ -890,7 +890,7 @@ function AppShell() {
                     loading={loading}
                     error={loadError}
                     onRetry={() => void refresh()}
-                    onChanged={() => void refresh()}
+                    onChanged={refresh}
                     onOpen={(url) => void open(url)}
                     initialSearch={librarySearch}
                     initialSearchKey={librarySearchRequest}
