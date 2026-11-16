@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import {
   ChevronRight,
   ExternalLink,
@@ -18,6 +18,7 @@ import {
   loadAliases,
   saveAliases,
 } from "../../lib/courseName";
+import { getListNavigationIntent, recoverFocusedId } from "../../lib/listNavigation";
 import type { Course, Resource } from "../../lib/types";
 import { courseDotClass } from "../../components/ui/CoursePill";
 import { IconButton } from "../../components/ui/IconButton";
@@ -36,6 +37,7 @@ interface CourseListProps {
   onOpen: (url: string) => void;
   onChanged: () => void;
   onSyncNow?: () => void;
+  onFocusSearch?: () => void;
 }
 
 type Status = { kind: "ok" | "warn" | "error"; label: string };
@@ -58,10 +60,16 @@ export default function CourseList({
   onOpen,
   onChanged,
   onSyncNow,
+  onFocusSearch,
 }: CourseListProps) {
   const [confirmCourse, setConfirmCourse] = useState<Course | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [renaming, setRenaming] = useState<Course | null>(null);
+  const buttons = useRef(new Map<string, HTMLButtonElement>());
+  const previousIds = useRef<string[]>([]);
+  const focusedId = useRef<string | null>(null);
+  const focusedButton = useRef<HTMLButtonElement | null>(null);
+  const ownedFocus = useRef(false);
 
   const lastChangeByCourse = useMemo(() => {
     const map = new Map<number, string>();
@@ -86,6 +94,60 @@ export default function CourseList({
           .includes(needle);
       })
     : courses;
+
+  const ids = visible.map((course) => `course:${course.id}`);
+  const overlayOpen = () => Boolean(document.querySelector(
+    '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], .sidebar-drawer',
+  ));
+
+  function focusCourse(id: string) {
+    const button = buttons.current.get(id);
+    if (!button?.isConnected) return;
+    button.focus();
+    button.scrollIntoView({ block: "nearest" });
+  }
+
+  // Run before the empty-state return too: removal can leave no primary button.
+  // A disconnected former owner is distinct from focus moved to another surface.
+  useLayoutEffect(() => {
+    const changed = previousIds.current.join("\0") !== ids.join("\0");
+    const next = recoverFocusedId(previousIds.current, ids, focusedId.current);
+    const active = document.activeElement;
+    const ownsActive = active === focusedButton.current ||
+      (active === document.body && focusedButton.current !== null && !focusedButton.current.isConnected);
+    previousIds.current = ids;
+    focusedId.current = next;
+    if (!changed) return;
+    if (!ownedFocus.current || !ownsActive || overlayOpen()) {
+      ownedFocus.current = false;
+      return;
+    }
+    if (next) focusCourse(next);
+    else {
+      ownedFocus.current = false;
+      onFocusSearch?.();
+    }
+  });
+
+  function navigate(event: KeyboardEvent<HTMLButtonElement>, id: string) {
+    const intent = getListNavigationIntent({
+      ids, focusedId: id, inspectedId: null, selectedIds: [], completeEventIds: [],
+      key: event.key,
+      activeSurface: event.currentTarget.isConnected && document.activeElement === event.currentTarget,
+      nestedControl: event.target !== event.currentTarget,
+      editableTarget: event.currentTarget.isContentEditable,
+      modalOpen: overlayOpen(),
+      isComposing: event.nativeEvent.isComposing,
+      imeKeyCode229: event.keyCode === 229,
+      repeat: event.repeat, defaultPrevented: event.defaultPrevented,
+      shiftKey: event.shiftKey, ctrlKey: event.ctrlKey, altKey: event.altKey, metaKey: event.metaKey,
+    });
+    // Course buttons retain their own native activation and every native Tab stop.
+    if (intent?.type !== "focus") return;
+    event.preventDefault();
+    event.stopPropagation();
+    focusCourse(intent.id);
+  }
 
   async function setMonitoring(course: Course) {
     setBusyId(course.id);
@@ -172,6 +234,18 @@ export default function CourseList({
               <button
                 type="button"
                 className="course-row-main"
+                ref={(button) => {
+                  const id = `course:${course.id}`;
+                  if (button) buttons.current.set(id, button);
+                  else buttons.current.delete(id);
+                }}
+                onFocus={(event) => {
+                  focusedId.current = `course:${course.id}`;
+                  focusedButton.current = event.currentTarget;
+                  ownedFocus.current = true;
+                }}
+                onBlur={() => { ownedFocus.current = false; }}
+                onKeyDown={(event) => navigate(event, `course:${course.id}`)}
                 onClick={() => onOpenCourse(course)}
                 aria-label={`Open ${display} library`}
               >

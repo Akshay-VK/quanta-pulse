@@ -148,6 +148,7 @@ export default function LibraryView({
         <Skeleton rows={8} />
       ) : error && courses.length === 0 && resources.length === 0 ? null : tab === "courses" ? (
         <CourseList
+          onFocusSearch={() => searchRef.current?.focus()}
           courses={courses}
           resources={resources}
           search={search}

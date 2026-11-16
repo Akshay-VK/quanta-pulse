@@ -264,6 +264,11 @@
     background: var(--hover);
   }
 
+  .course-row-main:focus-visible {
+    outline-offset: 2px;
+    box-shadow: inset 2px 0 0 var(--focus), inset 0 0 0 2px var(--focus);
+  }
+
   .course-row-copy {
     flex: 1 1 auto;
     min-width: 0;
