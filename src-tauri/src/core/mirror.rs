@@ -31,9 +31,11 @@
 //! mutex and a client — so the Tauri commands, and later a Telegram bot or an
 //! MCP server, can drive the same code.
 
+mod deletion;
 mod markdown;
 mod paths;
 
+pub use deletion::{MirrorDeleteFailure, MirrorDeleteResult, MirrorDeleteScope};
 pub use markdown::{html_to_markdown, snapshot};
 pub use paths::{build_rel_path, join_within, sanitize_segment, unique_rel_path};
 
@@ -182,6 +184,7 @@ pub struct Mirror {
     wake: tokio::sync::Notify,
     free_space: Mutex<(u64, Instant)>,
     attempts: Mutex<HashMap<i64, Arc<DownloadAttempt>>>,
+    delete_scopes: Mutex<HashMap<String, deletion::DeleteScopeState>>,
     next_attempt: AtomicU64,
     #[cfg(test)]
     before_publish: Mutex<Option<(Arc<std::sync::Barrier>, Arc<std::sync::Barrier>)>>,
@@ -202,6 +205,7 @@ impl Mirror {
             wake: tokio::sync::Notify::new(),
             free_space: Mutex::new((0, Instant::now() - FREE_SPACE_CACHE)),
             attempts: Mutex::new(HashMap::new()),
+            delete_scopes: Mutex::new(HashMap::new()),
             next_attempt: AtomicU64::new(1),
             #[cfg(test)]
             before_publish: Mutex::new(None),
@@ -1408,20 +1412,13 @@ impl Mirror {
     /// Remove every byte under the mirror root and forget the index. Called
     /// only from Settings > Data behind a ConfirmDialog.
     pub fn delete_all(&self, conn: &Connection) -> usize {
-        let root = self.root();
-        let removed = db::mirror_all(conn)
-            .unwrap_or_default()
-            .iter()
-            .filter_map(|r| {
-                join_within(&root, &r.rel_path).map(|p| {
-                    let gone = fs::remove_file(&p).is_ok();
-                    (r.resource_id, gone)
-                })
-            })
-            .filter(|(_, gone)| *gone)
-            .count();
-        let _ = db::mirror_clear_all(conn);
-        removed
+        let scope = match self.snapshot_delete_scope(conn) {
+            Ok(scope) => scope,
+            Err(_) => return 0,
+        };
+        self.delete_scope(conn, &scope.scope_id)
+            .map(|result| result.removed)
+            .unwrap_or(0)
     }
 
     /// Move all local files from the old root to the new root. Verifies each
@@ -2145,6 +2142,12 @@ mod tests {
         })
         .await
         .unwrap();
+        let delete_scope = {
+            let conn = conn_mutex.lock().unwrap();
+            let scope = mirror.snapshot_delete_scope(&conn).unwrap();
+            assert_eq!(scope.count, 0, "the unfinished publication is not captured");
+            scope
+        };
 
         let successor_attempt = {
             let conn = conn_mutex.lock().unwrap();
@@ -2198,6 +2201,13 @@ mod tests {
         continue_tx.send(()).unwrap();
         next.await.unwrap();
         server.join().unwrap();
+
+        let deletion = {
+            let conn = conn_mutex.lock().unwrap();
+            mirror.delete_scope(&conn, &delete_scope.scope_id).unwrap()
+        };
+        assert_eq!(deletion.removed, 0);
+        assert!(deletion.failed.is_empty());
 
         let expected = [vec![b'n'; FIRST_CHUNK], vec![b'b'; FIRST_CHUNK]].concat();
         assert_eq!(

@@ -1784,6 +1784,136 @@ pub struct MirrorVersion {
     pub replaced_at: String,
 }
 
+/// An exact saved-copy or retained-version index entry captured for explicit
+/// deletion. Version row IDs distinguish duplicate paths/replacement times.
+#[derive(Debug, Clone)]
+pub struct MirrorDeleteFile {
+    pub resource_id: i64,
+    pub rel_path: String,
+    pub sha256: Option<String>,
+    pub size_bytes: i64,
+    /// B02 attempt counter: distinguishes a later publication even when path,
+    /// bytes, and second-precision timestamps happen to repeat.
+    pub attempts: i64,
+    pub downloaded_at: Option<String>,
+    pub version_rowid: Option<i64>,
+    pub replaced_at: Option<String>,
+}
+
+/// Capture only confirmed copies and retained versions; queue state is excluded.
+pub fn mirror_delete_files(conn: &Connection) -> rusqlite::Result<Vec<MirrorDeleteFile>> {
+    let mut out = Vec::new();
+    {
+        let mut stmt = conn.prepare(
+            "SELECT resource_id, rel_path, sha256, size_bytes, attempts, downloaded_at
+             FROM local_files WHERE status IN ('ok', 'kept') ORDER BY resource_id",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(MirrorDeleteFile {
+                resource_id: row.get(0)?,
+                rel_path: row.get(1)?,
+                sha256: row.get(2)?,
+                size_bytes: row.get(3)?,
+                attempts: row.get(4)?,
+                downloaded_at: row.get(5)?,
+                version_rowid: None,
+                replaced_at: None,
+            })
+        })?;
+        out.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+    }
+    {
+        let mut stmt = conn.prepare(
+            "SELECT rowid, resource_id, rel_path, sha256, size_bytes, replaced_at
+             FROM local_file_versions ORDER BY rowid",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(MirrorDeleteFile {
+                resource_id: row.get(1)?,
+                rel_path: row.get(2)?,
+                sha256: row.get(3)?,
+                size_bytes: row.get(4)?,
+                attempts: 0,
+                downloaded_at: None,
+                version_rowid: Some(row.get(0)?),
+                replaced_at: Some(row.get(5)?),
+            })
+        })?;
+        out.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+    }
+    Ok(out)
+}
+
+/// Whether the current index still represents the captured publication.
+pub fn mirror_delete_file_matches(
+    conn: &Connection,
+    file: &MirrorDeleteFile,
+) -> rusqlite::Result<bool> {
+    if let Some(rowid) = file.version_rowid {
+        return conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM local_file_versions WHERE rowid = ?1 AND resource_id = ?2
+             AND rel_path = ?3 AND sha256 IS ?4 AND size_bytes = ?5 AND replaced_at = ?6)",
+            params![
+                rowid,
+                file.resource_id,
+                file.rel_path,
+                file.sha256,
+                file.size_bytes,
+                file.replaced_at
+            ],
+            |row| row.get(0),
+        );
+    }
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM local_files WHERE resource_id = ?1 AND rel_path = ?2
+         AND sha256 IS ?3 AND size_bytes = ?4 AND attempts = ?5 AND downloaded_at IS ?6
+         AND status IN ('ok', 'kept'))",
+        params![
+            file.resource_id,
+            file.rel_path,
+            file.sha256,
+            file.size_bytes,
+            file.attempts,
+            file.downloaded_at
+        ],
+        |row| row.get(0),
+    )
+}
+
+/// Delete only the still-matching captured index entry.
+pub fn mirror_delete_captured_file(
+    conn: &Connection,
+    file: &MirrorDeleteFile,
+) -> rusqlite::Result<usize> {
+    if let Some(rowid) = file.version_rowid {
+        return conn.execute(
+            "DELETE FROM local_file_versions WHERE rowid = ?1 AND resource_id = ?2
+             AND rel_path = ?3 AND sha256 IS ?4 AND size_bytes = ?5 AND replaced_at = ?6",
+            params![
+                rowid,
+                file.resource_id,
+                file.rel_path,
+                file.sha256,
+                file.size_bytes,
+                file.replaced_at
+            ],
+        );
+    }
+    conn.execute(
+        "DELETE FROM local_files WHERE resource_id = ?1 AND rel_path = ?2 AND sha256 IS ?3
+         AND size_bytes = ?4 AND attempts = ?5 AND downloaded_at IS ?6
+         AND status IN ('ok', 'kept')",
+        params![
+            file.resource_id,
+            file.rel_path,
+            file.sha256,
+            file.size_bytes,
+            file.attempts,
+            file.downloaded_at
+        ],
+    )
+}
+
 pub fn version_insert(conn: &Connection, v: &MirrorVersion) -> rusqlite::Result<()> {
     conn.execute(
         "INSERT INTO local_file_versions(resource_id, rel_path, sha256, size_bytes, replaced_at)
