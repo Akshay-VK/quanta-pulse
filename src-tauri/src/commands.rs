@@ -373,23 +373,8 @@ pub fn sync_status(state: State<AppState>) -> SyncStatus {
 
 #[tauri::command]
 pub fn rebuild_baseline(state: State<AppState>, course_id: Option<i64>) -> Result<(), String> {
-    let conn = state.conn();
-    if let Some(id) = course_id {
-        // Per-course re-baseline: the next scan suppresses events for this course.
-        let existing = db::get_kv(&conn, "rebaseline_courses").unwrap_or_else(|| "[]".into());
-        let mut list: Vec<i64> = serde_json::from_str(&existing).unwrap_or_default();
-        if !list.contains(&id) {
-            list.push(id);
-        }
-        db::set_kv(
-            &conn,
-            "rebaseline_courses",
-            &serde_json::to_string(&list).unwrap(),
-        )
-        .map_err(|e| e.to_string())?;
-    } else {
-        db::del_kv(&conn, "baseline_established").map_err(|e| e.to_string())?;
-    }
+    let mut conn = state.conn();
+    db::request_baseline_reset(&mut conn, course_id).map_err(|e| e.to_string())?;
     Ok(())
 }
 

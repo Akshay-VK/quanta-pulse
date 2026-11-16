@@ -389,6 +389,63 @@ pub fn del_kv(conn: &Connection, key: &str) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// Persist a baseline reset request and its generation as one operation.
+/// Missing generations are treated as zero for databases created before this
+/// request identity was added.
+pub fn request_baseline_reset(
+    conn: &mut Connection,
+    course_id: Option<i64>,
+) -> rusqlite::Result<i64> {
+    let tx = conn.transaction()?;
+    let generation = get_kv(&tx, "baseline_reset_generation")
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(0)
+        .checked_add(1)
+        .ok_or_else(|| rusqlite::Error::InvalidQuery)?;
+
+    if let Some(id) = course_id {
+        let existing = get_kv(&tx, "rebaseline_courses").unwrap_or_else(|| "[]".into());
+        let mut list: Vec<i64> = serde_json::from_str(&existing).unwrap_or_default();
+        if !list.contains(&id) {
+            list.push(id);
+        }
+        set_kv(
+            &tx,
+            "rebaseline_courses",
+            &serde_json::to_string(&list).expect("course IDs always serialize"),
+        )?;
+    } else {
+        del_kv(&tx, "baseline_established")?;
+        set_kv(
+            &tx,
+            "baseline_global_reset_generation",
+            &generation.to_string(),
+        )?;
+    }
+    set_kv(&tx, "baseline_reset_generation", &generation.to_string())?;
+    tx.commit()?;
+    Ok(generation)
+}
+
+/// Establish the global baseline only if no newer global reset was requested.
+pub fn establish_baseline_if_generation(
+    conn: &mut Connection,
+    captured_generation: i64,
+    established_at: &str,
+) -> rusqlite::Result<bool> {
+    let tx = conn.transaction()?;
+    let current_generation = get_kv(&tx, "baseline_global_reset_generation")
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(0);
+    if current_generation != captured_generation {
+        tx.rollback()?;
+        return Ok(false);
+    }
+    set_kv(&tx, "baseline_established", established_at)?;
+    tx.commit()?;
+    Ok(true)
+}
+
 /* ------------------------------------------------------------------- courses */
 
 pub fn upsert_course(

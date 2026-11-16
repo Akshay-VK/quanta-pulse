@@ -1,0 +1,7 @@
+# B06 coordinator integration — 2026-11-16
+
+The independent review found that a course-only request could delay an otherwise complete global baseline. The coordinator regression reproduced that failure for first-run and explicit global baseline cases. Global completion now checks `baseline_global_reset_generation` (only global requests update it), while course-marker consumption checks the all-request generation. Both request changes remain atomic. The failed-before/passed-after regression confirms unrelated courses leave global silence while the requested course remains pending.
+
+Native Windows `cargo check` and all **228 Rust library tests** passed after this correction. Logs: `/tmp/quanta-baseline-scope-red.log`, `/tmp/quanta-baseline-scope-green.log`, `/tmp/quanta-b06-final-native.log`. Windows PowerShell ran with `CARGO_INCREMENTAL=0` and external target `C:\Temp\quanta-pulse-cargo-target`. Earlier worker proof covered the real local HTTP discovery boundaries and production request/reconciliation helpers; no live Quanta or native `AppHandle` scan was run.
+
+The existing reset API and legacy JSON marker array remain compatible. Failed, partial, unvisited or cancelled courses remain pending; only successfully completed markers from an unchanged request snapshot are consumed. A newer reset conservatively retains prior pending course markers for a fresh scan. The review and both worker handoffs are adjacent immutable evidence; the coordinator scope correction supersedes the original single-generation global-completion claim.

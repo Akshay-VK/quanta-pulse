@@ -76,11 +76,17 @@ pub async fn run_scan(app: AppHandle, reason: &str) -> ScanOutcome {
 async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
     let mut outcome = ScanOutcome::default();
 
-    let (limits, baseline, reminder_hours, rebaseline) = {
+    let (limits, baseline, baseline_generation, global_generation, reminder_hours, rebaseline) = {
         let state = app.state::<AppState>();
         let s = state.settings();
         let conn = state.conn();
         let baseline = db::get_kv(&conn, "baseline_established").is_none();
+        let baseline_generation = db::get_kv(&conn, "baseline_reset_generation")
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(0);
+        let global_generation = db::get_kv(&conn, "baseline_global_reset_generation")
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(0);
         let rebaseline: HashSet<i64> = db::get_kv(&conn, "rebaseline_courses")
             .and_then(|raw| serde_json::from_str::<Vec<i64>>(&raw).ok())
             .map(|v| v.into_iter().collect())
@@ -93,6 +99,8 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
                 concurrency: s.concurrency,
             },
             baseline,
+            baseline_generation,
+            global_generation,
             s.deadline_reminder_hours,
             rebaseline,
         )
@@ -311,10 +319,7 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
             };
             seen_ids.push(r.external_id.clone());
 
-            let effective_baseline = baseline
-                || course_id
-                    .map(|c| rebaseline.contains(&c) || paused.contains(&c))
-                    .unwrap_or(false);
+            let effective_baseline = course_is_baseline(baseline, &rebaseline, &paused, course_id);
             let prev_state = previous.as_ref().map(Into::into);
             let detected = diff::classify(prev_state.as_ref(), r, effective_baseline);
             let kind = if r.resource_type == "announcement" && detected == Detected::New {
@@ -461,13 +466,32 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
     if baseline && !discovery.cancelled && discovery.errors.is_empty() {
         let state = app.state::<AppState>();
         let conn = state.conn();
-        let _ = db::set_kv(&conn, "baseline_established", &now);
+        let mut conn = conn;
+        let _ = db::establish_baseline_if_generation(&mut conn, global_generation, &now);
     }
-    // One-shot per-course re-baseline markers are consumed by this scan.
-    if !discovery.cancelled && !rebaseline.is_empty() {
+    // Consume only courses that were pending at scan start and whose complete
+    // page plus detail traversal reached success. Re-read the setting so a
+    // reset queued while discovery was running remains pending.
+    if !rebaseline.is_empty() {
         let state = app.state::<AppState>();
-        let conn = state.conn();
-        let _ = db::del_kv(&conn, "rebaseline_courses");
+        let mut conn = state.conn();
+        let completed_course_ids: HashSet<i64> = discovery
+            .courses
+            .iter()
+            .filter(|course| discovery.successful_courses.contains(&course.external_id))
+            .filter_map(|course| db::course_id_for_external(&conn, &course.external_id))
+            .collect();
+        if let Err(error) = consume_completed_rebaseline_markers(
+            &mut conn,
+            &rebaseline,
+            &completed_course_ids,
+            baseline_generation,
+            discovery.cancelled,
+        ) {
+            outcome
+                .errors
+                .push(format!("could not update course baseline markers: {error}"));
+        }
     }
 
     // Finalise the scan run.
@@ -533,6 +557,66 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
     notify::dispatch(app);
 
     outcome
+}
+
+/// Remove only start-of-scan reset markers for courses that completed a full
+/// discovery. The setting is re-read before writing to preserve requests added
+/// by another command while the scan was in progress.
+fn consume_completed_rebaseline_markers(
+    conn: &mut rusqlite::Connection,
+    markers_at_start: &HashSet<i64>,
+    completed_course_ids: &HashSet<i64>,
+    captured_generation: i64,
+    cancelled: bool,
+) -> rusqlite::Result<()> {
+    if cancelled {
+        return Ok(());
+    }
+    let consumed: HashSet<i64> = markers_at_start
+        .intersection(completed_course_ids)
+        .copied()
+        .collect();
+    if consumed.is_empty() {
+        return Ok(());
+    }
+
+    let tx = conn.transaction()?;
+    let current_generation = db::get_kv(&tx, "baseline_reset_generation")
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(0);
+    if current_generation != captured_generation {
+        tx.rollback()?;
+        return Ok(());
+    }
+    let current: HashSet<i64> = db::get_kv(&tx, "rebaseline_courses")
+        .and_then(|raw| serde_json::from_str::<Vec<i64>>(&raw).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    let mut remaining: Vec<i64> = current.difference(&consumed).copied().collect();
+    remaining.sort_unstable();
+    if remaining.is_empty() {
+        db::del_kv(&tx, "rebaseline_courses")?;
+    } else {
+        db::set_kv(
+            &tx,
+            "rebaseline_courses",
+            &serde_json::to_string(&remaining).expect("course IDs always serialize"),
+        )?;
+    }
+    tx.commit()
+}
+
+fn course_is_baseline(
+    global_baseline: bool,
+    rebaseline: &HashSet<i64>,
+    paused: &HashSet<i64>,
+    course_id: Option<i64>,
+) -> bool {
+    global_baseline
+        || course_id
+            .map(|id| rebaseline.contains(&id) || paused.contains(&id))
+            .unwrap_or(false)
 }
 
 /// Persist observed diagnostics after aggregate scan history has been finalized.
@@ -648,7 +732,16 @@ fn emit_status(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::due_instant;
+    use super::{consume_completed_rebaseline_markers, course_is_baseline, due_instant};
+    use crate::{db, sync::diff};
+    use rusqlite::Connection;
+    use std::collections::HashSet;
+
+    fn mem() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        db::migrate(&conn).unwrap();
+        conn
+    }
 
     #[test]
     fn parses_rfc3339_deadline() {
@@ -664,5 +757,356 @@ mod tests {
     #[test]
     fn rejects_garbage() {
         assert!(due_instant("soon").is_none());
+    }
+
+    #[test]
+    fn reset_markers_consume_only_start_snapshot_successes_and_merge_new_requests() {
+        let mut conn = mem();
+        let scan_snapshot = HashSet::from([10, 20]);
+        db::set_kv(&conn, "rebaseline_courses", "[10,20,30]").unwrap();
+
+        consume_completed_rebaseline_markers(
+            &mut conn,
+            &scan_snapshot,
+            &HashSet::from([10]),
+            0,
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(
+            db::get_kv(&conn, "rebaseline_courses").as_deref(),
+            Some("[20,30]")
+        );
+    }
+
+    #[test]
+    fn repeated_same_course_reset_waits_for_a_fresh_successful_scan() {
+        let mut conn = mem();
+        let captured_generation = db::request_baseline_reset(&mut conn, Some(10)).unwrap();
+        let snapshot = HashSet::from([10]);
+
+        db::request_baseline_reset(&mut conn, Some(10)).unwrap();
+        consume_completed_rebaseline_markers(
+            &mut conn,
+            &snapshot,
+            &HashSet::from([10]),
+            captured_generation,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            db::get_kv(&conn, "rebaseline_courses").as_deref(),
+            Some("[10]")
+        );
+
+        let next_generation = db::get_kv(&conn, "baseline_reset_generation")
+            .unwrap()
+            .parse()
+            .unwrap();
+        consume_completed_rebaseline_markers(
+            &mut conn,
+            &snapshot,
+            &HashSet::from([10]),
+            next_generation,
+            false,
+        )
+        .unwrap();
+        assert_eq!(db::get_kv(&conn, "rebaseline_courses"), None);
+    }
+
+    #[test]
+    fn different_course_request_preserves_all_markers_until_next_scan() {
+        let mut conn = mem();
+        let captured_generation = db::request_baseline_reset(&mut conn, Some(10)).unwrap();
+        let snapshot = HashSet::from([10]);
+
+        db::request_baseline_reset(&mut conn, Some(20)).unwrap();
+        consume_completed_rebaseline_markers(
+            &mut conn,
+            &snapshot,
+            &HashSet::from([10]),
+            captured_generation,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            db::get_kv(&conn, "rebaseline_courses").as_deref(),
+            Some("[10,20]")
+        );
+
+        let next_generation = db::get_kv(&conn, "baseline_reset_generation")
+            .unwrap()
+            .parse()
+            .unwrap();
+        consume_completed_rebaseline_markers(
+            &mut conn,
+            &HashSet::from([10, 20]),
+            &HashSet::from([10, 20]),
+            next_generation,
+            false,
+        )
+        .unwrap();
+        assert_eq!(db::get_kv(&conn, "rebaseline_courses"), None);
+    }
+
+    #[test]
+    fn repeated_global_reset_during_baseline_keeps_next_scan_silent() {
+        let mut conn = mem();
+        let first_generation = db::request_baseline_reset(&mut conn, None).unwrap();
+        assert!(
+            !db::establish_baseline_if_generation(&mut conn, 0, "2026-11-16T00:00:00Z").unwrap()
+        );
+
+        let second_generation = db::request_baseline_reset(&mut conn, None).unwrap();
+        assert!(!db::establish_baseline_if_generation(
+            &mut conn,
+            first_generation,
+            "2026-11-16T00:01:00Z"
+        )
+        .unwrap());
+        assert_eq!(db::get_kv(&conn, "baseline_established"), None);
+
+        assert!(db::establish_baseline_if_generation(
+            &mut conn,
+            second_generation,
+            "2026-11-16T00:02:00Z"
+        )
+        .unwrap());
+        assert!(db::get_kv(&conn, "baseline_established").is_some());
+    }
+
+    #[test]
+    fn course_reset_does_not_prolong_complete_global_baseline() {
+        for explicit_reset in [false, true] {
+            let mut conn = mem();
+            let global_generation = if explicit_reset {
+                db::request_baseline_reset(&mut conn, None).unwrap()
+            } else {
+                0
+            };
+            db::request_baseline_reset(&mut conn, Some(10)).unwrap();
+            assert!(
+                db::establish_baseline_if_generation(
+                    &mut conn,
+                    global_generation,
+                    "2026-11-16T00:02:00Z"
+                )
+                .unwrap(),
+                "a newer course-only reset must not silence unrelated courses globally"
+            );
+            assert_eq!(
+                db::get_kv(&conn, "rebaseline_courses").as_deref(),
+                Some("[10]")
+            );
+            assert!(!course_is_baseline(
+                false,
+                &HashSet::from([10]),
+                &HashSet::new(),
+                Some(20)
+            ));
+        }
+    }
+
+    #[test]
+    fn legacy_array_marker_without_generation_remains_consumable() {
+        let mut conn = mem();
+        db::set_kv(&conn, "rebaseline_courses", "[10]").unwrap();
+        assert_eq!(db::get_kv(&conn, "baseline_reset_generation"), None);
+
+        consume_completed_rebaseline_markers(
+            &mut conn,
+            &HashSet::from([10]),
+            &HashSet::from([10]),
+            0,
+            false,
+        )
+        .unwrap();
+        assert_eq!(db::get_kv(&conn, "rebaseline_courses"), None);
+    }
+
+    #[test]
+    fn reset_markers_survive_restart_until_course_succeeds_and_preserve_history_and_mirrors() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("reset.db");
+        let mut conn = Connection::open(&path).unwrap();
+        db::migrate(&conn).unwrap();
+        db::set_kv(&conn, "rebaseline_courses", "[10,20]").unwrap();
+        db::set_kv(&conn, "baseline_established", "2026-11-15T00:00:00Z").unwrap();
+        conn.execute(
+            "INSERT INTO scan_runs(started_at, status) VALUES('2026-11-16T00:00:00Z','ok')",
+            [],
+        )
+        .unwrap();
+        let course_id = db::upsert_course(
+            &conn,
+            "10",
+            "Course Ten",
+            None,
+            "https://quanta.bits-pilani.ac.in/course/view.php?id=10",
+            "2026-11-16T00:00:00Z",
+        )
+        .unwrap();
+        let resource_id = db::upsert_resource(
+            &conn,
+            &db::ResourceWrite {
+                external_id: "resource-1",
+                course_id: Some(course_id),
+                title: "Lecture 1",
+                url: "https://quanta.bits-pilani.ac.in/mod/resource/view.php?id=1",
+                source_page_url: None,
+                resource_type: "pdf",
+                uploaded_at: None,
+                published_at: None,
+                modified_at: None,
+                due_at: None,
+                fingerprint: "fingerprint",
+                size_bytes: None,
+                section: None,
+                section_path: None,
+                is_external: false,
+                availability: "available",
+            },
+            "2026-11-16T00:00:00Z",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO change_events(resource_id, course_id, change_type, title, detected_at, deduplication_key) VALUES(?1,?2,'new','Kept','2026-11-16T00:00:00Z','kept')",
+            rusqlite::params![resource_id, course_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO local_files(resource_id, rel_path, status) VALUES(?1,'kept.pdf','kept')",
+            [resource_id],
+        )
+        .unwrap();
+        consume_completed_rebaseline_markers(
+            &mut conn,
+            &HashSet::from([10, 20]),
+            &HashSet::new(),
+            0,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            db::get_kv(&conn, "rebaseline_courses").as_deref(),
+            Some("[10,20]")
+        );
+        drop(conn);
+
+        let mut reopened = Connection::open(&path).unwrap();
+        db::migrate(&reopened).unwrap();
+        let snapshot = HashSet::from([10, 20]);
+        consume_completed_rebaseline_markers(
+            &mut reopened,
+            &snapshot,
+            &HashSet::from([10]),
+            0,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            db::get_kv(&reopened, "rebaseline_courses").as_deref(),
+            Some("[20]")
+        );
+        assert_eq!(
+            db::get_kv(&reopened, "baseline_established").as_deref(),
+            Some("2026-11-15T00:00:00Z")
+        );
+        consume_completed_rebaseline_markers(
+            &mut reopened,
+            &HashSet::from([20]),
+            &HashSet::from([20]),
+            0,
+            false,
+        )
+        .unwrap();
+        assert_eq!(db::get_kv(&reopened, "rebaseline_courses"), None);
+        assert_eq!(
+            reopened
+                .query_row("SELECT COUNT(*) FROM resources", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            reopened
+                .query_row("SELECT COUNT(*) FROM change_events", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            reopened
+                .query_row("SELECT COUNT(*) FROM local_files", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn cancelled_scan_keeps_all_pending_course_markers() {
+        let mut conn = mem();
+        db::set_kv(&conn, "rebaseline_courses", "[10,20]").unwrap();
+        consume_completed_rebaseline_markers(
+            &mut conn,
+            &HashSet::from([10, 20]),
+            &HashSet::from([10, 20]),
+            0,
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            db::get_kv(&conn, "rebaseline_courses").as_deref(),
+            Some("[10,20]")
+        );
+    }
+
+    #[test]
+    fn baseline_classification_stays_silent_during_reset_then_resumes_normal_diffing() {
+        let current = crate::quanta::DiscoveredResource {
+            external_id: "resource-1".into(),
+            course_external_id: "10".into(),
+            title: "Lecture 1".into(),
+            url: "https://quanta.bits-pilani.ac.in/mod/resource/view.php?id=1".into(),
+            source_page_url: None,
+            resource_type: "pdf".into(),
+            uploaded_at: None,
+            published_at: None,
+            modified_at: None,
+            due_at: None,
+            size_bytes: None,
+            section: None,
+            section_path: Vec::new(),
+            is_external: false,
+            available: true,
+        };
+        let reset = HashSet::from([10]);
+        let no_pauses = HashSet::new();
+        let during_course_reset = course_is_baseline(false, &reset, &no_pauses, Some(10));
+        assert_eq!(
+            diff::classify(None, &current, during_course_reset),
+            diff::Detected::Unchanged
+        );
+        assert!(course_is_baseline(
+            true,
+            &HashSet::new(),
+            &no_pauses,
+            Some(20)
+        ));
+
+        let mut conn = mem();
+        db::set_kv(&conn, "rebaseline_courses", "[10]").unwrap();
+        consume_completed_rebaseline_markers(&mut conn, &reset, &reset, 0, false).unwrap();
+        let after_course_reset = db::get_kv(&conn, "rebaseline_courses")
+            .and_then(|raw| serde_json::from_str::<Vec<i64>>(&raw).ok())
+            .map(|ids| ids.into_iter().collect())
+            .unwrap_or_default();
+        let after_success = course_is_baseline(false, &after_course_reset, &no_pauses, Some(10));
+        assert_eq!(
+            diff::classify(None, &current, after_success),
+            diff::Detected::New
+        );
     }
 }

@@ -39,6 +39,9 @@ impl Default for CrawlLimits {
 pub struct Discovery {
     pub courses: Vec<DiscoveredCourse>,
     pub resources: Vec<DiscoveredResource>,
+    /// External course IDs whose page traversal and all required details ended
+    /// successfully during this discovery run.
+    pub successful_courses: HashSet<String>,
     pub courses_scanned: usize,
     pub courses_failed: usize,
     pub errors: Vec<String>,
@@ -366,6 +369,7 @@ pub async fn discover_all(
     }
 
     let mut discovered: Vec<DiscoveredResource> = Vec::new();
+    let mut successful_pages = HashSet::new();
     let mut done = 0usize;
     while let Some(joined) = set.join_next().await {
         done += 1;
@@ -377,6 +381,9 @@ pub async fn discover_all(
         match joined {
             Ok(Ok((id, mut resources, errors))) => {
                 result.courses_scanned += 1;
+                if errors.is_empty() {
+                    successful_pages.insert(id.clone());
+                }
                 if !errors.is_empty() {
                     result.courses_failed += 1;
                     result.errors.extend(
@@ -415,6 +422,14 @@ pub async fn discover_all(
     let (detail_targets, keep): (Vec<_>, Vec<_>) = discovered
         .into_iter()
         .partition(|r| r.resource_type == "announcement" || is_material(&r.resource_type));
+
+    let mut required_detail_counts = BTreeMap::<String, usize>::new();
+    for item in &detail_targets {
+        *required_detail_counts
+            .entry(item.course_external_id.clone())
+            .or_default() += 1;
+    }
+    let mut successful_detail_counts = BTreeMap::<String, usize>::new();
 
     let mut keep = keep;
     let mut replaced: HashSet<String> = HashSet::new();
@@ -466,16 +481,17 @@ pub async fn discover_all(
                 let url = match Url::parse(&item.url) {
                     Ok(u) => u,
                     Err(_) => {
+                        let terminal_status = crate::models::ScanCourseStatus::Partial;
                         observe(
                             &observer,
                             &course_external_id,
                             &course_name,
                             ObservationBoundary::DetailTerminal {
-                                status: crate::models::ScanCourseStatus::Partial,
+                                status: terminal_status,
                                 error: Some("invalid material URL".into()),
                             },
                         );
-                        return (id, Detail::Keep(Box::new(item)));
+                        return (id, course_external_id, Detail::Keep(Box::new(item)), false);
                     }
                 };
                 let response = match client.fetch(&url).await {
@@ -558,20 +574,26 @@ pub async fn discover_all(
                     ),
                 };
                 let (detail, error) = response;
+                let terminal_status = if error.is_some() {
+                    crate::models::ScanCourseStatus::Partial
+                } else {
+                    crate::models::ScanCourseStatus::Success
+                };
                 observe(
                     &observer,
                     &course_external_id,
                     &course_name,
                     ObservationBoundary::DetailTerminal {
-                        status: if error.is_some() {
-                            crate::models::ScanCourseStatus::Partial
-                        } else {
-                            crate::models::ScanCourseStatus::Success
-                        },
+                        status: terminal_status,
                         error,
                     },
                 );
-                (id, detail)
+                (
+                    id,
+                    course_external_id,
+                    detail,
+                    terminal_status == crate::models::ScanCourseStatus::Success,
+                )
             });
         }
 
@@ -583,7 +605,12 @@ pub async fn discover_all(
                 done: detail_done,
                 total: detail_total,
             });
-            if let Ok((id, detail)) = joined {
+            if let Ok((id, course_external_id, detail, succeeded)) = joined {
+                if succeeded {
+                    *successful_detail_counts
+                        .entry(course_external_id)
+                        .or_default() += 1;
+                }
                 match detail {
                     Detail::Keep(r) | Detail::Single(r) => keep.push(*r),
                     Detail::Failed(r, error, auth_expired) => {
@@ -607,6 +634,24 @@ pub async fn discover_all(
                 }
             }
         }
+    }
+
+    if cancel.load(Ordering::Relaxed) {
+        result.cancelled = true;
+    }
+
+    if !result.cancelled {
+        result.successful_courses = successful_pages
+            .into_iter()
+            .filter(|course_id| {
+                let required = required_detail_counts.get(course_id).copied().unwrap_or(0);
+                let succeeded = successful_detail_counts
+                    .get(course_id)
+                    .copied()
+                    .unwrap_or(0);
+                required == succeeded
+            })
+            .collect();
     }
 
     // Containers that were replaced (forums, folders) must not survive.
@@ -801,5 +846,120 @@ mod tests {
         assert!(events
             .iter()
             .all(|event| chrono::DateTime::parse_from_rfc3339(&event.at).is_ok()));
+        assert_eq!(found.successful_courses, HashSet::from(["10".to_string()]));
+    }
+
+    #[tokio::test]
+    async fn successful_courses_require_every_detail_terminal_to_succeed() {
+        async fn scan(fail_ten_detail: bool) -> super::Discovery {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = thread::spawn(move || {
+                for _ in 0..5 {
+                    let (mut stream, _) = listener.accept().unwrap();
+                    let mut request = [0u8; 2048];
+                    let size = stream.read(&mut request).unwrap();
+                    let request = String::from_utf8_lossy(&request[..size]);
+                    let path = request
+                        .lines()
+                        .next()
+                        .unwrap()
+                        .split_whitespace()
+                        .nth(1)
+                        .unwrap();
+                    let body = if path == "/my/" {
+                        r#"<a href="/course/view.php?id=10">Course Ten</a><a href="/course/view.php?id=20">Course Twenty</a>"#
+                    } else if path.starts_with("/course/view.php?id=10") {
+                        r#"<li class="section main"><h3 class="sectionname">Week 1</h3><div class="activity"><a href="/mod/resource/view.php?id=42">Slides Ten</a></div></li>"#
+                    } else if path.starts_with("/course/view.php?id=20") {
+                        r#"<li class="section main"><h3 class="sectionname">Week 1</h3><div class="activity"><a href="/mod/resource/view.php?id=43">Slides Twenty</a></div></li>"#
+                    } else {
+                        "<html><body>Material details</body></html>"
+                    };
+                    let status = if fail_ten_detail && path.ends_with("id=42") {
+                        "500 Internal Server Error"
+                    } else {
+                        "200 OK"
+                    };
+                    write!(stream, "HTTP/1.1 {status}\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+                }
+            });
+            let client = Arc::new(crate::quanta::client::QuantaClient::fixture_client(address));
+            let discovery = discover_all(
+                client,
+                CrawlLimits {
+                    concurrency: 1,
+                    ..CrawlLimits::default()
+                },
+                Arc::new(AtomicBool::new(false)),
+                Arc::new(|_| {}),
+                Arc::new(|_| {}),
+            )
+            .await;
+            server.join().unwrap();
+            discovery
+        }
+
+        let partial = scan(true).await;
+        assert_eq!(
+            partial.successful_courses,
+            HashSet::from(["20".to_string()])
+        );
+        assert!(partial
+            .errors
+            .iter()
+            .any(|error| error.contains("resource mod:resource:42")));
+
+        let retried = scan(false).await;
+        assert_eq!(
+            retried.successful_courses,
+            HashSet::from(["10".to_string(), "20".to_string()])
+        );
+    }
+
+    #[tokio::test]
+    async fn detail_limit_does_not_report_skipped_course_as_successful() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            for _ in 2..4 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0u8; 2048];
+                let size = stream.read(&mut request).unwrap();
+                let request = String::from_utf8_lossy(&request[..size]);
+                let path = request
+                    .lines()
+                    .next()
+                    .unwrap()
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap();
+                let body = if path == "/my/" {
+                    r#"<a href="/course/view.php?id=10">Course Ten</a>"#
+                } else {
+                    r#"<li class="section main"><h3 class="sectionname">Week 1</h3><div class="activity"><a href="/mod/resource/view.php?id=42">Slides</a></div></li>"#
+                };
+                write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+            }
+        });
+        let client = Arc::new(crate::quanta::client::QuantaClient::fixture_client(address));
+        let found = discover_all(
+            client,
+            CrawlLimits {
+                max_detail_fetches: 0,
+                concurrency: 1,
+                ..CrawlLimits::default()
+            },
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(|_| {}),
+            Arc::new(|_| {}),
+        )
+        .await;
+        server.join().unwrap();
+        assert!(found.successful_courses.is_empty());
+        assert!(found
+            .errors
+            .iter()
+            .any(|error| error.contains("detail limit")));
     }
 }
