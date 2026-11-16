@@ -867,6 +867,7 @@ function AppShell() {
                 {route.view === "calendar" && (
                   <CalendarView
                     due={agendaDue} dueFilter={dueFilter} setDueFilter={setDueFilter} now={now} timeZone={timeZone}
+                    onChanged={refresh}
                     courses={courses}
                     resources={resources}
                     onOpen={(url) => void open(url)}
