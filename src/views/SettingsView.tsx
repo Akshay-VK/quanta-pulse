@@ -772,20 +772,19 @@ export default function SettingsView({
 
           <SettingRow
             title="Previous versions to keep"
-            description="Older versions of changed files are moved to .history. Only the newest N are kept per resource."
+            description="Keep this many older copies of each changed file in .history. The current saved copy is kept separately. Saved files are not removed by age."
           >
             <Select
               value={String(draft.mirrorKeepVersions)}
               onValueChange={(v) => set("mirrorKeepVersions", Number(v))}
-              options={[
-                { value: "0", label: "None" },
-                { value: "1", label: "1" },
-                { value: "3", label: "3" },
-                { value: "5", label: "5" },
-              ]}
+              options={[...new Set([0, 1, 3, 5, settings.mirrorKeepVersions])]
+                .filter((count) => Number.isInteger(count) && count >= 0 && count <= 10)
+                .sort((a, b) => a - b)
+                .map((count) => ({ value: String(count), label: count === 0 ? "None" : String(count) }))}
               ariaLabel="Number of previous versions to keep"
             />
           </SettingRow>
+          {errors.mirrorKeepVersions && <Banner kind="error">{errors.mirrorKeepVersions}</Banner>}
 
           {mirrorStats && mirrorStats.failed > 0 && (
             <SettingRow

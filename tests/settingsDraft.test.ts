@@ -76,6 +76,21 @@ describe("settingsDraft", () => {
     expect(errs.deadlineReminderHours).toBeDefined();
   });
 
+  it("accepts every previous-version count from 0 through 10, including the default 3", () => {
+    for (let count = 0; count <= 10; count++) {
+      expect(validateSettingsDraft({ ...base, mirrorKeepVersions: count })).toEqual({});
+    }
+    expect(base.mirrorKeepVersions).toBe(3);
+  });
+
+  it("rejects invalid previous-version counts with a field error", () => {
+    for (const count of [-1, 0.5, 3.5, 11, Number.NaN, Infinity, -Infinity]) {
+      const errors = validateSettingsDraft({ ...base, mirrorKeepVersions: count });
+      expect(errors).toEqual({ mirrorKeepVersions: expect.stringContaining("0 and 10") });
+      expect(hasValidationErrors(errors)).toBe(true);
+    }
+  });
+
   it("validates the Telegram bot token and chat id", () => {
     const token = "123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw";
     expect(validateSettingsDraft({ ...base, telegramBotToken: token }).telegramBotToken).toBeUndefined();
