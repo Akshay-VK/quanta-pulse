@@ -30,3 +30,4 @@ This wiki preserves dated decisions and their evidence. It is not the live track
 - [2026-11-16: Workspace shell implementation](2026-11-16-workspace-shell.md) — task 03 shell geometry, exported slot contract, drawer focus behavior, rendered evidence, and tracker limits.
 
 - [2026-11-16: Observed scan diagnostics acceptance](2026-11-16-scan-diagnostics.md) — B04 integration, native Windows runtime proof, and remaining UI scope.
+- [2026-11-16: Complete History read contract](2026-11-16-history-read-contract.md) — B05A acceptance, timestamp correction, native proof, and bounded task splits.

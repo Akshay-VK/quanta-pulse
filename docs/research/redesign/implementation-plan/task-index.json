@@ -112,23 +112,63 @@
   },
   {
     "id": "04",
-    "title": "Material row and list keyboard policy",
-    "deps": "02,03",
+    "title": "Material rows and list keyboard policy (umbrella)",
+    "deps": "04C",
     "spec": "3, 4, 6",
+    "files": [],
+    "tests": [],
+    "accept": "Complete only after 04A visual geometry, 04B pure policy, and 04C serialized list wiring are accepted. Preserve all original task 04 behavior and all screen ownership rows. I01 later adds read-on-inspect; it is not a prerequisite for 04C."
+  },
+  {
+    "id": "04A",
+    "title": "Material row and table visual foundation",
+    "deps": "02,03",
+    "spec": "3, 6",
     "files": [
       "src/components/ResourceRow.tsx",
       "src/components/DataTable.tsx",
       "src/components/GroupHeader.tsx",
-      "src/hooks/useHotkey.ts",
-      "new src/lib/listNavigation.ts",
       "src/styles/components/content.css"
     ],
     "tests": [
-      "tests/resourceRowDensity.test.tsx",
-      "tests/appKeyboardInteractions.test.tsx",
-      "new tests/listNavigation.test.ts"
+      "tests/resourceRowDensity.test.tsx"
     ],
-    "accept": "Implement 36/30px material rows, 34px table rows, 28px group headers, slot ordering and section/time collapse. Distinguish focused row, inspected row and multi-selection. J/K/arrows move focus without acknowledging; Enter inspects; X toggles multi-selection; E/U read state; Delete confirmation; Space preview; Shift+A captured-scope dialog. Shortcuts ignore editable targets and inactive surfaces. Nested course/action controls stay valid. Restore focus after filtering/virtualization and overlay close."
+    "accept": "36/30px material rows, 34px table rows including virtualizer estimate, 28px headers, slot order, valid action siblings; rendered dimensions and overflow. No keyboard ownership changes."
+  },
+  {
+    "id": "04B",
+    "title": "Pure list keyboard and focus policy",
+    "deps": "04A",
+    "spec": "4, 6",
+    "files": [
+      "src/lib/listNavigation.ts"
+    ],
+    "tests": [
+      "tests/listNavigation.test.ts"
+    ],
+    "accept": "Pure focus navigation, distinct action intents, immutable captured scope, editable/inactive suppression, boundary and filtering restoration policy. No App/view wiring. Handoff concrete inputs and outputs for 04C."
+  },
+  {
+    "id": "04C",
+    "title": "Serialized list keyboard and collapse integration",
+    "deps": "04B,B05A",
+    "spec": "3, 4, 6",
+    "files": [
+      "src/App.tsx",
+      "src/hooks/useHotkey.ts",
+      "src/components/ResourceRow.tsx",
+      "src/components/DataTable.tsx",
+      "src/components/GroupHeader.tsx",
+      "src/views/TodayView.tsx",
+      "src/views/CalendarView.tsx",
+      "src/views/library/CoursePage.tsx",
+      "src/views/HistoryView.tsx"
+    ],
+    "tests": [
+      "tests/appKeyboardInteractions.test.tsx",
+      "tests/appInteractions.test.tsx"
+    ],
+    "accept": "Coordinator dispatches surface-sized child leases after policy acceptance. Wire existing App-owned intents without read-on-inspect change until I01. Prove focus distinct from inspected and multi-selected state, all task04 keys, captured scope, section/time collapse, virtualization/filter/overlay restoration, and editable/modal suppression. Do not accept umbrella before wiring passes."
   },
   {
     "id": "05",
@@ -514,8 +554,37 @@
   {
     "id": "B05",
     "title": "Complete History queries and authoritative deletion scope",
-    "deps": "00",
+    "deps": "B05A,B05B",
     "spec": "5, 7",
+    "files": [],
+    "tests": [],
+    "accept": "Umbrella acceptance requires sequential native children B05A (complete History reads and resource unread snapshot) and B05B (frozen deletion scope) accepted and integrated. Task 15 remains directly dependent on B05; I01 continues to consume the contract through its existing task dependencies."
+  },
+  {
+    "id": "B05A",
+    "title": "Complete History queries and resource unread snapshot",
+    "deps": "00",
+    "spec": "5.7, 7",
+    "files": [
+      "src-tauri/src/db.rs",
+      "src-tauri/src/attention.rs",
+      "src-tauri/src/models.rs",
+      "src-tauri/src/commands.rs",
+      "src-tauri/src/lib.rs",
+      "src/lib/api.ts",
+      "src/lib/types.ts"
+    ],
+    "tests": [
+      "tests/historyQueries-api.test.ts",
+      "focused Rust database/attention tests"
+    ],
+    "accept": "Add filtered/paginated History events and scans with complete totals, explicit offset/limit, deterministic tie ordering, clear-watermark and calendar-suppression semantics, retaining legacy wrappers. Add an independent complete resource unread event-ID snapshot that excludes baseline/calendar-suppressed rows but ignores Inbox dismissal and the History clear watermark. Define exact camelCase DTO/API types and cover records beyond legacy caps, ties, filters, pagination, totals, unread/read state, suppression, dismissal, watermarks and resource isolation. No deletion mutation or UI changes."
+  },
+  {
+    "id": "B05B",
+    "title": "Freeze and apply History deletion scope",
+    "deps": "B05A",
+    "spec": "5.7, 7",
     "files": [
       "src-tauri/src/attention.rs",
       "src-tauri/src/db.rs",
@@ -526,9 +595,10 @@
     ],
     "tests": [
       "tests/appHistoryInteractions.test.tsx",
-      "tests/attention-api.test.ts"
+      "tests/attention-api.test.ts",
+      "focused Rust database/attention tests"
     ],
-    "accept": "Add complete/paginated filtered History and scan retrieval plus authoritative deletion counts/snapshot contract. Handle legacy clear watermarks, suppressed events and records beyond existing caps. Confirm scope at mutation time: use frozen IDs or a snapshot token, so later arrivals survive; on changed scope require renewed confirmation rather than silently widening deletion. Test more records than every previous default limit and transaction failure; saved files/resources/baselines remain intact."
+    "accept": "After B05A, capture exact event/scan deletion IDs or a local snapshot token and return authoritative counts. Delete only that scope transactionally; changed scope requires renewed confirmation and later arrivals survive. Preserve resources, saved files, baselines and unrelated markers. Test rollback and preserved data. No UI changes."
   },
   {
     "id": "B06",

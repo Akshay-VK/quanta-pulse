@@ -14,9 +14,10 @@ Use a fresh context (`fork_turns: none` with native agents) for each task. Targe
 2. Enumerate assigned acceptance bullets and state variants. Add a failing test first for new behavior, using existing fixtures. Keep preserved behaviors covered.
 3. Implement within assigned ownership. Keep pure policy in `src/lib/`; views emit intents; existing App owners execute shared actions. The frontend invokes Tauri only through `src/lib/api.ts`.
 4. Run focused proof, then required gates. Frontend changes require `npm run lint` and `npm test`; accepted integrations also require `npm run build`. Rust changes require `cargo check` from `src-tauri/` and relevant Rust tests. Use temporary data for tests. Report environment failures distinctly from code failures. Do not run the packaged app during development.
-5. Check new documents as well as tracked diffs for trailing whitespace; end Markdown files with exactly one newline. `git diff --check` alone does not inspect untracked files.
-6. Review every assigned screen and spec-only acceptance bullet. Produce rendered evidence when asked to implement/verify UI; DOM tests cannot establish pixels, zoom or native behavior. Use deterministic data outside production code.
-7. Return the completion record below. Stop at your boundary.
+5. Rust formatting must stay within the lease: `cargo fmt` traverses the crate even when filenames follow `--`. Use direct `rustfmt --edition 2021 --config skip_children=true` on exact leased files, or report existing formatting drift without rewriting it.
+6. Check new documents as well as tracked diffs for trailing whitespace; end Markdown files with exactly one newline. `git diff --check` alone does not inspect untracked files.
+7. Review every assigned screen and spec-only acceptance bullet. Produce rendered evidence when asked to implement/verify UI; DOM tests cannot establish pixels, zoom or native behavior. Use deterministic data outside production code.
+8. Return the completion record below. Stop at your boundary.
 
 ## Shared-file rule
 

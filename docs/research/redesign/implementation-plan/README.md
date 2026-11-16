@@ -1,10 +1,12 @@
 # Redesign implementation: subagent execution plan
 
-Planning artifact, 15 November 2026. Planning-source baseline: `1bd0e8b5a24b05733295b5751a7bc42de7b90b43`. Redesign implementation is in progress: task 01 is accepted at `985b1a9`, B01 at `23bf0ce`, and B02 is active. Existing untracked `docs/research/` inputs are user material and must be preserved.
+Planning artifact, 15 November 2026. Planning-source baseline: `1bd0e8b5a24b05733295b5751a7bc42de7b90b43`. Historical checkpoint at planning time: task 01 was accepted at `985b1a9`, B01 at `23bf0ce`, and B02 was active. Later acceptance evidence lives in dated wiki records and GitHub Issues. Existing untracked `docs/research/` inputs are user material and must be preserved.
 
 The plan uses fresh, narrowly scoped workers and one coordinator/integrator. Dispatch one packet at a time to a worker; do not give workers this entire directory or the planning conversation. Task 02 is an umbrella split into native child packets 02A (shared controls) and 02B (overlays); 02A depends on 01, 02B depends on accepted 02A, and 02 completes after 02B. Downstream dependencies remain on 02. All 98 exported screens retain their existing single ownership rows. Shared foundations precede screen work; missing backend capabilities are explicit prerequisites.
 
-B04 is split into native child packets B04A (storage/query) and B04B (engine observation/proof). B04A depends on task 00; B04B depends on accepted/integrated B04A; downstream task 15 remains dependent on B04 until both children are accepted. Only B04A is currently approved/ready.
+B04 is split into native child packets B04A (storage/query) and B04B (engine observation/proof). B04A depends on task 00; B04B depends on accepted/integrated B04A; downstream task 15 remains dependent on B04 until both children are accepted. This records its original dispatch order; both children were later accepted on 2026-11-16, documented in the dated scan-diagnostics wiki record.
+
+B05 is split sequentially into native child packets B05A (complete History reads and resource unread snapshot) and B05B (frozen History deletion scope). B05A depends on task 00; B05B depends on accepted B05A; task 15 remains directly dependent on B05 and I01 consumes that contract through its existing task dependencies. Only B05A is approved/ready. All 98 screen-coverage ownership rows remain unchanged.
 
 ## Read in this order
 
@@ -80,3 +82,5 @@ run required gates, and return worker-contract completion record. No subagents.
 If a scope needs more than one independent lifecycle or cannot fit this context budget, split it before dispatch and update native blockers and screen ownership. Settings backend work is already separated into interval validation (B03), failure notifications (B09) and explicit version retention (B10). Each uses a fresh worker and serialized shared-file lease.
 
 Settings packets are deliberately sequential even where operations are independent: their shared SettingsView file has one writer, and every pass starts with fresh context.
+
+On 2026-11-16, task 04 was split into 04A visual geometry, 04B pure keyboard policy, and 04C serialized surface integration. Dependencies remain on umbrella 04; I01 stays downstream, avoiding a keyboard/read-on-inspect integration cycle. The original 98 screen ownership rows are unchanged.
