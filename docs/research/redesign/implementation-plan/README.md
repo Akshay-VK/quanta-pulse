@@ -4,6 +4,8 @@ Planning artifact, 15 November 2026. Planning-source baseline: `1bd0e8b5a24b0573
 
 The plan uses fresh, narrowly scoped workers and one coordinator/integrator. Dispatch one packet at a time to a worker; do not give workers this entire directory or the planning conversation. Task 02 is an umbrella split into native child packets 02A (shared controls) and 02B (overlays); 02A depends on 01, 02B depends on accepted 02A, and 02 completes after 02B. Downstream dependencies remain on 02. All 98 exported screens retain their existing single ownership rows. Shared foundations precede screen work; missing backend capabilities are explicit prerequisites.
 
+B04 is split into native child packets B04A (storage/query) and B04B (engine observation/proof). B04A depends on task 00; B04B depends on accepted/integrated B04A; downstream task 15 remains dependent on B04 until both children are accepted. Only B04A is currently approved/ready.
+
 ## Read in this order
 
 Coordinator: this document → [decisions](decisions.md) → [screen coverage](screen-coverage.md) → the next eligible packet. Worker: `AGENTS.md` → [worker contract](worker-contract.md) → its single task packet → only named source/spec sections and its assigned screen rows. [task-index.json](task-index.json) is machine-readable dependency/scope data, not live status.

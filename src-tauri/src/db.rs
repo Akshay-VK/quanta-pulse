@@ -9,7 +9,7 @@ use std::path::Path;
 
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::models::{ChangeEvent, Course, Digest, Resource, ScanRun};
+use crate::models::{ChangeEvent, Course, Digest, Resource, ScanDetails, ScanRun};
 use crate::settings::Settings;
 
 /// Current UTC time as an RFC 3339 string.
@@ -190,6 +190,8 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     if !has_display_name {
         conn.execute_batch(include_str!("../migrations/0006_course_display_name.sql"))?;
     }
+    // 0007: old scan rows intentionally have no synthesized course details.
+    conn.execute_batch(include_str!("../migrations/0007_scan_details.sql"))?;
     Ok(())
 }
 
@@ -1183,6 +1185,69 @@ pub fn list_history_scans(conn: &Connection, limit: i64) -> rusqlite::Result<Vec
     rows.collect()
 }
 
+/// Save the exact terminal observations supplied by the scan worker.
+///
+/// The existing scan row must be present; replacement and insertion are atomic.
+pub fn save_scan_details(conn: &Connection, details: &ScanDetails) -> rusqlite::Result<()> {
+    let details = sanitize_scan_details(details.clone());
+    let payload = serde_json::to_string(&details)
+        .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+    let changed = conn.execute(
+        "INSERT INTO scan_details(scan_id, payload) SELECT ?1, ?2 WHERE EXISTS (SELECT 1 FROM scan_runs WHERE id = ?1)\n         ON CONFLICT(scan_id) DO UPDATE SET payload = excluded.payload",
+        params![details.scan_id, payload],
+    )?;
+    if changed == 0 {
+        return Err(rusqlite::Error::QueryReturnedNoRows);
+    }
+    Ok(())
+}
+
+/// Return saved observations, or `None` for legacy/missing scan rows.
+pub fn scan_details(conn: &Connection, scan_id: i64) -> rusqlite::Result<Option<ScanDetails>> {
+    let payload = conn
+        .query_row(
+            "SELECT payload FROM scan_details WHERE scan_id = ?1",
+            [scan_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    payload
+        .map(|payload| {
+            let details: ScanDetails = serde_json::from_str(&payload)
+                .map_err(|error| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error)))?;
+            Ok(sanitize_scan_details(details))
+        })
+        .transpose()
+}
+
+fn sanitize_diagnostic_text(value: &str) -> String {
+    let redacted = crate::logging::redact(value);
+    let lower = redacted.to_ascii_lowercase();
+    if lower.contains("http://") || lower.contains("https://")
+        || lower.contains("token=") || lower.contains("token:")
+        || lower.contains("secret=") || lower.contains("cookie=")
+        || lower.contains("session=") || lower.contains("sessiontoken=")
+        || lower.contains("session_token=") || lower.contains("access_token=")
+        || lower.contains("api_key=") || lower.contains("authorization=")
+    {
+        "[redacted: sensitive diagnostic content]".to_string()
+    } else {
+        redacted
+    }
+}
+
+fn sanitize_scan_details(mut details: ScanDetails) -> ScanDetails {
+    for course in &mut details.courses {
+        course.course_name = sanitize_diagnostic_text(&course.course_name);
+        course.error = course.error.as_deref().map(sanitize_diagnostic_text);
+        for step in &mut course.steps {
+            step.label = sanitize_diagnostic_text(&step.label);
+            step.error = step.error.as_deref().map(sanitize_diagnostic_text);
+        }
+    }
+    details
+}
+
 fn map_scan(r: &rusqlite::Row<'_>) -> rusqlite::Result<ScanRun> {
     Ok(ScanRun {
         id: r.get(0)?,
@@ -1678,6 +1743,129 @@ mod tests {
         let conn = mem();
         migrate(&conn).unwrap();
         assert_eq!(count_courses(&conn), 0);
+    }
+
+    fn insert_test_scan(conn: &Connection) -> i64 {
+        conn.execute(
+            "INSERT INTO scan_runs (started_at, status) VALUES ('2026-11-16T10:00:00Z', 'ok')",
+            [],
+        ).unwrap();
+        conn.last_insert_rowid()
+    }
+
+    fn test_scan_details(scan_id: i64) -> ScanDetails {
+        use crate::models::{ScanCourseDetail, ScanCourseStatus as Status, ScanStep};
+        ScanDetails {
+            scan_id,
+            courses: vec![
+                ScanCourseDetail {
+                    course_id: Some(7),
+                    course_name: "Computer Science".into(),
+                    status: Status::Partial,
+                    started_at: "2026-11-16T10:00:01Z".into(),
+                    completed_at: None,
+                    steps: vec![ScanStep {
+                        label: "Discover resources".into(),
+                        status: Status::Failed,
+                        started_at: "2026-11-16T10:00:02Z".into(),
+                        completed_at: Some("2026-11-16T10:00:03Z".into()),
+                        error: Some("safe failure detail".into()),
+                    }],
+                    error: Some("partial course result".into()),
+                },
+                ScanCourseDetail {
+                    course_id: None,
+                    course_name: "Unknown".into(),
+                    status: Status::Failed,
+                    started_at: "2026-11-16T10:01:00Z".into(),
+                    completed_at: Some("2026-11-16T10:01:01Z".into()),
+                    steps: vec![],
+                    error: Some("course failed".into()),
+                },
+                ScanCourseDetail {
+                    course_id: Some(9),
+                    course_name: "Cancelled course".into(),
+                    status: Status::Cancelled,
+                    started_at: "2026-11-16T10:02:00Z".into(),
+                    completed_at: None,
+                    steps: vec![],
+                    error: None,
+                },
+                ScanCourseDetail {
+                    course_id: Some(10),
+                    course_name: "Successful course".into(),
+                    status: Status::Success,
+                    started_at: "2026-11-16T10:03:00Z".into(),
+                    completed_at: Some("2026-11-16T10:04:00Z".into()),
+                    steps: vec![],
+                    error: None,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn legacy_scans_have_no_details_and_new_payload_survives_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("scan-details.sqlite");
+        let conn = Connection::open(&path).unwrap();
+        migrate(&conn).unwrap();
+        let scan_id = insert_test_scan(&conn);
+        assert_eq!(scan_details(&conn, scan_id).unwrap(), None);
+        let details = test_scan_details(scan_id);
+        save_scan_details(&conn, &details).unwrap();
+        drop(conn);
+
+        let reopened = Connection::open(path).unwrap();
+        migrate(&reopened).unwrap();
+        assert_eq!(scan_details(&reopened, scan_id).unwrap(), Some(details));
+    }
+
+    #[test]
+    fn scan_details_serialize_camel_case_and_clean_up_with_history_rows() {
+        let conn = mem();
+        let scan_id = insert_test_scan(&conn);
+        save_scan_details(&conn, &test_scan_details(scan_id)).unwrap();
+        let raw: String = conn.query_row("SELECT payload FROM scan_details", [], |row| row.get(0)).unwrap();
+        assert!(raw.contains("courseId") && raw.contains("startedAt") && raw.contains("completedAt"));
+        assert!(!raw.contains("course_id") && !raw.contains("started_at"));
+        for status in ["success", "partial", "failed", "cancelled"] {
+            assert!(raw.contains(&format!("\"status\":\"{status}\"")));
+        }
+
+        conn.execute("DELETE FROM scan_runs WHERE id = ?1", [scan_id]).unwrap();
+        let remaining: i64 = conn.query_row("SELECT COUNT(*) FROM scan_details", [], |row| row.get(0)).unwrap();
+        assert_eq!(remaining, 0);
+    }
+
+    #[test]
+    fn scan_detail_sanitization_covers_stored_payload_and_returned_dto() {
+        let conn = mem();
+        let scan_id = insert_test_scan(&conn);
+        let mut details = test_scan_details(scan_id);
+        details.courses[0].error = Some("password=hunter2 MoodleSession=abc wstoken=def https://example.test/path?token=secret".into());
+        details.courses[0].steps[0].error = Some("request failed: https://example.test/api?sid=private".into());
+        save_scan_details(&conn, &details).unwrap();
+
+        let raw: String = conn.query_row("SELECT payload FROM scan_details", [], |row| row.get(0)).unwrap();
+        let returned = scan_details(&conn, scan_id).unwrap().unwrap();
+        for secret in ["hunter2", "abc", "def", "secret", "private", "example.test"] {
+            assert!(!raw.contains(secret), "raw stored payload leaked {secret}");
+            assert!(!format!("{returned:?}").contains(secret), "returned DTO leaked {secret}");
+        }
+        assert!(returned.courses[0].error.as_deref().unwrap().contains("redacted"));
+    }
+
+    #[test]
+    fn populated_legacy_database_gets_idempotent_scan_details_migration() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(include_str!("../migrations/0001_init.sql")).unwrap();
+        let scan_id = insert_test_scan(&conn);
+        migrate(&conn).unwrap();
+        migrate(&conn).unwrap();
+        assert_eq!(scan_details(&conn, scan_id).unwrap(), None);
+        save_scan_details(&conn, &test_scan_details(scan_id)).unwrap();
+        assert!(scan_details(&conn, scan_id).unwrap().is_some());
     }
 
     #[test]

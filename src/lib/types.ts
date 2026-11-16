@@ -79,6 +79,31 @@ export interface ScanRun {
   isBaseline: boolean;
 }
 
+export type ScanCourseStatus = "success" | "partial" | "failed" | "cancelled";
+
+export interface ScanDetails {
+  scanId: number;
+  courses: ScanCourseDetail[];
+}
+
+export interface ScanCourseDetail {
+  courseId: number | null;
+  courseName: string;
+  status: ScanCourseStatus;
+  startedAt: string;
+  completedAt: string | null;
+  steps: ScanStep[];
+  error: string | null;
+}
+
+export interface ScanStep {
+  label: string;
+  status: ScanCourseStatus;
+  startedAt: string;
+  completedAt: string | null;
+  error: string | null;
+}
+
 export interface SyncStatus {
   running: boolean;
   phase: string;

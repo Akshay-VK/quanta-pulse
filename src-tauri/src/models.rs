@@ -136,6 +136,48 @@ pub struct ScanRun {
     pub is_baseline: bool,
 }
 
+/// Terminal state observed for a course scan or one of its steps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ScanCourseStatus {
+    Success,
+    Partial,
+    Failed,
+    Cancelled,
+}
+
+/// Persisted per-course observations for one scan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanDetails {
+    pub scan_id: i64,
+    pub courses: Vec<ScanCourseDetail>,
+}
+
+/// Actual timing, result and steps observed for a course during a scan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanCourseDetail {
+    pub course_id: Option<i64>,
+    pub course_name: String,
+    pub status: ScanCourseStatus,
+    pub started_at: Timestamp,
+    pub completed_at: Option<Timestamp>,
+    pub steps: Vec<ScanStep>,
+    pub error: Option<String>,
+}
+
+/// Actual step timing and result observed during a course scan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanStep {
+    pub label: String,
+    pub status: ScanCourseStatus,
+    pub started_at: Timestamp,
+    pub completed_at: Option<Timestamp>,
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncStatus {

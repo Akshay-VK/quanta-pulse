@@ -213,6 +213,15 @@ pub fn list_history_scans(
     db::list_history_scans(&conn, limit.unwrap_or(50).clamp(1, 500)).map_err(|e| e.to_string())
 }
 
+/// Fetch observed per-course diagnostics for one scan; legacy scans return none.
+#[tauri::command]
+pub fn scan_details(
+    state: State<AppState>,
+    scan_id: i64,
+) -> Result<Option<crate::models::ScanDetails>, String> {
+    db::scan_details(&state.conn(), scan_id).map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 pub fn unread_count(state: State<AppState>) -> i64 {
     let conn = state.conn();

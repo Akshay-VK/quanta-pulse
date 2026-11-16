@@ -66,6 +66,7 @@ pub fn run() {
             commands::events_range,
             commands::list_scans,
             commands::list_history_scans,
+            commands::scan_details,
             commands::sync_now,
             commands::cancel_sync,
             commands::sync_status,

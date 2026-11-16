@@ -471,13 +471,21 @@
   },
   {
     "id": "B04",
-    "title": "Persisted scan course diagnostics",
+    "title": "Persisted scan course diagnostics (umbrella)",
+    "deps": "B04A,B04B",
+    "spec": "5.7",
+    "files": [],
+    "tests": [],
+    "accept": "Umbrella acceptance requires native children B04A (storage/query) and B04B (engine observation/proof) accepted and integrated. Downstream task 15 continues to depend on B04."
+  },
+  {
+    "id": "B04A",
+    "title": "Scan diagnostics storage and query",
     "deps": "00",
     "spec": "5.7",
     "files": [
-      "src-tauri/src/sync/engine.rs",
       "src-tauri/src/db.rs",
-      "migrations/ additive migration",
+      "src-tauri/migrations/0007_scan_details.sql",
       "src-tauri/src/models.rs",
       "src-tauri/src/commands.rs",
       "src-tauri/src/lib.rs",
@@ -485,10 +493,23 @@
       "src/lib/types.ts"
     ],
     "tests": [
-      "focused Rust scan/database tests",
+      "focused Rust database tests",
       "new tests/scanDetails-api.test.ts"
     ],
-    "accept": "Persist per-course outcome/timing/step diagnostics for each new scan, including partial/failure/cancellation. Expose query by scan ID; old records return explicit absence. Copy payload redacts secrets/credentials/URLs with sensitive query data. Read after restart, delete-history cleanup, baseline silence and failed-course retention have regression proof. Do not synthesize historical per-course timestamps from aggregate counts. Scope exact timeline granularity in 00 before schema design."
+    "accept": "Add additive populated-database-safe storage/query for exact camelCase ScanDetails DTO and api.scanDetails(scanId): Promise<ScanDetails|null>. Legacy details remain null. Provide atomic observed-terminal write helper for B04B; clean on history deletion. Sanitize before persistence and query. Cover migration, reopen, nested serialization, partial/fail/cancel, deletion cleanup, and stored/DTO secret absence. No engine instrumentation."
+  },
+  {
+    "id": "B04B",
+    "title": "Scan engine observation and persistence proof",
+    "deps": "B04A",
+    "spec": "5.7",
+    "files": [
+      "src-tauri/src/sync/engine.rs"
+    ],
+    "tests": [
+      "focused Rust scan/engine tests"
+    ],
+    "accept": "Observe and persist actual per-course terminal outcomes, timestamps and steps for future scans, including partial/failure/cancellation. Preserve baseline silence; never infer historic or per-course values from aggregate counts. Use B04A storage seam and test all outcomes plus persistence. No schema/API changes."
   },
   {
     "id": "B05",
