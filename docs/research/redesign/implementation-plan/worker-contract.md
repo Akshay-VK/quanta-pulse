@@ -25,6 +25,8 @@ The coordinator assigns a single writer to each file, or explicitly disjoint CSS
 
 B tasks each change shared command/registration/API/type files: run them serially unless the coordinator assigns those edits to one integrator. `App.tsx`, CSS imports and global hotkeys always have one integration owner. No nested delegation by a worker.
 
+For a parallel frontend wave, the coordinator names one assembled-gate owner. Parallel writers run focused proof plus lint/build, freeze source and tests, and report that the full suite is pending. After every writer freezes, the coordinator or assigned verifier runs required frontend gates and records the aggregate source hash before and after. Writers do not edit source/tests or compete to run full suites during that freeze; justified changes or failures trigger only the required gates again. A standalone worker outside a parallel wave runs all required gates before acceptance.
+
 ## Completion record (aim under 500 words)
 
 ```text

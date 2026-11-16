@@ -3,6 +3,7 @@
 - [2026-11-16: Paused redesign session handoff](2026-11-16-redesign-session-handoff.md) — resume entry point, accepted commits, interrupted patches, contracts, proof limits and next tasks.
 - [2026-11-16: Redesign resume acceptance](2026-11-16-redesign-resume-acceptance.md) — B08A/B08B, B09B, 04C2 and keyed table foundation accepted; 612-test assembled checkpoint, blocked Materials-only 04C4 and retained umbrella gaps.
 - [2026-11-16: Redesign resume acceptance, continued](2026-11-16-redesign-resume-acceptance.md#2026-11-16-accepted-allfiles-and-b10--superseding-checkpoint) — accepted AllFiles/B10, stable 651-test frontend gates, and unaccepted Course/History slices.
+- [2026-11-16: Course Materials and History foundation acceptance](2026-11-16-course-and-history-foundation.md) — superseding acceptance for 04C4/04C5, stable 723-test assembled frontend gates, and remaining History/Activity limits.
 - [2026-11-16: Windows native test command](2026-11-16-windows-native-test-command.md) — accepted runner command, manifest handling and Windows proof limits.
 - [2026-11-16: Version-retention compatibility](2026-11-16-version-retention-compatibility.md) — preserve the existing `mirrorKeepVersions` field, default, accepted range and persisted values; no age cleanup.
 

@@ -45,6 +45,8 @@ Coordinator acceptance at current root HEAD [`0f5f510`](https://github.com/Aksha
 
 The assembled lint/build and 651/71 test result is the stable combined frontend checkpoint for these accepted slices. No live SSO, macOS, or native desktop acceptance is inferred. Course Materials #50 and History foundation #51 remain RUNNING and unaccepted; 04C and 04 remain incomplete.
 
+The later acceptance of Course Materials #50 and History foundation #51 is recorded in the [2026-11-16 Course Materials and History foundation entry](2026-11-16-course-and-history-foundation.md), which supersedes that status statement for those slices only.
+
 ## 2026-11-16 Windows native test runner documentation
 
 The Windows library runner is accepted at [`2be8ff0`](https://github.com/Akshay-VK/quanta-pulse/commit/2be8ff0). The canonical command and operational limits are in [Windows library tests](../testing/windows-native-tests.md): command-scoped manifest flags replace the former post-link `mt.exe` mutation for future runner checks. Recorded Windows results are 258 passed / 1 ignored for the library suite and 1 passed for the explicitly invoked native test. Execution used Rust 1.97.1; Rust 1.77 execution is not proven. This does not establish live SSO or macOS behavior. See the [dated runner record](2026-11-16-windows-native-test-command.md) for the bounded evidence summary.
