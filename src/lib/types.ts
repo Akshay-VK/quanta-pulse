@@ -195,6 +195,7 @@ export interface Settings {
   notifyDeadlines: boolean;
   notifyAvailability: boolean;
   notifyAuth: boolean;
+  notifyScanFailures: boolean;
   quietHoursStart: string | null;
   quietHoursEnd: string | null;
   deadlineReminderHours: number;

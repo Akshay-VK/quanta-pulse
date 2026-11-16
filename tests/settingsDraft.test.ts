@@ -14,6 +14,7 @@ const base: Settings = {
   notifyDeadlines: true,
   notifyAvailability: true,
   notifyAuth: true,
+  notifyScanFailures: true,
   quietHoursStart: null,
   quietHoursEnd: null,
   deadlineReminderHours: 48,
@@ -48,6 +49,13 @@ describe("settingsDraft", () => {
     expect(isSettingsDirty(base, base)).toBe(false);
     const changed = { ...base, syncIntervalMinutes: 30 };
     expect(isSettingsDirty(changed, base)).toBe(true);
+  });
+
+  it("compares scan-failure preference edits and preserves a persisted false value", () => {
+    const current = { ...base, notifyScanFailures: false };
+    expect(isSettingsDirty(current, current)).toBe(false);
+    expect(isSettingsDirty({ ...current, notifyScanFailures: true }, current)).toBe(true);
+    expect(current.notifyScanFailures).toBe(false);
   });
 
   it("accepts offered and persisted monitoring intervals", () => {

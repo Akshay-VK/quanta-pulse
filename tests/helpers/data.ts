@@ -28,7 +28,7 @@ export const course: Course = {
 export const settings: Settings = {
   syncIntervalMinutes: 30, launchAtLogin: false, runInBackground: true, updateAutoCheck: true,
   notificationsEnabled: true, notifyNew: true, notifyUpdated: true, notifyAnnouncements: true,
-  notifyDeadlines: true, notifyAvailability: true, notifyAuth: true, quietHoursStart: null,
+  notifyDeadlines: true, notifyAvailability: true, notifyAuth: true, notifyScanFailures: true, quietHoursStart: null,
   quietHoursEnd: null, deadlineReminderHours: 48, timezone: "Asia/Kolkata", cacheLimitBytes: 2147483648,
   mirrorEnabled: true, mirrorRoot: null, mirrorMaxBytes: 0, mirrorMinFreeBytes: 0, mirrorKeepVersions: 2,
   telegramEnabled: false, telegramBotToken: null, telegramChatId: null, maxCourses: 100,

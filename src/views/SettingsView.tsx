@@ -617,6 +617,20 @@ export default function SettingsView({
               ariaLabel="Authentication reminders"
             />
           </SettingRow>
+          <SettingRow
+            title="Scan failures and incomplete scans"
+            controlClassName={notificationsDisabled ? "dimmed" : undefined}
+            description={notificationsDisabled
+              ? "Turn on notifications to change this"
+              : "Show a generic system alert when a scan finishes with incomplete results."}
+          >
+            <Switch
+              checked={draft.notifyScanFailures}
+              onCheckedChange={(v) => set("notifyScanFailures", v)}
+              disabled={notificationsDisabled}
+              ariaLabel="Scan failures and incomplete scans"
+            />
+          </SettingRow>
           <SettingRow title="Deadline reminder window" description="Notify about deadlines within this many hours.">
             <Select
               value={String(draft.deadlineReminderHours)}

@@ -32,7 +32,56 @@ async function openSettings() {
   await flushApp();
 }
 
+async function toggleScanFailureNotifications() {
+  const toggle = document.querySelector<HTMLButtonElement>('[aria-label="Scan failures and incomplete scans"]');
+  if (!toggle) throw new Error("Missing scan-failure notification toggle");
+  await click(toggle);
+}
+
 describe("Settings save and navigation in the real application", () => {
+  it("keeps the scan-failure preference draft-only until save, reloads it, and discards edits", async () => {
+    appApi.setSettings.mockImplementation(async (next) => next);
+    app = await renderApp();
+    await openSettings();
+    await toggleScanFailureNotifications();
+    expect(appApi.setSettings).not.toHaveBeenCalled();
+    await click(button("Save settings"));
+    expect(appApi.setSettings).toHaveBeenCalledWith(expect.objectContaining({ notifyScanFailures: false }));
+    expect(document.querySelector('[aria-label="Scan failures and incomplete scans"]')?.getAttribute("data-state")).toBe("unchecked");
+
+    await toggleScanFailureNotifications();
+    expect(document.querySelector('[aria-label="Scan failures and incomplete scans"]')?.getAttribute("data-state")).toBe("checked");
+    await click(button("Discard"));
+    await click(button("Discard", document.querySelector('[role="alertdialog"]')!));
+    expect(document.querySelector('[aria-label="Scan failures and incomplete scans"]')?.getAttribute("data-state")).toBe("unchecked");
+  });
+
+  it("retains the scan-failure preference after failed save and can discard it", async () => {
+    appApi.setSettings.mockRejectedValueOnce(new Error("Disk is busy"));
+    app = await renderApp();
+    await openSettings();
+    await toggleScanFailureNotifications();
+    await click(button("Save settings"));
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("Disk is busy");
+    expect(document.querySelector('[aria-label="Scan failures and incomplete scans"]')?.getAttribute("data-state")).toBe("unchecked");
+    await click(button("Discard"));
+    await click(button("Discard", document.querySelector('[role="alertdialog"]')!));
+    expect(document.querySelector('[aria-label="Scan failures and incomplete scans"]')?.getAttribute("data-state")).toBe("checked");
+  });
+
+  it("preserves the scan-failure preference draft when navigation is guarded", async () => {
+    app = await renderApp();
+    await openSettings();
+    await toggleScanFailureNotifications();
+    await click(button("Inbox"));
+    expect(document.querySelector('[role="alertdialog"]')).toBeTruthy();
+    await click(button("Stay", document.querySelector('[role="alertdialog"]')!));
+    expect(document.querySelector("main h1")?.textContent).toBe("Settings");
+    expect(document.querySelector('[aria-label="Scan failures and incomplete scans"]')?.getAttribute("data-state")).toBe("unchecked");
+    await click(button("Save settings"));
+    expect(appApi.setSettings).toHaveBeenCalledWith(expect.objectContaining({ notifyScanFailures: false }));
+  });
+
   it("retains a failed draft and retries save before navigating", async () => {
     appApi.setSettings.mockRejectedValueOnce(new Error("Disk is busy")).mockImplementationOnce(async (next) => next);
     app = await renderApp();
