@@ -359,6 +359,173 @@ fn dismissal_and_history_failure_roll_back_and_scans_are_explicit() {
 }
 
 #[test]
+fn history_deletion_snapshot_is_authoritative_and_applies_only_frozen_ids() {
+    let (_dir, conn) = fixture();
+    let tx = conn.unchecked_transaction().unwrap();
+    for id in 1..=1_205 {
+        event(&tx, id, None, "new");
+        if id % 2 == 0 {
+            tx.execute(
+                "UPDATE change_events SET calendar_suppressed=1 WHERE id=?1",
+                [id],
+            )
+            .unwrap();
+        }
+    }
+    for id in 1..=1_205 {
+        tx.execute(
+            "INSERT INTO scan_runs(id,started_at,status) VALUES(?1,'2026-11-14T12:00:00Z','ok')",
+            [id],
+        )
+        .unwrap();
+    }
+    tx.commit().unwrap();
+    db::clear_history_activity(&conn).unwrap();
+
+    let all = snapshot_history_deletion(&conn, true).unwrap();
+    assert_eq!(
+        all.event_ids.len(),
+        1_205,
+        "includes hidden suppressed rows"
+    );
+    assert_eq!(all.scan_ids.len(), 1_205, "does not apply legacy scan caps");
+    let events_only = snapshot_history_deletion(&conn, false).unwrap();
+    assert_eq!(events_only.event_ids.len(), 1_205);
+    assert!(events_only.scan_ids.is_empty());
+
+    event(&conn, 1_206, None, "new");
+    conn.execute(
+        "INSERT INTO scan_runs(started_at,status) VALUES('2026-11-15T12:00:00Z','ok')",
+        [],
+    )
+    .unwrap();
+    let result = delete_history_snapshot(&conn, &all).unwrap();
+    assert_eq!(
+        (result.events_deleted, result.scans_deleted),
+        (1_205, 1_205)
+    );
+    assert_eq!(db::count_events(&conn), 1);
+    assert_eq!(db::list_scans(&conn, 10).unwrap().len(), 1);
+}
+
+#[test]
+fn history_deletion_without_scans_keeps_scan_rows_and_rejects_stale_scan_ids() {
+    let (_dir, conn) = fixture();
+    event(&conn, 1, None, "new");
+    conn.execute_batch("INSERT INTO scan_runs(id,started_at,status) VALUES(1,'2026-11-14T12:00:00Z','ok');").unwrap();
+    let scope = snapshot_history_deletion(&conn, false).unwrap();
+    assert_eq!(scope.event_ids, vec![1]);
+    assert!(scope.scan_ids.is_empty());
+    assert_eq!(delete_history_snapshot(&conn, &scope).unwrap(), HistoryDeletionResult { events_deleted: 1, scans_deleted: 0 });
+    assert_eq!(db::list_scans(&conn, 10).unwrap().len(), 1);
+
+    event(&conn, 2, None, "new");
+    let stale_scan_scope = HistoryDeletionScope { event_ids: vec![2], scan_ids: vec![1] };
+    conn.execute("DELETE FROM scan_runs WHERE id=1", []).unwrap();
+    assert_eq!(delete_history_snapshot(&conn, &stale_scan_scope).unwrap_err(), "HISTORY_SCOPE_CHANGED");
+    assert_eq!(db::count_events(&conn), 1, "event is not deleted when captured scan is stale");
+}
+
+#[test]
+fn history_deletion_rejects_changed_or_malformed_scope_without_partial_mutation() {
+    let (_dir, conn) = fixture();
+    event(&conn, 1, None, "new");
+    event(&conn, 2, None, "new");
+    conn.execute_batch(
+        "INSERT INTO scan_runs(id,started_at,status) VALUES(1,'2026-11-14T12:00:00Z','ok');",
+    )
+    .unwrap();
+    let scope = snapshot_history_deletion(&conn, true).unwrap();
+    conn.execute("DELETE FROM change_events WHERE id=2", [])
+        .unwrap();
+    let error = delete_history_snapshot(&conn, &scope).unwrap_err();
+    assert_eq!(error, "HISTORY_SCOPE_CHANGED");
+    assert_eq!(
+        db::count_events(&conn),
+        1,
+        "event 1 remains after stale scope rejection"
+    );
+    assert_eq!(
+        db::list_scans(&conn, 10).unwrap().len(),
+        1,
+        "scan remains after stale scope rejection"
+    );
+
+    for invalid in [
+        HistoryDeletionScope {
+            event_ids: vec![0],
+            scan_ids: vec![],
+        },
+        HistoryDeletionScope {
+            event_ids: vec![1, 1],
+            scan_ids: vec![],
+        },
+        HistoryDeletionScope {
+            event_ids: vec![],
+            scan_ids: vec![-1],
+        },
+        HistoryDeletionScope {
+            event_ids: vec![],
+            scan_ids: vec![1, 1],
+        },
+    ] {
+        assert!(delete_history_snapshot(&conn, &invalid).is_err());
+    }
+    assert_eq!(db::count_events(&conn), 1);
+    assert_eq!(db::list_scans(&conn, 10).unwrap().len(), 1);
+}
+
+#[test]
+fn history_deletion_transaction_rolls_back_and_preserves_nonhistory_state() {
+    let (_dir, conn) = fixture();
+    resource(&conn, 1, 1, None);
+    event(&conn, 1, Some(1), "baseline");
+    event(&conn, 2, Some(1), "new");
+    conn.execute("INSERT INTO local_files(resource_id,rel_path,sha256,size_bytes,mime,status) VALUES(1,'saved.bin','abc',3,'application/octet-stream','kept')", []).unwrap();
+    db::set_kv(&conn, "baseline_marker", "keep-me").unwrap();
+    db::set_kv(&conn, "unrelated_marker", "also-keep").unwrap();
+    conn.execute_batch(
+        "INSERT INTO scan_runs(id,started_at,status) VALUES(1,'2026-11-14T12:00:00Z','ok');
+        INSERT INTO scan_details(scan_id,payload) VALUES(1,'{\"scanId\":1,\"courses\":[]}');",
+    )
+    .unwrap();
+    let scope = snapshot_history_deletion(&conn, true).unwrap();
+    conn.execute_batch("CREATE TRIGGER fail_snapshot_delete BEFORE DELETE ON scan_runs BEGIN SELECT RAISE(ABORT,'test failure'); END;").unwrap();
+    assert!(delete_history_snapshot(&conn, &scope).is_err());
+    assert_eq!(db::count_events(&conn), 2);
+    assert!(db::scan_details(&conn, 1).unwrap().is_some());
+    conn.execute_batch("DROP TRIGGER fail_snapshot_delete")
+        .unwrap();
+
+    let empty_scope = HistoryDeletionScope {
+        event_ids: vec![],
+        scan_ids: vec![],
+    };
+    assert_eq!(
+        delete_history_snapshot(&conn, &empty_scope).unwrap(),
+        HistoryDeletionResult {
+            events_deleted: 0,
+            scans_deleted: 0
+        }
+    );
+    assert_eq!(
+        delete_history_snapshot(&conn, &scope).unwrap(),
+        HistoryDeletionResult {
+            events_deleted: 2,
+            scans_deleted: 1
+        }
+    );
+    assert_eq!(db::count_resources(&conn), 1);
+    assert_eq!(
+        db::mirror_get(&conn, 1).unwrap().unwrap().rel_path,
+        "saved.bin"
+    );
+    assert_eq!(db::get_kv(&conn, "baseline_marker").unwrap(), "keep-me");
+    assert_eq!(db::get_kv(&conn, "unrelated_marker").unwrap(), "also-keep");
+    assert!(db::scan_details(&conn, 1).unwrap().is_none());
+}
+
+#[test]
 fn wire_defaults_and_payloads_use_camel_case() {
     let (_dir, conn) = fixture();
     resource(&conn, 1, 1, Some("2026-11-15"));
@@ -511,4 +678,21 @@ fn pure_selector_is_independent_of_input_order() {
         serde_json::to_value(first).unwrap(),
         serde_json::to_value(second).unwrap()
     );
+}
+
+#[test]
+fn history_snapshot_ignored_deletes_roll_back_every_captured_row() {
+    for table in ["change_events", "scan_runs"] {
+        let (_dir, conn) = fixture();
+        event(&conn, 1, None, "new");
+        event(&conn, 2, None, "updated");
+        db::start_scan(&conn, "2026-11-16T10:00:00Z").unwrap();
+        let scope = snapshot_history_deletion(&conn, true).unwrap();
+        let ignored_id = if table == "change_events" { 2 } else { scope.scan_ids[0] };
+        conn.execute_batch(&format!("CREATE TRIGGER ignore_history_delete BEFORE DELETE ON {table} WHEN OLD.id={ignored_id} BEGIN SELECT RAISE(IGNORE); END;")).unwrap();
+        assert_eq!(delete_history_snapshot(&conn, &scope).unwrap_err(), "HISTORY_DELETE_INCOMPLETE");
+        let remaining = snapshot_history_deletion(&conn, true).unwrap();
+        assert_eq!(remaining.event_ids, scope.event_ids, "ignored {table} delete rolls back earlier event deletions");
+        assert_eq!(remaining.scan_ids, scope.scan_ids);
+    }
 }

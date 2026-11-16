@@ -114,6 +114,18 @@ export interface ScanPage {
   total: number;
 }
 
+/** Exact History IDs frozen for a destructive confirmation. */
+export interface HistoryDeletionScope {
+  eventIds: number[];
+  scanIds: number[];
+}
+
+/** Number of rows removed from a previously confirmed History scope. */
+export interface HistoryDeletionResult {
+  eventsDeleted: number;
+  scansDeleted: number;
+}
+
 export type ScanCourseStatus = "success" | "partial" | "failed" | "cancelled";
 
 export interface ScanDetails {

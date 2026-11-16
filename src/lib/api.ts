@@ -7,6 +7,8 @@ import type {
   InboxPage,
   HistoryFilter,
   HistoryPage,
+  HistoryDeletionScope,
+  HistoryDeletionResult,
   ScanFilter,
   ScanPage,
   DueFilter,
@@ -52,7 +54,12 @@ export const api = {
     invoke<void>("set_event_read_state", { eventIds, desiredRead }),
   dismissInboxEvents: (eventIds: number[]) =>
     invoke<void>("dismiss_inbox_events", { eventIds }),
+  /** Legacy whole-table deletion; new confirmations must use a frozen scope. */
   deleteHistory: (includeScans: boolean) => invoke<void>("delete_history", { includeScans }),
+  snapshotHistoryDeletion: (includeScans: boolean) =>
+    invoke<HistoryDeletionScope>("snapshot_history_deletion", { includeScans }),
+  deleteHistorySnapshot: (scope: HistoryDeletionScope) =>
+    invoke<HistoryDeletionResult>("delete_history_snapshot", { scope }),
   queryDueResources: (filter: DueFilter = {}) =>
     invoke<DuePage>("query_due_resources", { filter }),
 

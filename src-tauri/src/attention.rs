@@ -222,7 +222,8 @@ pub fn dismiss_inbox(conn: &Connection, event_ids: &[i64], now: &str) -> Result<
     tx.commit().map_err(|e| e.to_string())
 }
 /// Explicit permanent event deletion, optionally including scan diagnostics.
-/// Foreign-key cascade cleans dismissal state. Legacy view clears stay separate.
+/// This legacy whole-table operation remains for old UI callers only. New
+/// confirmations must use `delete_history_snapshot` so later arrivals survive.
 pub fn delete_history(conn: &Connection, include_scans: bool) -> Result<(), String> {
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM change_events", [])
@@ -232,6 +233,99 @@ pub fn delete_history(conn: &Connection, include_scans: bool) -> Result<(), Stri
             .map_err(|e| e.to_string())?;
     }
     tx.commit().map_err(|e| e.to_string())
+}
+
+/// Capture every physically stored History event and optionally every scan.
+/// This intentionally includes calendar-suppressed and watermarked rows so
+/// confirmation counts describe exactly what the destructive action covers.
+pub fn snapshot_history_deletion(
+    conn: &Connection,
+    include_scans: bool,
+) -> Result<HistoryDeletionScope, String> {
+    fn all_ids(conn: &Connection, table: &str) -> Result<Vec<i64>, String> {
+        let mut statement = conn
+            .prepare(&format!("SELECT id FROM {table} ORDER BY id"))
+            .map_err(|error| error.to_string())?;
+        let ids = statement
+            .query_map([], |row| row.get(0))
+            .map_err(|error| error.to_string())?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|error| error.to_string())?;
+        Ok(ids)
+    }
+
+    Ok(HistoryDeletionScope {
+        event_ids: all_ids(conn, "change_events")?,
+        scan_ids: if include_scans {
+            all_ids(conn, "scan_runs")?
+        } else {
+            Vec::new()
+        },
+    })
+}
+
+/// Delete exactly a previously captured scope in one SQLite transaction.
+/// Missing captured IDs return `HISTORY_SCOPE_CHANGED` before any mutation;
+/// rows inserted after capture are deliberately outside the frozen scope.
+pub fn delete_history_snapshot(
+    conn: &Connection,
+    scope: &HistoryDeletionScope,
+) -> Result<HistoryDeletionResult, String> {
+    fn validate_ids(ids: &[i64]) -> Result<(), String> {
+        if ids.iter().any(|id| *id <= 0) {
+            return Err("History deletion IDs must be positive integers".into());
+        }
+        let unique: BTreeSet<_> = ids.iter().collect();
+        if unique.len() != ids.len() {
+            return Err("History deletion IDs must not contain duplicates".into());
+        }
+        Ok(())
+    }
+    validate_ids(&scope.event_ids)?;
+    validate_ids(&scope.scan_ids)?;
+
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|error| error.to_string())?;
+    for (table, ids) in [
+        ("change_events", scope.event_ids.as_slice()),
+        ("scan_runs", scope.scan_ids.as_slice()),
+    ] {
+        for id in ids {
+            let exists: bool = tx
+                .query_row(
+                    &format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE id=?1)"),
+                    [id],
+                    |row| row.get(0),
+                )
+                .map_err(|error| error.to_string())?;
+            if !exists {
+                return Err("HISTORY_SCOPE_CHANGED".into());
+            }
+        }
+    }
+
+    let mut counts = [0, 0];
+    for (index, (table, ids)) in [
+        ("change_events", scope.event_ids.as_slice()),
+        ("scan_runs", scope.scan_ids.as_slice()),
+    ].into_iter().enumerate() {
+        for id in ids {
+            let deleted = tx.execute(&format!("DELETE FROM {table} WHERE id=?1"), [id])
+                .map_err(|error| error.to_string())?;
+            // Successful SQL can still be a no-op (e.g. RAISE(IGNORE)). Keep
+            // the confirmed deletion atomic and never report fabricated counts.
+            if deleted != 1 {
+                return Err("HISTORY_DELETE_INCOMPLETE".into());
+            }
+            counts[index] += deleted;
+        }
+    }
+    tx.commit().map_err(|error| error.to_string())?;
+    Ok(HistoryDeletionResult {
+        events_deleted: counts[0],
+        scans_deleted: counts[1],
+    })
 }
 fn due_value(raw: &str) -> Option<(chrono::DateTime<chrono::Utc>, DueDateKind)> {
     if let Some(dt) = instant(raw) {

@@ -53,6 +53,8 @@ pub fn run() {
             commands::set_event_read_state,
             commands::dismiss_inbox_events,
             commands::delete_history,
+            commands::snapshot_history_deletion,
+            commands::delete_history_snapshot,
             commands::query_due_resources,
             commands::list_courses,
             commands::set_course_display_name,

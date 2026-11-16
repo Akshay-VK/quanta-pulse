@@ -318,10 +318,28 @@ pub fn dismiss_inbox_events(state: State<AppState>, event_ids: Vec<i64>) -> Resu
     crate::attention::dismiss_inbox(&state.conn(), &event_ids, &db::now_rfc3339())
 }
 
-/// Permanently delete recorded changes, optionally also scan diagnostics.
+/// Legacy whole-history deletion for callers not yet migrated to frozen scopes.
 #[tauri::command]
 pub fn delete_history(state: State<AppState>, include_scans: bool) -> Result<(), String> {
     crate::attention::delete_history(&state.conn(), include_scans)
+}
+
+/// Capture all physically stored History event IDs and optionally scan IDs.
+#[tauri::command]
+pub fn snapshot_history_deletion(
+    state: State<AppState>,
+    include_scans: bool,
+) -> Result<crate::models::HistoryDeletionScope, String> {
+    crate::attention::snapshot_history_deletion(&state.conn(), include_scans)
+}
+
+/// Apply only a previously captured History deletion scope.
+#[tauri::command]
+pub fn delete_history_snapshot(
+    state: State<AppState>,
+    scope: crate::models::HistoryDeletionScope,
+) -> Result<crate::models::HistoryDeletionResult, String> {
+    crate::attention::delete_history_snapshot(&state.conn(), &scope)
 }
 
 /// Complete resource deadlines; independent of all event/view-clear state.

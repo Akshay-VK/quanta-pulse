@@ -159,6 +159,22 @@ pub struct ScanPage {
     pub total: usize,
 }
 
+/// Exact History IDs frozen for a destructive confirmation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryDeletionScope {
+    pub event_ids: Vec<i64>,
+    pub scan_ids: Vec<i64>,
+}
+
+/// Number of rows removed from a previously confirmed History scope.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryDeletionResult {
+    pub events_deleted: usize,
+    pub scans_deleted: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanRun {
