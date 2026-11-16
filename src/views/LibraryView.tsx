@@ -91,6 +91,8 @@ export default function LibraryView({
           key={course.id}
           course={course}
           inventory={resources}
+          inventoryPending={loading}
+          inventoryError={error}
           folderPath={folderPath}
           onOpen={onOpen}
           onPreview={setPreviewResource}

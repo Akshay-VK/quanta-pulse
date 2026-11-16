@@ -645,6 +645,22 @@
     background: var(--selected);
   }
 
+  .tree-row.multi-selected {
+    background: var(--hover);
+  }
+
+  .tree-row.selected {
+    background: var(--selected);
+  }
+
+  .tree-row.keyboard-focused {
+    box-shadow: inset 2px 0 0 var(--focus);
+  }
+
+  .tree-row.keyboard-focused:focus-visible {
+    box-shadow: inset 2px 0 0 var(--focus), inset 0 0 0 2px var(--focus);
+  }
+
   /* Keyboard focus only: a click on a row focuses it too, and a hover-coloured
      block plus a ring on every click reads as a bug. */
   .tree-row:focus-visible {

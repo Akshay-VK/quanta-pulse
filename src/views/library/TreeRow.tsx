@@ -59,6 +59,7 @@ interface TreeRowProps {
   onPreview: (resource: Resource) => void;
   onActivate: (index: number) => void;
   selected?: boolean;
+  multiSelected?: boolean;
   onSelect: (resource: Resource, origin: HTMLElement) => void;
 }
 
@@ -77,18 +78,20 @@ export default function TreeRow({
   onPreview,
   onActivate,
   selected = false,
+  multiSelected = false,
   onSelect,
 }: TreeRowProps) {
   const destinations = useMaterialActions({ onOpen, onPreview });
   const shared = {
-    className: cx("tree-row", focused && "focused"),
+    className: cx("tree-row", focused && "keyboard-focused"),
     role: "treeitem",
     "aria-level": row.depth + 1,
-    "aria-selected": row.kind === "file" ? selected || focused : focused,
+    "aria-selected": row.kind === "file" ? multiSelected : undefined,
+    "data-row-key": row.id,
     tabIndex: focused ? 0 : -1,
     "data-index": index,
     style: { paddingLeft: indentFor(row.depth) },
-    onFocus: () => onActivate(index),
+    onFocus: (event: React.FocusEvent<HTMLElement>) => { if (event.target === event.currentTarget) onActivate(index); },
   } as const;
 
   if (row.kind === "folder") {
@@ -100,7 +103,7 @@ export default function TreeRow({
           type="button"
           className="tree-toggle"
           aria-label={label}
-          onClick={() => onToggle(row.id)}
+          onClick={() => onToggle(node.id)}
         >
           <ChevronRight className="chevron" aria-hidden="true" />
         </button>
@@ -109,7 +112,7 @@ export default function TreeRow({
           type="button"
           className="tree-name tree-name-toggle"
           title={node.path.join(" / ")}
-          onClick={() => onToggle(row.id)}
+          onClick={() => onToggle(node.id)}
         >
           {node.name}
         </button>
@@ -137,7 +140,7 @@ export default function TreeRow({
   return (
     <div
       {...shared}
-      className={cx("tree-row", focused && "focused", selected && "selected")}
+      className={cx("tree-row", focused && "keyboard-focused", selected && "selected", multiSelected && "multi-selected")}
       onClick={(event) => {
         if ((event.target as HTMLElement).closest("button")) return;
         onSelect(resource, event.currentTarget);

@@ -1,3 +1,6 @@
+import { resourceSectionPath } from "../../lib/sectionPath";
+import { useMaterialActions } from "../../hooks/useMaterialActions";
+import { getListNavigationIntent, recoverFocusedId, type ListNavigationInput } from "../../lib/listNavigation";
 import { useSessionScroll, useSessionValue } from "../../hooks/useSessionViews";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMirror } from "../../hooks/useMirror";
@@ -53,13 +56,25 @@ import { courseHomeUrl } from "./courseUrl";
 interface CoursePageProps {
   course: Course;
   folderPath?: string[] | null;
-  /** A new shell inventory refreshes the complete scoped course query. */
+  /** Last complete inventory published by App; never queried again here. */
   inventory?: Resource[];
+  inventoryPending?: boolean;
+  inventoryError?: string | null;
   onOpen: (url: string) => void;
   onPreview: (resource: Resource) => void;
-  onChanged: () => void;
+  onChanged: () => void | Promise<void>;
   onSyncNow?: () => void;
   details?: DetailsAdapter;
+}
+
+const identity = (resource: Resource) => `resource:${resource.externalResourceId || `local:${resource.id}`}`;
+const modalOpen = () => Boolean(document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], .sidebar-drawer'));
+interface Capture {
+  generation: number;
+  resourceIds: number[];
+  eventIds: number[];
+  action: "read" | "unread" | "dismiss";
+  done: boolean;
 }
 
 const VIRTUAL_THRESHOLD = 200;
@@ -117,13 +132,15 @@ export default function CoursePage({
   course,
   folderPath,
   inventory,
+  inventoryPending = false,
+  inventoryError,
   onOpen,
   onPreview,
   onChanged,
   onSyncNow = () => {},
   details,
 }: CoursePageProps) {
-  const [items, setItems] = useState<Resource[] | null>(null);
+  const items = useMemo(() => inventory?.filter(resource => resource.courseId === course.id) ?? null, [inventory, course.id]);
   const [events, setEvents] = useState<ChangeEvent[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -141,7 +158,7 @@ export default function CoursePage({
   const [type, setType] = useSessionValue(`course:${course.id}:type`, "all");
   const [category, setCategory] = useSessionValue<ResourceCategoryId | "all">(`course:${course.id}:category`, "all");
   const [expanded, setExpanded] = useSessionValue<Set<string>>(`course:${course.id}:expanded`, new Set());
-  const [activeIndex, setActiveIndex] = useSessionValue(`course:${course.id}:activeIndex`, 0);
+  const [focusedId, setFocusedId] = useState<string | null>(null);
   const [initialised, setInitialised] = useSessionValue(`course:${course.id}:initialised`, false);
 
   const loadGeneration = useRef(0);
@@ -150,13 +167,8 @@ export default function CoursePage({
     setLoading(true);
     setLoadError(null);
     try {
-      // A course is capped at 2000 discovered resources in the backend.
-      const [resources, courseEvents] = await Promise.all([
-        api.listResources({ courseId: course.id, limit: 2000 }),
-        api.eventsRange(undefined, undefined, course.id, 2000),
-      ]);
+      const courseEvents = await api.eventsRange(undefined, undefined, course.id, 2000);
       if (generation !== loadGeneration.current) return;
-      setItems(resources);
       setEvents(courseEvents);
     } catch (err) {
       if (generation === loadGeneration.current) setLoadError(err instanceof Error ? err.message : String(err));
@@ -193,9 +205,9 @@ export default function CoursePage({
 
   const rows = useMemo<FlatRow[]>(() => {
     if (searching) {
-      return searchResults.map((resource, index) => ({
+      return searchResults.map((resource) => ({
         kind: "file",
-        id: `search:${resource.id}:${index}`,
+        id: identity(resource),
         resource,
         depth: 0,
         searching: true,
@@ -204,12 +216,12 @@ export default function CoursePage({
     const out: FlatRow[] = [];
     const walk = (node: CourseTreeNode, depth: number) => {
       for (const resource of sortResources(node.resources, sort)) {
-        out.push({ kind: "file", id: `f:${resource.id}`, resource, depth, searching: false });
+        out.push({ kind: "file", id: identity(resource), resource, depth, searching: false });
       }
       for (const child of node.children) {
         out.push({
           kind: "folder",
-          id: child.id,
+          id: `folder:${child.id}`,
           node: child,
           depth,
           expanded: expanded.has(child.id),
@@ -303,64 +315,97 @@ export default function CoursePage({
     setExpanded(next);
   };
 
-  const previousFilters = useRef({ needle, type, category, tab });
-  useEffect(() => {
-    const previous = previousFilters.current;
-    if (previous.needle !== needle || previous.type !== type || previous.category !== category || previous.tab !== tab) setActiveIndex(0);
-    previousFilters.current = { needle, type, category, tab };
-  }, [needle, type, category, tab, setActiveIndex]);
-
-  useEffect(() => {
-    if (items === null) return;
-    setActiveIndex((index) =>
-      rows.length === 0 ? 0 : Math.min(index, rows.length - 1),
-    );
-  }, [rows.length, items, setActiveIndex]);
-
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   const mainScroll = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => { mainScroll.current = document.querySelector("main"); }, []);
   useSessionScroll(`course:${course.id}:${tab}:main`, mainScroll, items !== null);
-  const pendingFocus = useRef(false);
+  const pendingFocus = useRef<string | null>(null);
+  const ownedFocus = useRef(false);
+  const previousRows = useRef<FlatRow[]>([]);
+  const ids = useMemo(() => rows.map(row => row.id), [rows]);
+  const oldFocus = previousRows.current.find(row => row.id === focusedId);
+  // Collapsing a descendant returns to its nearest surviving folder.
+  const ancestor = oldFocus && !ids.includes(oldFocus.id) && !searching
+    ? [...previousRows.current].reverse().find(row => row.kind === "folder" && ids.includes(row.id) &&
+        (oldFocus.kind === "folder" ? oldFocus.node.path : resourceSectionPath(oldFocus.resource))
+          .slice(0, row.node.path.length).join("\0") === row.node.path.join("\0"))
+    : undefined;
+  const currentFocus = ancestor?.id ?? recoverFocusedId(previousRows.current.map(row => row.id), ids, focusedId);
+  const activeIndex = Math.max(0, ids.indexOf(currentFocus ?? ""));
   const virtualActive = rows.length > VIRTUAL_THRESHOLD;
   const virtualizer = useVirtualizer({
     count: virtualActive ? rows.length : 0,
     getScrollElement: () => scrollRef.current,
+    getItemKey: index => rows[index].id,
     estimateSize: () => 40,
     overscan: 10,
   });
   const virtualItems = virtualActive ? virtualizer.getVirtualItems() : [];
   useSessionScroll(`course:${course.id}:${tab}:tree`, scrollRef, items !== null && (!virtualActive || virtualItems.length > 0));
-
-  const move = useCallback(
-    (index: number) => {
-      if (rows.length === 0) return;
-      const clamped = Math.max(0, Math.min(rows.length - 1, index));
-      setActiveIndex(clamped);
-      const el = scrollRef.current?.querySelector<HTMLElement>(
-        `[role="treeitem"][data-index="${clamped}"]`,
-      );
-      if (el) {
-        el.focus();
-      } else {
-        pendingFocus.current = true;
-        if (virtualActive) virtualizer.scrollToIndex(clamped, { align: "auto" });
-      }
-    },
-    [rows.length, virtualActive, virtualizer],
-  );
-
-  useEffect(() => {
-    if (!pendingFocus.current) return;
-    const el = scrollRef.current?.querySelector<HTMLElement>(
-      `[role="treeitem"][data-index="${activeIndex}"]`,
-    );
-    if (el) {
-      el.focus();
-      pendingFocus.current = false;
-    }
+  const latestNavigation = useRef({ rows, currentFocus, tab, virtualActive });
+  latestNavigation.current = { rows, currentFocus, tab, virtualActive };
+  const focusIdentity = useCallback((id: string | null) => {
+    if (latestNavigation.current.tab !== "contents" || !searchRef.current?.isConnected || modalOpen()) return false;
+    const currentRows = latestNavigation.current.rows;
+    const index = currentRows.findIndex(row => row.id === id);
+    if (index < 0) { pendingFocus.current = null; searchRef.current.focus(); return true; }
+    setFocusedId(id);
+    pendingFocus.current = id;
+    const element = [...(scrollRef.current?.querySelectorAll<HTMLElement>('[role="treeitem"]') ?? [])].find(el => el.dataset.rowKey === id);
+    // Redirect a preceding virtual scroll even when this target is mounted.
+    if (latestNavigation.current.virtualActive) virtualizer.scrollToIndex(index, { align: "auto" });
+    if (element) { pendingFocus.current = null; element.focus(); }
+    return true;
+  }, [virtualActive, virtualizer]);
+  const move = useCallback((index: number) => {
+    focusIdentity(rows[Math.max(0, Math.min(rows.length - 1, index))]?.id ?? null);
+  }, [rows, focusIdentity]);
+  useLayoutEffect(() => {
+    const changed = previousRows.current.map(row => row.id).join("\0") !== ids.join("\0");
+    previousRows.current = rows;
+    setFocusedId(currentFocus);
+    if (changed && ownedFocus.current && !modalOpen()) focusIdentity(currentFocus);
+  }, [rows, ids, currentFocus, focusIdentity]);
+  useLayoutEffect(() => {
+    const id = pendingFocus.current;
+    if (!id) return;
+    if (modalOpen() || tab !== "contents" || !ids.includes(id)) { pendingFocus.current = null; return; }
+    const element = [...(scrollRef.current?.querySelectorAll<HTMLElement>('[role="treeitem"]') ?? [])].find(el => el.dataset.rowKey === id);
+    if (element) { pendingFocus.current = null; element.focus(); }
   });
-
+  const restore = (id: string | null) => focusIdentity(
+    latestNavigation.current.rows.some(row => row.id === id) ? id : latestNavigation.current.currentFocus);
+  const inspect = (resource: Resource, origin: HTMLElement) => {
+    const id = identity(resource);
+    details?.selectResource(resource, origin, () => restore(id));
+  };
+  const [selection, setSelection] = useState<string[]>([]);
+  const matching = searching ? searchResults : filtered;
+  const matchingIds = useMemo(() => matching.map(identity), [matching]);
+  useEffect(() => { setSelection(prev => prev.filter(id => matchingIds.includes(id))); }, [matchingIds]);
+  const [capture, setCapture] = useState<Capture | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
+  const [refreshWait, setRefreshWait] = useState<{ resolve: (error: string | null) => void } | null>(null);
+  useEffect(() => {
+    if (refreshWait && !inventoryPending) {
+      refreshWait.resolve(inventoryError ?? null);
+      setRefreshWait(null);
+    }
+  }, [refreshWait, inventoryError, inventoryPending]);
+  const waitRef = useRef(refreshWait);
+  waitRef.current = refreshWait;
+  const generation = useRef(0);
+  const lock = useRef<number | null>(null);
+  const context = JSON.stringify([course.id, folderPath, tab, search, type, category, sort]);
+  useLayoutEffect(() => {
+    generation.current += 1;
+    lock.current = null;
+    setCapture(null);
+    setStatus(null);
+    setRefreshWait(null);
+    return () => { generation.current += 1; lock.current = null; pendingFocus.current = null; waitRef.current?.resolve(null); };
+  }, [context]);
   const typed = useRef({ text: "", at: 0 });
   const typeahead = useCallback(
     (char: string, from: number) => {
@@ -382,70 +427,121 @@ export default function CoursePage({
     [rows, move],
   );
 
+  const mutate = async (scope: Capture) => {
+    const token = scope.generation;
+    if (generation.current !== token || lock.current !== null) return;
+    lock.current = token;
+
+    setStatus(null);
+    try {
+      if (!scope.done) {
+        if (scope.action === "dismiss") await api.dismissInboxEvents(scope.eventIds);
+        else await api.setEventReadState(scope.eventIds, scope.action === "read");
+        // Remember backend success even if refresh subsequently fails.
+        scope.done = true;
+      }
+      if (generation.current !== token) return;
+      await onChanged();
+      if (generation.current !== token) return;
+      // App reports refresh failure through props, after its promise completes.
+      // A render acknowledgement observes that publication before closing.
+      const refreshError = await new Promise<string | null>(resolve => setRefreshWait({ resolve }));
+      if (generation.current !== token) return;
+      if (refreshError) throw new Error(`Changes saved; inventory refresh failed: ${refreshError}`);
+      setStatus("Captured changes saved.");
+    } catch (error) {
+      if (generation.current !== token) return;
+      setStatus(`${scope.done ? "Changes saved; retry refresh only. " : ""}${String(error)}`);
+      throw error;
+    } finally {
+      if (generation.current === token && lock.current === token) { lock.current = null; }
+    }
+  };
+  const beginCapture = async (targetIds: readonly string[], action: Capture["action"], confirm: boolean, policy: ListNavigationInput) => {
+    if (lock.current !== null || capture) return;
+    if (!inventory || inventoryPending || inventoryError) {
+      setStatus(inventoryError ? "Inventory refresh failed. Retry loading before changing events." : "Inventory is refreshing. Wait before changing events.");
+      return;
+    }
+    const resourceIds = matching.filter(resource => targetIds.includes(identity(resource))).map(resource => resource.id);
+    if (!resourceIds.length) { setStatus("No matching materials to capture."); return; }
+    const token = ++generation.current;
+    lock.current = token;
+
+    setStatus("Capturing recorded changes…");
+    try {
+      const snapshot = await api.snapshotResourceEventIds([...resourceIds]);
+      if (generation.current !== token) return;
+      const intent = getListNavigationIntent({ ...policy, completeEventIds: snapshot });
+      const eventIds = intent?.type === "openCapturedScope" ? [...intent.eventIds] : [...snapshot];
+      if (!eventIds.length) { setStatus("No eligible recorded changes in the captured scope."); return; }
+      const scope: Capture = { generation: token, resourceIds, eventIds, action, done: false };
+      lock.current = null;
+      if (confirm) { setStatus(null); setCapture(scope); }
+      else {
+        try { await mutate(scope); }
+        catch { if (generation.current === token) setCapture(scope); }
+      }
+    } catch (error) {
+      if (generation.current === token) setStatus(`Could not capture changes: ${String(error)}. Try the shortcut again.`);
+    } finally {
+      if (generation.current === token && (lock.current === token || lock.current === null)) { lock.current = null; }
+    }
+  };
+  const destinations = useMaterialActions({ onOpen, onPreview });
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (rows.length === 0) return;
+    const target = event.target as HTMLElement;
+    const native = event.nativeEvent;
+    const input: ListNavigationInput = {
+      ids, focusedId: currentFocus, inspectedId: null,
+      selectedIds: selection, key: event.key,
+      activeSurface: tab === "contents" && target.matches('[role="treeitem"]'),
+      editableTarget: Boolean(target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')),
+      nestedControl: Boolean(target.closest('button, a, [role="button"], [role="checkbox"]')),
+      modalOpen: modalOpen(), isComposing: native.isComposing, imeKeyCode229: event.keyCode === 229,
+      repeat: event.repeat, defaultPrevented: event.defaultPrevented,
+      shiftKey: event.shiftKey, ctrlKey: event.ctrlKey, altKey: event.altKey, metaKey: event.metaKey, completeEventIds: [],
+    };
+    if (!input.activeSurface || input.editableTarget || input.nestedControl || input.modalOpen || input.isComposing ||
+        input.imeKeyCode229 || input.repeat || input.defaultPrevented || input.ctrlKey || input.altKey || input.metaKey) return;
     const current = rows[activeIndex];
-    switch (event.key) {
-      case "ArrowDown":
-        event.preventDefault();
-        move(activeIndex + 1);
-        break;
-      case "ArrowUp":
-        event.preventDefault();
-        move(activeIndex - 1);
-        break;
-      case "Home":
-        event.preventDefault();
-        move(0);
-        break;
-      case "End":
-        event.preventDefault();
-        move(rows.length - 1);
-        break;
-      case "ArrowRight":
-        event.preventDefault();
-        if (current?.kind === "folder") {
-          if (current.expanded) move(activeIndex + 1);
-          else toggle(current.id);
+    const intent = getListNavigationIntent(input);
+    const handled = () => { event.preventDefault(); event.stopPropagation(); };
+    if (intent) {
+      handled();
+      if (intent.type === "focus") focusIdentity(intent.id);
+      else if (intent.type === "openCapturedScope") void beginCapture(matchingIds, "read", true, input);
+      else if (current?.kind === "folder") {
+        if (intent.type === "inspect") toggle(current.node.id);
+      } else if (current?.kind === "file") {
+        if (intent.type === "toggleSelection") setSelection(prev => prev.includes(current.id) ? prev.filter(id => id !== current.id) : [...prev, current.id]);
+        else if (intent.type === "inspect") inspect(current.resource, target);
+        else if (intent.type === "preview") destinations?.(current.resource).find(action => action.id === "preview")?.onSelect?.();
+        else {
+          // Action policy sees all matching files, including collapsed selections.
+          const action = getListNavigationIntent({ ...input, ids: matchingIds });
+          if (action?.type === "confirmDelete") void beginCapture(action.ids, "dismiss", true, input);
+          else if (action?.type === "setReadState") void beginCapture(action.ids, action.isRead ? "read" : "unread", false, input);
         }
+      }
+      return;
+    }
+    if (event.shiftKey) return;
+    switch (event.key) {
+      case "Home": handled(); move(0); break;
+      case "End": handled(); move(rows.length - 1); break;
+      case "ArrowRight":
+        handled();
+        if (current?.kind === "folder") { if (current.expanded) move(activeIndex + 1); else toggle(current.node.id); }
         break;
       case "ArrowLeft": {
-        event.preventDefault();
-        if (current?.kind === "folder" && current.expanded) {
-          toggle(current.id);
-          break;
-        }
-        const depth = current?.depth ?? 0;
-        for (let i = activeIndex - 1; i >= 0; i -= 1) {
-          if (rows[i].depth < depth) {
-            move(i);
-            break;
-          }
-        }
+        handled();
+        if (current?.kind === "folder" && current.expanded) toggle(current.node.id);
+        else for (let i = activeIndex - 1; i >= 0; i--) if (rows[i].depth < (current?.depth ?? 0)) { move(i); break; }
         break;
       }
-      case "Enter":
-        event.preventDefault();
-        if (current?.kind === "folder") toggle(current.id);
-        else if (current?.kind === "file") {
-          const origin = scrollRef.current?.querySelector<HTMLElement>(`[role="treeitem"][data-index="${activeIndex}"]`);
-          if (origin) details?.selectResource(current.resource, origin, () => {
-            if (!scrollRef.current) return false;
-            move(activeIndex);
-            return true;
-          });
-        }
-        break;
       default:
-        if (
-          event.key.length === 1 &&
-          /\S/.test(event.key) &&
-          !event.metaKey &&
-          !event.ctrlKey &&
-          !event.altKey
-        ) {
-          typeahead(event.key, activeIndex);
-        }
+        if (event.key.length === 1 && /\S/.test(event.key) && !/[g/?]/i.test(event.key)) typeahead(event.key, activeIndex);
     }
   };
 
@@ -520,6 +616,9 @@ export default function CoursePage({
           role="tree"
           aria-label={`Resources in ${display}`}
           onKeyDown={onKeyDown}
+          aria-multiselectable="true"
+          onFocusCapture={event => { ownedFocus.current = event.target === event.currentTarget || (event.target as HTMLElement).matches('[role="treeitem"]'); }}
+          onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) { ownedFocus.current = false; pendingFocus.current = null; } }}
           style={virtualActive ? { maxHeight: TREE_HEIGHT, overflowY: "auto" } : undefined}
         >
           {virtualActive ? (
@@ -551,9 +650,10 @@ export default function CoursePage({
                     onToggle={toggle}
                     onOpen={onOpen}
                     onPreview={onPreview}
-                    onActivate={setActiveIndex}
+                    onActivate={index => setFocusedId(rows[index].id)}
                     selected={isSelectedResourceRow(rows[item.index])}
-                    onSelect={(resource, origin) => details?.selectResource(resource, origin, () => { if (!scrollRef.current) return false; move(item.index); return true; })}
+                    multiSelected={selection.includes(rows[item.index].id)}
+                    onSelect={inspect}
                   />
                 </div>
               ))}
@@ -569,9 +669,10 @@ export default function CoursePage({
                 onToggle={toggle}
                 onOpen={onOpen}
                 onPreview={onPreview}
-                onActivate={setActiveIndex}
+                onActivate={index => setFocusedId(rows[index].id)}
                 selected={row.kind === "file" && selectedResourceId === row.resource.id}
-                onSelect={(resource, origin) => details?.selectResource(resource, origin, () => { if (!scrollRef.current) return false; move(index); return true; })}
+                multiSelected={selection.includes(row.id)}
+                onSelect={inspect}
               />
             ))
           )}
@@ -678,12 +779,18 @@ export default function CoursePage({
         />
       </div>
 
+      {tab === "contents" && (status || inventoryError || inventoryPending || !inventory) && (
+        <Banner kind={inventoryError ? "error" : "info"} action={inventoryError ? { label: "Retry", onClick: () => void onChanged() } : undefined}>
+          {status ?? (inventoryError ? `Inventory refresh failed: ${inventoryError}. Retained materials remain inspectable; new changes are blocked.` : "Inventory unavailable or refreshing; new changes are blocked.")}
+        </Banner>
+      )}
+      {tab === "contents" && <span role="status">{selection.length} {selection.length === 1 ? "material" : "materials"} selected</span>}
       {loadError && (
         <Banner kind="error" action={{ label: "Retry", onClick: () => void load() }}>
           {loadError}
         </Banner>
       )}
-      {loading && items === null ? (
+      {items === null && (loading || inventoryPending) ? (
         <Skeleton rows={8} />
       ) : items === null ? null : total === 0 ? (
         <EmptyState
@@ -695,6 +802,7 @@ export default function CoursePage({
         <>
           <div className="course-page-toolbar">
             <SearchField
+              inputRef={searchRef}
               value={search}
               onChange={setSearch}
               placeholder="Search resources…"
@@ -805,6 +913,19 @@ export default function CoursePage({
           </div>
         ))
       )}
+
+      {capture && <ConfirmDialog key={capture.generation} open onOpenChange={open => {
+        if (!open && generation.current === capture.generation && lock.current === null) {
+          setCapture(null); setStatus(null);
+          requestAnimationFrame(() => { if (generation.current === capture.generation && !modalOpen()) restore(latestNavigation.current.currentFocus); });
+        }
+      }} title={capture.action === "dismiss" ? "Dismiss captured Inbox changes?" : capture.action === "unread" ? "Mark captured changes unread?" : "Mark captured changes read?"}
+        destructive={capture.action === "dismiss"}
+        body={<><p>{capture.eventIds.length} recorded changes across {capture.resourceIds.length} {capture.resourceIds.length === 1 ? "material" : "materials"}.</p>
+          <p>{capture.action === "dismiss" ? "Dismiss these captured changes from Inbox? Library materials, History, saved files and your baseline are kept." : "Only these captured changes will be updated. Later arrivals are excluded."}</p>
+          {status && <p role="alert">{status}</p>}</>}
+        confirmLabel={capture.done ? "Retry refresh" : capture.action === "dismiss" ? "Dismiss captured changes" : capture.action === "unread" ? "Mark captured changes unread" : "Mark captured changes read"}
+        onConfirm={() => mutate(capture)} />}
 
       <ConfirmDialog
         open={confirmRebaseline}

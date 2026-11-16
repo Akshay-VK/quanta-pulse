@@ -138,6 +138,9 @@ async function render(
       <TooltipProvider>
         <CoursePage
           course={options.course ?? makeCourse()}
+          inventory={resources ?? undefined}
+          inventoryPending={resources === null}
+          inventoryError={options.failWith}
           onOpen={options.onOpen ?? (() => {})}
           onPreview={options.onPreview ?? (() => {})}
           onChanged={options.onChanged ?? (() => {})}
@@ -275,7 +278,7 @@ describe("CoursePage tree", () => {
     await render();
     await collapseAll();
     await key("ArrowDown", 0);
-    expect(treeRows()[1].getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(treeRows()[1]);
 
     await key("ArrowRight", 0);
     expect(treeRows()[0].getAttribute("aria-expanded")).toBe("true");
@@ -295,7 +298,7 @@ describe("CoursePage tree", () => {
       el.dispatchEvent(new KeyboardEvent("keydown", { key: "c", bubbles: true }));
     });
     const selected = treeRows().findIndex(
-      (el) => el.getAttribute("aria-selected") === "true",
+      (el) => el === document.activeElement,
     );
     expect(treeRows()[selected].textContent).toContain("Consultation material");
   });
@@ -348,10 +351,13 @@ describe("CoursePage tree", () => {
     await render(null, { course: makeCourse({ id: 11 }) });
     expect(container.querySelector(".skeleton-stack")).toBeTruthy();
 
-    await render([], { course: makeCourse({ id: 12 }), failWith: "Course resources unavailable" });
+    const onChanged = vi.fn();
+    await render([], { course: makeCourse({ id: 12 }), failWith: "Course resources unavailable", onChanged });
     expect(container.textContent).toContain("Course resources unavailable");
     await click(byText("Retry"));
-    expect(api.listResources).toHaveBeenCalledTimes(3);
+    expect(onChanged).toHaveBeenCalledTimes(1);
+    expect(api.listResources).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("Course resources unavailable");
 
     await render([], { course: makeCourse({ id: 13 }) });
     expect(container.textContent).toContain("This course has not been scanned yet");

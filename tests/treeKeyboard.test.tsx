@@ -105,6 +105,7 @@ async function render() {
       <TooltipProvider>
         <CoursePage
           course={COURSE}
+          inventory={RESOURCES}
           onOpen={() => {}}
           onPreview={() => {}}
           onChanged={() => {}}
@@ -149,7 +150,7 @@ async function collapseAll() {
 }
 
 function selectedIndex(): number {
-  return treeRows().findIndex((el) => el.getAttribute("aria-selected") === "true");
+  return treeRows().findIndex((el) => el === document.activeElement);
 }
 
 describe("tree keyboard model", () => {
