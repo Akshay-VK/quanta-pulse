@@ -19,6 +19,10 @@ These are task-00 resolutions against baseline [`1bd0e8b5a24b05733295b5751a7bc42
 | D13 | Scan reset markers clear after partial failure; mirror index can clear after failed removal. | **Resolved prerequisite:** B06 retains unsuccessful/unvisited course reset markers until that course completes; B07 reports partial delete failures and retains failed index entries. Keep both fixes narrow; no broader backend refactor. 14B. |
 | D14 | Due source may be date-only; inspector spec also asks local time/countdown. | **Resolved:** preserve source date and label date-only; show no invented instant, timezone, local time or countdown without an instant. Due and detected dates stay visibly distinct. 05/07/08. |
 
+### Dated compatibility clarification — 2026-11-16
+
+D05's original resolution above is preserved as a historical claim. This clarification resolves B10's exact value compatibility: keep the existing `mirrorKeepVersions` field, with default `3`; accept every integer `0..=10`; preserve valid persisted nonpreset values (including `2` and `10`) in the Settings control; and retain the offered presets `0`, `1`, `3`, and `5`. Frontend drafts reject negative, fractional, nonfinite, and above-10 values with a field error. The value remains the count of superseded `.history` copies excluding the current saved copy. There is no age cleanup. Existing Rust sanitization/default already match, so this decision requires no Rust behavior change. The exact implementation lease is in `tasks/B10.md`. See [the dated compatibility record](../../../wiki/2026-11-16-version-retention-compatibility.md).
+
 ## Acceptance tests and owner map
 
 | Decision | Existing/new proof to preserve or add | Primary owner |
