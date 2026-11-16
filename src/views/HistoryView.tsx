@@ -30,6 +30,10 @@ import { Tooltip } from "../components/ui/Tooltip";
 export interface HistoryViewProps {
   courses: Course[];
   events: ChangeEvent[];
+  eventScopeReady?: boolean;
+  onSetEventReadState?: (ids: number[], read: boolean) => Promise<void>;
+  onDismissEvents?: (ids: number[]) => Promise<void>;
+  onChanged?: () => Promise<void>;
   scans: ScanRun[];
   onOpen: (url: string) => void;
   onOpenLocal?: (resourceId: number) => void;

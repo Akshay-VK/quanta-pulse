@@ -30,6 +30,7 @@ import HistoryView from "./views/HistoryView";
 import SettingsView from "./views/SettingsView";
 import type { SettingsNavigationController } from "./views/SettingsView";
 import { api } from "./lib/api";
+import { queryHistoryInventory } from "./lib/historyInventory";
 import { useTheme } from "./hooks/useTheme";
 import { useHotkey } from "./hooks/useHotkey";
 import { MirrorProvider, useMirror } from "./hooks/useMirror";
@@ -104,6 +105,7 @@ function AppShell() {
   const [resources, setResources] = useState<Resource[]>([]);
 
   const [historyEvents, setHistoryEvents] = useState<ChangeEvent[]>([]);
+  const [eventScopeReady, setEventScopeReady] = useState(false);
   const [scans, setScans] = useState<ScanRun[]>([]);
   const inbox = useInbox();
   const [dueFilter, setDueFilter] = useState<DueFilter>({});
@@ -270,29 +272,37 @@ function AppShell() {
   }, []);
 
   const refreshGeneration = useRef(0);
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (requireSuccess = false) => {
     const generation = ++refreshGeneration.current;
     setLoading(true);
-    const collectionsRefresh = refreshCollections.current();
+    setEventScopeReady(false);
     try {
       const [c, r, he, s, info] = await Promise.all([
         api.listCourses(),
         queryResourceInventory(),
-        api.listHistoryEvents(),
+        queryHistoryInventory(),
         api.listHistoryScans(),
         api.dbInfo(),
+        refreshCollections.current(),
       ]);
-      if (generation !== refreshGeneration.current) return;
+      if (generation !== refreshGeneration.current) {
+        if (requireSuccess) throw new Error("History refresh superseded; retry refresh.");
+        return;
+      }
       setCourses(c);
       setResources(r);
       setHistoryEvents(he);
       setScans(s);
       setDbInfo(info);
       setLoadError(null);
+      setEventScopeReady(true);
     } catch (err) {
-      if (generation === refreshGeneration.current) setLoadError(String(err));
+      if (generation === refreshGeneration.current) {
+        setLoadError(String(err));
+        setEventScopeReady(false);
+      }
+      if (requireSuccess) throw err;
     } finally {
-      await collectionsRefresh;
       if (generation === refreshGeneration.current) setLoading(false);
     }
   }, []);
@@ -902,6 +912,10 @@ function AppShell() {
                     courses={courses}
                     scans={scans}
                     events={historyEvents}
+                    eventScopeReady={eventScopeReady && !loading && !loadError}
+                    onSetEventReadState={(ids, read) => api.setEventReadState([...ids], read)}
+                    onDismissEvents={(ids) => api.dismissInboxEvents([...ids])}
+                    onChanged={() => refresh(true)}
                     resources={resources}
                     details={detailsAdapters.history}
                     loading={loading}

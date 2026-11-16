@@ -93,6 +93,10 @@ export function setupApp({ width = 1280, dark = false, platform = "Linux" } = {}
   appApi.snapshotInboxEventIds.mockImplementation(async filter => (await appApi.queryInbox(filter)).items.flatMap(item => item.eventIds));
   appApi.queryDueResources.mockResolvedValue({ items: [], total: 0 });
   appApi.listHistoryEvents.mockResolvedValue([change()]);
+  appApi.queryHistoryEvents.mockImplementation(async ({ offset, limit }) => {
+    const events = await appApi.listHistoryEvents();
+    return { items: events.slice(offset, offset + limit), total: events.length };
+  });
   appApi.listHistoryScans.mockResolvedValue([]);
   appApi.unreadCount.mockResolvedValue(1);
   appApi.dbInfo.mockResolvedValue({ path: "/local/pulse.db", sizeBytes: 0, courseCount: 1, resourceCount: 1, eventCount: 1, logDir: null });
