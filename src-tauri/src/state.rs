@@ -34,6 +34,8 @@ pub struct SyncControl {
     pub credential_login_active: AtomicBool,
     /// Prevents duplicate interactive Quanta SSO windows.
     pub sso_login_active: AtomicBool,
+    /// Identity of the current native SSO attempt. Accessed only under this mutex.
+    pub(crate) sso_lifecycle: Mutex<Option<crate::auth::SsoAttempt>>,
     pub phase: Mutex<String>,
     pub progress: Mutex<(usize, usize)>,
     pub last_error: Mutex<Option<String>>,
@@ -252,9 +254,11 @@ mod tests {
         assert!(!sync.can_schedule(false));
         sync.set_auth_state("authenticated");
         assert!(sync.can_schedule(true));
-        sync.running.store(true, std::sync::atomic::Ordering::SeqCst);
+        sync.running
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         assert!(!sync.can_schedule(true));
-        sync.running.store(false, std::sync::atomic::Ordering::SeqCst);
+        sync.running
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         assert!(!sync.can_schedule(false));
         sync.set_auth_state("expired");
         for _ in 0..100 {
@@ -262,9 +266,11 @@ mod tests {
         }
         sync.set_auth_state("authenticated");
         assert!(sync.can_schedule(true));
-        sync.auth_resetting.store(true, std::sync::atomic::Ordering::SeqCst);
+        sync.auth_resetting
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         assert!(!sync.can_schedule(true));
-        sync.auth_resetting.store(false, std::sync::atomic::Ordering::SeqCst);
+        sync.auth_resetting
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         sync.set_auth_state("unauthenticated");
         assert!(!sync.can_schedule(false));
     }
@@ -278,7 +284,8 @@ mod tests {
                 std::thread::spawn(move || sync.note_auth_expired())
             })
             .collect();
-        let notifications = claims.into_iter()
+        let notifications = claims
+            .into_iter()
             .map(|claim| claim.join().unwrap())
             .filter(|claimed| *claimed)
             .count();
