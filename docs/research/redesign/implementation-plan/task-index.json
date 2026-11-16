@@ -151,7 +151,7 @@
   {
     "id": "04C",
     "title": "Serialized list keyboard and collapse integration",
-    "deps": "04C0,04C1,04C2,04C3,04C4,04C5,04C6,04C7",
+    "deps": "04C0,04C1,04C2,04C3,04C4,04C5,04C6,04C7,04C8",
     "spec": "3, 4, 6",
     "files": [
       "src/App.tsx",
@@ -956,5 +956,19 @@
       "tests/appHistoryScansKeyboard.test.tsx"
     ],
     "accept": "Approved native child #54 under #35; BLOCKED / NOT ready-for-agent until #51 keyboard acceptance and root dispatch. Scans-only serialized two-file lease in tasks/04C7.md and contracts/04C7-preflight.md. Stable scan-ID J/K/Up/Down focus and Enter inspection via existing DataTable/DetailsAdapter; independent focus/inspection, nested/modal/editor/IME/modifier guards, identity restoration and real virtual-scroll proof with >200 direct-props rows. E/U/Delete/Space/Shift+A/X remain inert; no scan membership, multiselection or material/file mutation. Preserve Changes/header actions/App query owner. Navigate published rows only; 50-cap paging, diagnostics and redesign remain task15. All screen ownership bytes unchanged."
+  },
+  {
+    "id": "04C8",
+    "title": "Courses hub keyboard navigation",
+    "deps": "04B,04C3",
+    "spec": "4 (focus navigation), 5.4 (Courses hub), 6 (focus)",
+    "files": [
+      "src/views/library/CourseList.tsx",
+      "tests/appCoursesKeyboard.test.tsx"
+    ],
+    "tests": [
+      "tests/appCoursesKeyboard.test.tsx"
+    ],
+    "accept": "Approved native child #55 under #35, with accepted #33/#48 prerequisite edges. BLOCKED / NOT ready-for-agent until root integrates search fallback/focus CSS and supplies dispatch base. Exact two-file lease and behavior in tasks/04C8.md and contracts/04C8-preflight.md: stable course-ID J/K/Up/Down DOM focus, complete existing filtered/incoming-order membership, native Enter/Space navigation once, native Tab/menu controls, identity recovery and scoped guards. No resource context, multiselection, mutation shortcuts, App/global registry or table conversion. Task10 retains visual/course-actions redesign; collapse/Activity/Scans/task04 remain incomplete. No History/B05C dependency; all 98 screen ownership bytes unchanged."
   }
 ]
