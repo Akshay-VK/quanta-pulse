@@ -254,6 +254,7 @@ pub struct SyncStatus {
 #[serde(rename_all = "camelCase")]
 pub struct AuthStatus {
     pub authenticated: bool,
+    pub attempt_id: Option<String>,
     pub email: Option<String>,
     pub full_name: Option<String>,
     pub method: Option<String>,

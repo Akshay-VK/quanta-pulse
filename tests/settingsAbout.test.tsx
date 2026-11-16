@@ -170,7 +170,7 @@ describe("Settings > About states", () => {
   });
 
   it("keeps stored files accessible and points to the single reconnect action", async () => {
-    render(SETTINGS, { authenticated: false, email: null, fullName: null, method: null, acquiredAt: null, sessionExpired: true });
+    render(SETTINGS, { authenticated: false, attemptId: null, email: null, fullName: null, method: null, acquiredAt: null, sessionExpired: true });
     expect(container.textContent).toContain("Your saved files remain available.");
     expect(container.textContent).toContain("Scroll to the top of Settings and use Reconnect");
     expect([...container.querySelectorAll("button")].filter((button) => button.textContent?.trim() === "Reconnect")).toHaveLength(0);

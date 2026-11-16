@@ -47,6 +47,8 @@ pub fn run() {
             commands::refresh_session,
             commands::restart_quanta_session,
             commands::start_sso_login,
+            commands::focus_sso_login,
+            commands::cancel_sso_login,
             commands::logout,
             commands::query_inbox,
             commands::snapshot_inbox_event_ids,

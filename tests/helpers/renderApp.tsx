@@ -71,7 +71,7 @@ export function setupApp({ width = 1280, dark = false, platform = "Linux" } = {}
   installBrowserMethod("hasPointerCapture", () => false);
   installBrowserMethod("releasePointerCapture", () => {});
   installBrowserMethod("setPointerCapture", () => {});
-  appApi.authStatus.mockResolvedValue({ authenticated: true, email: "student@example.test", fullName: "Student", method: "password", acquiredAt: null, sessionExpired: false });
+  appApi.authStatus.mockResolvedValue({ authenticated: true, attemptId: null, email: "student@example.test", fullName: "Student", method: "password", acquiredAt: null, sessionExpired: false });
   appApi.syncStatus.mockResolvedValue({ running: false, phase: "Idle", progress: 0, lastSuccessAt: null, nextScheduledAt: null, unreadNew: 1, lastError: null, authState: "connected" });
   appApi.getSettings.mockResolvedValue(settings);
   appApi.listCourses.mockResolvedValue([course]);

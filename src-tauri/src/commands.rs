@@ -68,6 +68,16 @@ pub async fn start_sso_login(app: AppHandle) -> Result<AuthStatus, String> {
 }
 
 #[tauri::command]
+pub fn focus_sso_login(app: AppHandle, attempt_id: String) -> Result<(), String> {
+    auth::focus_sso_login(&app, &attempt_id)
+}
+
+#[tauri::command]
+pub fn cancel_sso_login(app: AppHandle, attempt_id: String) -> Result<(), String> {
+    auth::cancel_sso_login(&app, &attempt_id)
+}
+
+#[tauri::command]
 pub fn auth_status(state: State<AppState>) -> AuthStatus {
     auth::auth_status(&state)
 }

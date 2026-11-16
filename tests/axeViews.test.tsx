@@ -179,6 +179,7 @@ const SETTINGS: Settings = {
 
 const AUTH: AuthStatus = {
   authenticated: true,
+  attemptId: null,
   email: "akshay@pilani.bits-pilani.ac.in",
   fullName: "Akshay V K",
   method: "password",

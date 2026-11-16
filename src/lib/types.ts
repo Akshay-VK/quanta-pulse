@@ -165,6 +165,7 @@ export interface SyncStatus {
 
 export interface AuthStatus {
   authenticated: boolean;
+  attemptId: string | null;
   email: string | null;
   fullName: string | null;
   method: string | null;

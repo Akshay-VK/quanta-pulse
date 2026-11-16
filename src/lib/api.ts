@@ -51,6 +51,8 @@ export const api = {
   login: (email: string, password: string) =>
     invoke<AuthStatus>("login", { email, password }),
   startSsoLogin: () => invoke<AuthStatus>("start_sso_login"),
+  focusSsoLogin: (attemptId: string) => invoke<void>("focus_sso_login", { attemptId }),
+  cancelSsoLogin: (attemptId: string) => invoke<void>("cancel_sso_login", { attemptId }),
   authStatus: () => invoke<AuthStatus>("auth_status"),
   refreshSession: () => invoke<SessionRefreshResult>("refresh_session"),
   restartQuantaSession: () => invoke<SessionResetResult>("restart_quanta_session"),

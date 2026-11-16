@@ -555,6 +555,7 @@ pub fn auth_status(state: &AppState) -> AuthStatus {
     let client = state.client();
     AuthStatus {
         authenticated: client.is_some(),
+        attempt_id: active_sso_attempt_id(state),
         email: client
             .as_ref()
             .map(|c| c.session.email.clone())
