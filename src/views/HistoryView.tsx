@@ -14,12 +14,12 @@ import type { ChangeEvent, Course, Resource, ScanRun } from "../lib/types";
 import { dayKeyOf, eventKindMeta, groupEventsByDay, todayKey } from "../lib/events";
 import { formatCompact, formatTimeOfDay } from "../lib/format";
 import { courseTitle } from "../lib/courseName";
-import { scanStatusMeta, type DetailsAdapter } from "../lib/details";
+import { scanStatusMeta, type DetailsAdapter, type RestoreDetailFocus } from "../lib/details";
 import PageHeader from "../components/PageHeader";
 import ResourceRow from "../components/ResourceRow";
 import { useMirror } from "../hooks/useMirror";
 import GroupHeader from "../components/GroupHeader";
-import DataTable, { type DataColumn } from "../components/DataTable";
+import DataTable, { type DataColumn, type DataTableNavigationHandle } from "../components/DataTable";
 import ConfirmDialog from "../components/ConfirmDialog";
 import { Button } from "../components/ui/Button";
 import { IconButton } from "../components/ui/IconButton";
@@ -144,6 +144,18 @@ export default function HistoryView({
   const currentIds = useRef<string[]>([]);
   const previousIds = useRef<string[]>([]);
   const listOwnedFocus = useRef(false);
+  const [focusedScan, setFocusedScan] = useState<string | null>(null);
+  const focusedScanRef = useRef<string | null>(null);
+  focusedScanRef.current = focusedScan;
+  const scanIds = useMemo(() => scans.map((scan) => `scan:${scan.id}`), [scans]);
+  const scanIdsRef = useRef<string[]>(scanIds);
+  scanIdsRef.current = scanIds;
+  const previousScanIds = useRef<string[]>([]);
+  const scanFocusOwned = useRef(false);
+  const scanNav = useRef<DataTableNavigationHandle | null>(null);
+  const viewRoot = useRef<HTMLDivElement>(null);
+  const scanGeneration = useRef(0);
+  const scanMounted = useRef(true);
   const invalidate = () => {
     generation.current += 1;
     locked.current = false;
@@ -235,6 +247,90 @@ export default function HistoryView({
     });
   }, [navigationIds, focused]);
 
+  useEffect(() => {
+    scanMounted.current = true;
+    return () => {
+      scanMounted.current = false;
+      // Tab, route and unmount invalidate deferred focus requests.
+      scanGeneration.current += 1;
+    };
+  }, []);
+
+  const scansTabControl = () =>
+    [...(viewRoot.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? [])]
+      .find((node) => node.textContent?.trim() === "Scan history") ?? null;
+
+  function scanModalOpen() {
+    return Boolean(document.querySelector(
+      '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [aria-modal="true"], .sidebar-drawer',
+    ));
+  }
+
+  /** Focus the inspected scan's current row, its surviving neighbor, or the Scans tab. */
+  function scanRestore(scanId: number): RestoreDetailFocus {
+    scanGeneration.current += 1;
+    const generation = scanGeneration.current;
+    const activeAtRequest = document.activeElement;
+    return () => {
+      if (generation !== scanGeneration.current || !scanMounted.current || scanModalOpen()) return false;
+      const known = scanIdsRef.current.includes(`scan:${scanId}`);
+      const resolved = known
+        ? null
+        : recoverFocusedId(previousScanIds.current, scanIdsRef.current, focusedScanRef.current);
+      const key = known ? scanId : resolved == null ? null : Number(resolved.slice(5));
+      const nav = scanNav.current;
+      if (key == null || !nav) {
+        const control = scansTabControl();
+        if (!control) return false;
+        scanFocusOwned.current = false;
+        control.focus();
+        return true;
+      }
+      const element = nav.getRowElement(key);
+      if (element) { element.focus(); return true; }
+      const current = document.activeElement;
+      if (current !== activeAtRequest && current !== document.body) return true;
+      queueMicrotask(() => {
+        if (generation !== scanGeneration.current || !scanMounted.current || scanModalOpen()) return;
+        if (document.activeElement !== activeAtRequest && document.activeElement !== document.body) return;
+        scanNav.current?.focusKey(key);
+      });
+      return true;
+    };
+  }
+
+  function onScansKey(event: KeyboardEvent<HTMLDivElement>) {
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    const rowId = target?.dataset.rowKey == null ? null : Number(target.dataset.rowKey);
+    const directRow = rowId != null && scanNav.current?.getRowElement(rowId) === target;
+    const id = directRow && rowId != null ? `scan:${rowId}` : focusedScan;
+    const intent = getListNavigationIntent({
+      ids: scanIds, focusedId: id, inspectedId: selectedScanId == null ? null : `scan:${selectedScanId}`, selectedIds: [],
+      key: event.key, activeSurface: tab === "scans" && directRow,
+      editableTarget: !!target?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])'),
+      nestedControl: !directRow,
+      modalOpen: scanModalOpen(),
+      isComposing: event.nativeEvent.isComposing, imeKeyCode229: event.keyCode === 229,
+      repeat: event.repeat, defaultPrevented: event.defaultPrevented,
+      shiftKey: event.shiftKey, ctrlKey: event.ctrlKey, altKey: event.altKey, metaKey: event.metaKey,
+      completeEventIds: [],
+    });
+    // Scan rows expose navigation and inspection only; every other intent is inert.
+    if (intent?.type !== "focus" && intent?.type !== "inspect") return;
+    const key = Number(intent.id.slice(5));
+    if (intent.type === "focus") {
+      event.preventDefault(); event.stopPropagation();
+      setFocusedScan(intent.id);
+      scanNav.current?.focusKey(key);
+      return;
+    }
+    const recorded = scans.find((scan) => scan.id === key);
+    const origin = scanNav.current?.getRowElement(key) ?? null;
+    if (!recorded || !origin) return;
+    event.preventDefault(); event.stopPropagation();
+    details.selectScan(recorded, origin, scanRestore(recorded.id));
+  }
+
   function onChangesKey(event: KeyboardEvent<HTMLDivElement>) {
     const target = event.target instanceof HTMLElement ? event.target : null;
     const rowControl = target?.closest<HTMLButtonElement>('.row-select');
@@ -289,6 +385,17 @@ export default function HistoryView({
     if (selection?.kind === "change" && !filtered.some((event) => event.id === selection.change.id)) details.clear();
     if (selection?.kind === "scan" && !scans.some((scan) => scan.id === selection.scan.id)) details.clear();
   }, [details.clear, filtered, scans, selection]);
+
+  // Runs after stale-inspection clearing so a removed row can still resolve its neighbor.
+  useEffect(() => {
+    const recovered = recoverFocusedId(previousScanIds.current, scanIds, focusedScan);
+    previousScanIds.current = scanIds;
+    if (recovered === focusedScan) return;
+    setFocusedScan(recovered);
+    if (!scanFocusOwned.current) return;
+    if (recovered) scanNav.current?.focusKey(Number(recovered.slice(5)));
+    else scansTabControl()?.focus();
+  }, [scanIds, focusedScan]);
 
   async function markAllRead() {
     if (readRequest.current || !hasUnread) return;
@@ -359,7 +466,7 @@ export default function HistoryView({
   ];
 
   return (
-    <div>
+    <div ref={viewRoot}>
       <PageHeader
         title="History"
         summary="Every recorded change and scan"
@@ -401,7 +508,7 @@ export default function HistoryView({
             { id: "scans", label: "Scan history" },
           ]}
           value={tab}
-          onChange={(next) => { invalidate(); setTab(next); }}
+          onChange={(next) => { invalidate(); scanGeneration.current += 1; setTab(next); }}
           ariaLabel="History views"
         />
       </div>
@@ -523,13 +630,23 @@ export default function HistoryView({
           action={error ? { label: "Retry History", onClick: onRetry } : { label: "Sync now", onClick: onSyncNow }}
         />
       ) : (
-        <DataTable
-          columns={scanColumns}
-          rows={scans}
-          getKey={(s) => s.id}
-          selectedKey={selectedScanId}
-          ariaLabel="Scan history"
-        />
+        <div
+          onKeyDown={onScansKey}
+          onFocusCapture={(event) => { scanFocusOwned.current = event.target instanceof HTMLElement && event.target.matches('tr[data-row-key]'); }}
+          onBlurCapture={(event) => { if (event.relatedTarget) scanFocusOwned.current = false; }}
+        >
+          <DataTable
+            columns={scanColumns}
+            rows={scans}
+            getKey={(s) => s.id}
+            selectedKey={selectedScanId}
+            focusedKey={focusedScan == null ? null : Number(focusedScan.slice(5))}
+            onRowFocus={(s) => setFocusedScan(`scan:${s.id}`)}
+            navigationRef={scanNav}
+            virtual
+            ariaLabel="Scan history"
+          />
+        </div>
       )}
 
       <Dialog
