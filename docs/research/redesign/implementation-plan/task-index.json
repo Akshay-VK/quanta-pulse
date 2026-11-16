@@ -151,7 +151,7 @@
   {
     "id": "04C",
     "title": "Serialized list keyboard and collapse integration",
-    "deps": "04C0,04C1,04C2,04C3,04C4",
+    "deps": "04C0,04C1,04C2,04C3,04C4,04C5",
     "spec": "3, 4, 6",
     "files": [
       "src/App.tsx",
@@ -898,5 +898,19 @@
       "tests/appCourseMaterialsKeyboard.test.tsx"
     ],
     "accept": "Approved native child #50 under #35, BLOCKED / NOT ready-for-agent until 04C3 #48 accepted and root dispatch prerequisites. Materials-only exact lease and adapter prerequisites in contracts/04C4-preflight.md. Reuse complete App inventory beyond 2000, authoritative captured resource events, independent stable tree focus/inspection/selection, nested-control guards, Inbox-only dismissal and tab/filter/async invalidation. Preserve tree expansion/virtualization and existing action owners. Real-App regressions, frontend gates and two rendered states required. Activity, Courses navigation, History and remaining collapse/focus integration stay separate; no screen ownership changes."
+  },
+  {
+    "id": "04C5",
+    "title": "History Changes keyboard integration",
+    "deps": "04B,04C0,04C3",
+    "spec": "4 (keyboard), 5.7 (History Changes), 7 (capture/dismiss/preservation)",
+    "files": [
+      "src/views/HistoryView.tsx",
+      "tests/appHistoryKeyboard.test.tsx"
+    ],
+    "tests": [
+      "tests/appHistoryKeyboard.test.tsx"
+    ],
+    "accept": "Approved native child #51 under #35, BLOCKED / NOT ready-for-agent until RUNNING 04C3 #48 accepted and root adapter/base dispatch. Changes-only lease in contracts/04C5-preflight.md: complete B05A event publication, event identity distinct from resources, captured E/U and Shift+A, Inbox-only Delete, independent focus/inspection/selection, guarded keys, async invalidation and real-App proof. Root owns App/adapter tests/CSS; no #50 dependency. Preserve B05B permanent-deletion APIs and explicit missing/History-hidden event caveats. Scans, header frozen-deletion conversion, collapse, Course Materials/Activity, Courses hub and cross-surface virtual-focus proof remain separate. No screen ownership changes."
   }
 ]
