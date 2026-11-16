@@ -420,6 +420,19 @@ export default function SettingsView({
       <PageHeader title="Settings" summary="Appearance, connection, notifications, files, integrations and recovery." />
       <div className="settings-layout">
       <aside className="settings-sticky">
+        <select
+          className="settings-section-select select-trigger"
+          aria-label="Settings section"
+          value={active}
+          onChange={(event) => {
+            const id = event.currentTarget.value;
+            setActive(id);
+            const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+            document.getElementById(id)?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
+          }}
+        >
+          {NAV_ITEMS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+        </select>
         <nav aria-label="Settings sections">
           {NAV_ITEMS.map((item) => (
             <a

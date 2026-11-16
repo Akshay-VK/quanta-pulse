@@ -1,4 +1,4 @@
-// A2: Settings is a centred 160px + 720px grid with an unstyled-link section
+// Redesign: Settings is a centred 216px + 640px grid with an unstyled-link section
 // nav, sentence-case section titles and no doubled separators. jsdom does not
 // lay out CSS, so the structural contract is asserted against the stylesheet
 // source as well as the DOM.
@@ -252,10 +252,10 @@ describe("Settings > Telegram", () => {
 describe("Settings stylesheet contract", () => {
   it("centres a bounded Settings navigation grid with a 24px gap", () => {
     expect(rule(screensCss, ".settings-layout")).toContain(
-      "grid-template-columns: 184px minmax(0, 1fr)",
+      "grid-template-columns: 216px minmax(0, 640px)",
     );
     expect(rule(screensCss, ".settings-layout")).toContain("gap: var(--sp-6)");
-    expect(rule(screensCss, ".settings-page")).toContain("max-width: 880px");
+    expect(rule(screensCss, ".settings-page")).toContain("max-width: 888px");
     expect(rule(screensCss, ".settings-page")).toContain("margin-inline: auto");
   });
 

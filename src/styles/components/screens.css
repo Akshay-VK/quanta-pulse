@@ -399,16 +399,16 @@
 
   /* --------------------------------------------------------------- Settings */
 
-  /* 7.6: a 720px content column beside a 160px sticky section list. */
+  /* Settings is one scroll surface with a fixed-width section rail. */
   .settings-page {
-    max-width: 880px;
+    max-width: 888px;
     width: 100%;
     margin-inline: auto;
   }
 
   .settings-layout {
     display: grid;
-    grid-template-columns: 184px minmax(0, 1fr);
+    grid-template-columns: 216px minmax(0, 640px);
     gap: var(--sp-6);
     align-items: start;
   }
@@ -419,6 +419,13 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
+  }
+
+  .settings-section-select {
+    display: none;
+    width: 100%;
+    max-width: 100%;
+    appearance: auto;
   }
 
   .settings-link {
@@ -447,8 +454,12 @@
   }
 
   .settings-content {
-    /* Keep a readable content column beside the section list. */
+    width: 100%;
     min-width: 0;
+  }
+
+  .settings-section {
+    scroll-margin-top: var(--sp-6);
   }
 
   .settings-group-title {
@@ -513,7 +524,10 @@
     background: var(--raised);
     box-shadow: var(--shadow-pop);
     border-radius: var(--radius-md);
-    padding: var(--sp-3);
+    box-sizing: border-box;
+    height: 48px;
+    min-height: 48px;
+    padding: 0 var(--sp-3);
     animation: savebar-in var(--dur-base) var(--ease-out);
   }
 
@@ -544,14 +558,17 @@
       gap: var(--sp-3);
     }
 
-    /* The section list becomes a horizontally scrolling Tabs row above the
-       content. */
     .settings-sticky {
       position: static;
-      flex-direction: row;
-      overflow-x: auto;
-      gap: var(--sp-1);
       width: 100%;
+    }
+
+    .settings-section-select {
+      display: block;
+    }
+
+    .settings-sticky nav {
+      display: none;
     }
 
     .settings-link {
