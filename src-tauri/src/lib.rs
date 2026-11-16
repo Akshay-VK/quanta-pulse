@@ -100,6 +100,8 @@ pub fn run() {
             commands::mirror_retry_failed,
             commands::mirror_verify_files,
             commands::mirror_delete_all,
+            commands::snapshot_mirror_delete_scope,
+            commands::mirror_delete_scope,
             commands::pick_mirror_root,
             commands::mirror_move_files,
             commands::ensure_local,

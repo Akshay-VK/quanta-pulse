@@ -932,9 +932,28 @@ pub fn mirror_delete_all(state: State<'_, AppState>) -> crate::models::MirrorSta
         let conn = state.conn();
         state.mirror.delete_all(&conn)
     };
-    tracing::info!(removed, "all local mirror copies deleted");
+    tracing::info!(removed, "legacy mirror delete-all command completed");
     let conn = state.conn();
     state.mirror.stats(&conn)
+}
+
+/// Capture the exact saved files covered by a mirror deletion confirmation.
+#[tauri::command]
+pub fn snapshot_mirror_delete_scope(
+    state: State<'_, AppState>,
+) -> Result<crate::core::mirror::MirrorDeleteScope, String> {
+    let conn = state.conn();
+    state.mirror.snapshot_delete_scope(&conn)
+}
+
+/// Delete only outstanding entries from a previously confirmed mirror scope.
+#[tauri::command]
+pub fn mirror_delete_scope(
+    state: State<'_, AppState>,
+    scope_id: String,
+) -> Result<crate::core::mirror::MirrorDeleteResult, String> {
+    let conn = state.conn();
+    state.mirror.delete_scope(&conn, &scope_id)
 }
 
 /// Let the user pick the mirror folder. Existing files stay where they are: the

@@ -24,6 +24,8 @@ import type {
   LocalFile,
   LocalFileStatus,
   MirrorStats,
+  MirrorDeleteScope,
+  MirrorDeleteResult,
   MirrorDownloadProgress,
   Resource,
   ResourceFilter,
@@ -37,6 +39,13 @@ import type {
 } from "./types";
 
 import type { DownloadEvent, Update } from "@tauri-apps/plugin-updater";
+
+function mirrorDeleteAll(): Promise<MirrorStats>;
+function mirrorDeleteAll(scopeId: string): Promise<MirrorDeleteResult>;
+function mirrorDeleteAll(scopeId?: string): Promise<MirrorStats | MirrorDeleteResult> {
+  if (scopeId === undefined) return invoke<MirrorStats>("mirror_delete_all");
+  return invoke<MirrorDeleteResult>("mirror_delete_scope", { scopeId });
+}
 
 export const api = {
   login: (email: string, password: string) =>
@@ -166,8 +175,10 @@ export const api = {
   mirrorRetryFailed: () => invoke<MirrorStats>("mirror_retry_failed"),
   /** Re-hash local copies and requeue what is missing or corrupt. */
   mirrorVerifyFiles: () => invoke<MirrorStats>("mirror_verify_files"),
-  /** Remove every local copy. Manual action only. */
-  mirrorDeleteAll: () => invoke<MirrorStats>("mirror_delete_all"),
+  /** Capture the exact saved files covered by a destructive confirmation. */
+  snapshotMirrorDeleteScope: () => invoke<MirrorDeleteScope>("snapshot_mirror_delete_scope"),
+  /** Remove the captured scope; zero arguments preserves legacy Settings behavior. */
+  mirrorDeleteAll,
   /** Move existing files to a new mirror root. */
   mirrorMoveFiles: () => invoke<MirrorStats>("mirror_move_files"),
   /** Pick a different mirror folder. */

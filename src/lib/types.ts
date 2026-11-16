@@ -325,6 +325,25 @@ export interface MirrorStats {
   freeBytes: number;
 }
 
+/** Frozen mirror files captured for one destructive confirmation. */
+export interface MirrorDeleteScope {
+  scopeId: string;
+  count: number;
+}
+
+/** One saved-file entry still needing cleanup in a frozen deletion scope. */
+export interface MirrorDeleteFailure {
+  resourceId: number;
+  path: string;
+  error: string;
+}
+
+/** Work completed and outstanding failures from one scoped deletion attempt. */
+export interface MirrorDeleteResult {
+  removed: number;
+  failed: MirrorDeleteFailure[];
+}
+
 export interface ResourceFilter {
   courseId?: number | null;
   search?: string | null;
