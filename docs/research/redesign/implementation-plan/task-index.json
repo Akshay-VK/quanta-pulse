@@ -151,7 +151,7 @@
   {
     "id": "04C",
     "title": "Serialized list keyboard and collapse integration",
-    "deps": "04C0,04C1,04C2,04C3,04C4,04C5,04C6",
+    "deps": "04C0,04C1,04C2,04C3,04C4,04C5,04C6,04C7",
     "spec": "3, 4, 6",
     "files": [
       "src/App.tsx",
@@ -942,5 +942,19 @@
       "tests/appCourseActivityKeyboard.test.tsx"
     ],
     "accept": "After accepted Materials and B05C plus root Activity adapter integration, add Activity-only event-ID keyboard actions and actual-App proof under tasks/04C6.md. Preserve eventsRange membership including History-cleared events; complete App History is incompatible due to its clear watermark. Capture exact eligible event IDs for read/unread/Shift+A and Inbox-only dismissal, exclude baseline actions, avoid sibling expansion, guard keys, separate focus/inspection/selection, invalidate stale generations and retry refresh without replaying successful mutation. Root remains sole integrator; preserve all screen owners and defer other UI/cleanup."
+  },
+  {
+    "id": "04C7",
+    "title": "History Scans keyboard navigation",
+    "deps": "04B,04C5",
+    "spec": "4 (navigation/inspection only), 5.7 (Scans), 7 (safety)",
+    "files": [
+      "src/views/HistoryView.tsx",
+      "tests/appHistoryScansKeyboard.test.tsx"
+    ],
+    "tests": [
+      "tests/appHistoryScansKeyboard.test.tsx"
+    ],
+    "accept": "Approved native child #54 under #35; BLOCKED / NOT ready-for-agent until #51 keyboard acceptance and root dispatch. Scans-only serialized two-file lease in tasks/04C7.md and contracts/04C7-preflight.md. Stable scan-ID J/K/Up/Down focus and Enter inspection via existing DataTable/DetailsAdapter; independent focus/inspection, nested/modal/editor/IME/modifier guards, identity restoration and real virtual-scroll proof with >200 direct-props rows. E/U/Delete/Space/Shift+A/X remain inert; no scan membership, multiselection or material/file mutation. Preserve Changes/header actions/App query owner. Navigate published rows only; 50-cap paging, diagnostics and redesign remain task15. All screen ownership bytes unchanged."
   }
 ]
