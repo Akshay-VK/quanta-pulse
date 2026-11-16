@@ -151,7 +151,7 @@
   {
     "id": "04C",
     "title": "Serialized list keyboard and collapse integration",
-    "deps": "04C0,04C1,04C2",
+    "deps": "04C0,04C1,04C2,04C3",
     "spec": "3, 4, 6",
     "files": [
       "src/App.tsx",
@@ -221,6 +221,20 @@
       "tests/appAgendaKeyboard.test.tsx"
     ],
     "accept": "Scope keyboard intents to Agenda and keep focus, existing DetailsAdapter inspection, and local multi-selection independent. Use stable external resource IDs and complete resource event snapshots for captured read/unread/dismiss actions, including the full filtered due inventory for Shift+A. Dismiss only Inbox events, preserve due records and History/files, and exclude later arrivals. Guard nested controls/editables/IME/repeats/modifiers/modals/inactive surfaces; preview through the existing material action context. Restore identity focus after settled list changes and overlays. Preserve date rendering and past collapse. Tests use real App fixtures. This child does not accept 04C/task 04."
+  },
+  {
+    "id": "04C3",
+    "title": "Library All files keyboard integration",
+    "deps": "04B,04C0,04C2",
+    "spec": "4, 5.4 (All files/search/inspector), 6, 7",
+    "files": [
+      "src/views/library/AllFiles.tsx",
+      "tests/appLibraryKeyboard.test.tsx"
+    ],
+    "tests": [
+      "tests/appLibraryKeyboard.test.tsx"
+    ],
+    "accept": "After coordinator adapter integration, wire only Library All files through accepted keyboard policy, complete App-published paged inventory and authoritative captured resource event IDs. Keep focus/inspection/multi-selection distinct; E/U mutate captured events, Delete dismisses Inbox only, Shift+A confirms complete filtered scope beyond virtualization. Preserve existing search/filter/sort, guard nested/editable/modal/inactive targets, reject stale and duplicate actions, await App refresh and restore virtual/filter/overlay identity focus. Exact coordinator App/LibraryView/DataTable/CSS seams are in contracts/04C3-preflight.md. Real-App tests, frontend gates and two rendered states required. CoursePage, History and collapse remain separate; this child does not accept 04C/04 or change screen owners."
   },
   {
     "id": "05",
