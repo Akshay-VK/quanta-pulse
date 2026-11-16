@@ -1,7 +1,7 @@
 # Decision wiki
 
 - [2026-11-16: Paused redesign session handoff](2026-11-16-redesign-session-handoff.md) — resume entry point, accepted commits, interrupted patches, contracts, proof limits and next tasks.
-- [2026-11-16: Redesign resume acceptance](2026-11-16-redesign-resume-acceptance.md) — B08A, B09B and 04C2 accepted; superseding assembled gates and bounded 04C3 Library preflight, with umbrella gaps retained.
+- [2026-11-16: Redesign resume acceptance](2026-11-16-redesign-resume-acceptance.md) — B08A/B08B, B09B, 04C2 and keyed table foundation accepted; 612-test assembled checkpoint, blocked Materials-only 04C4 and retained umbrella gaps.
 - [2026-11-16: Version-retention compatibility](2026-11-16-version-retention-compatibility.md) — preserve the existing `mirrorKeepVersions` field, default, accepted range and persisted values; no age cleanup.
 
 This wiki preserves dated decisions and their evidence. It is not the live tracker; use GitHub Issues for current work state.

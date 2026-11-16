@@ -151,7 +151,7 @@
   {
     "id": "04C",
     "title": "Serialized list keyboard and collapse integration",
-    "deps": "04C0,04C1,04C2,04C3",
+    "deps": "04C0,04C1,04C2,04C3,04C4",
     "spec": "3, 4, 6",
     "files": [
       "src/App.tsx",
@@ -883,5 +883,20 @@
       "Settings draft/save and preference tests"
     ],
     "accept": "Expose notifyScanFailures through the existing Settings draft/save path, preserve persisted false and navigation guarding, and prove draft comparison, toggle/save/discard, disabled behavior and rendered controls. Run assembled lint, full tests and build before acceptance."
+  },
+  {
+    "id": "04C4",
+    "title": "Course Materials keyboard integration",
+    "deps": "04C3,04B,04C0",
+    "spec": "4, 5.4 (Course Materials/expanded/search/empty-failure), 5.5, 6, 7",
+    "files": [
+      "src/views/library/CoursePage.tsx",
+      "src/views/library/TreeRow.tsx",
+      "tests/appCourseMaterialsKeyboard.test.tsx"
+    ],
+    "tests": [
+      "tests/appCourseMaterialsKeyboard.test.tsx"
+    ],
+    "accept": "Approved native child #50 under #35, BLOCKED / NOT ready-for-agent until 04C3 #48 accepted and root dispatch prerequisites. Materials-only exact lease and adapter prerequisites in contracts/04C4-preflight.md. Reuse complete App inventory beyond 2000, authoritative captured resource events, independent stable tree focus/inspection/selection, nested-control guards, Inbox-only dismissal and tab/filter/async invalidation. Preserve tree expansion/virtualization and existing action owners. Real-App regressions, frontend gates and two rendered states required. Activity, Courses navigation, History and remaining collapse/focus integration stay separate; no screen ownership changes."
   }
 ]
