@@ -151,7 +151,7 @@
   {
     "id": "04C",
     "title": "Serialized list keyboard and collapse integration",
-    "deps": "04C0,04C1",
+    "deps": "04C0,04C1,04C2",
     "spec": "3, 4, 6",
     "files": [
       "src/App.tsx",
@@ -207,6 +207,20 @@
       "tests/appInboxKeyboard.test.tsx"
     ],
     "accept": "Scope keyboard intents to Inbox, preserve sole App details/material owner, complete captured group/bulk actions, independent focus/multi-selection, accessible native controls and stable restoration. No read-on-inspect change until I01. Other 04C surfaces remain pending."
+  },
+  {
+    "id": "04C2",
+    "title": "Agenda keyboard integration",
+    "deps": "04B,04C0,04C1",
+    "spec": "4, 6",
+    "files": [
+      "src/views/AgendaView.tsx",
+      "tests/appAgendaKeyboard.test.tsx"
+    ],
+    "tests": [
+      "tests/appAgendaKeyboard.test.tsx"
+    ],
+    "accept": "Scope keyboard intents to Agenda and keep focus, existing DetailsAdapter inspection, and local multi-selection independent. Use stable external resource IDs and complete resource event snapshots for captured read/unread/dismiss actions, including the full filtered due inventory for Shift+A. Dismiss only Inbox events, preserve due records and History/files, and exclude later arrivals. Guard nested controls/editables/IME/repeats/modifiers/modals/inactive surfaces; preview through the existing material action context. Restore identity focus after settled list changes and overlays. Preserve date rendering and past collapse. Tests use real App fixtures. This child does not accept 04C/task 04."
   },
   {
     "id": "05",
@@ -696,7 +710,7 @@
   {
     "id": "B08",
     "title": "SSO window focus and cancellation lifecycle",
-    "deps": "00",
+    "deps": "B08A,B08B",
     "spec": "5, 7",
     "files": [
       "src-tauri/src/auth.rs",
@@ -713,7 +727,7 @@
   {
     "id": "B09",
     "title": "Scan-failure notification preference and delivery",
-    "deps": "00",
+    "deps": "B09A,B09B",
     "spec": "5.8",
     "files": [
       "src-tauri/src/settings.rs",
@@ -791,5 +805,69 @@
       "tests/apiUpdater.test.ts"
     ],
     "accept": "Wire version, automatic checks and finite updater lifecycle: checking, available, downloading, installing, failed/retry and restart required. Preserve signature verification and platform relaunch ordering. Use existing lifecycle/API; no feed or key changes. Test cancelled/failed operations, retry and duplicate install; native signed-install evidence is separate from mocked UI proof."
+  },
+  {
+    "id": "B08A",
+    "title": "Native SSO attempt lifecycle",
+    "deps": "00",
+    "spec": "5, 7",
+    "files": [
+      "src-tauri/src/auth.rs",
+      "src-tauri/src/state.rs"
+    ],
+    "tests": [
+      "focused Rust auth lifecycle tests",
+      "ignored Windows blank-window native test"
+    ],
+    "accept": "Implement and prove the native attempt lifecycle, matching-ID focus/cancel, stale callback fencing, and session commit guard with deterministic regressions, Windows compilation and library tests, and explicit native delivery proof. B08B remains a separate consumer."
+  },
+  {
+    "id": "B08B",
+    "title": "SSO lifecycle command and API exposure",
+    "deps": "B08A",
+    "spec": "5, 7",
+    "files": [
+      "src-tauri/src/commands.rs",
+      "src-tauri/src/lib.rs",
+      "src-tauri/src/models.rs",
+      "src/lib/api.ts",
+      "src/lib/types.ts"
+    ],
+    "tests": [
+      "focused command/API contract coverage"
+    ],
+    "accept": "After B08A integration, add nullable AuthStatus.attemptId and focus/cancel command and API wrappers. Preserve startSsoLogin completion semantics and camelCase wire fields. B08 umbrella is incomplete until this child is accepted and integrated."
+  },
+  {
+    "id": "B09A",
+    "title": "Native scan-failure notification core",
+    "deps": "00",
+    "spec": "5.8",
+    "files": [
+      "src-tauri/src/settings.rs",
+      "src-tauri/src/notify.rs",
+      "src-tauri/src/sync/engine.rs",
+      "src-tauri/src/db.rs",
+      "src-tauri/migrations/0008_scan_failure_notifications.sql"
+    ],
+    "tests": [
+      "focused Rust settings/notification tests"
+    ],
+    "accept": "Add backward-compatible notifyScanFailures default true, durable at-most-once per-scan claims, and generic native alerts under the frozen eligibility rules. No UI/API transport changes."
+  },
+  {
+    "id": "B09B",
+    "title": "Scan-failure preference consumer",
+    "deps": "B09A",
+    "spec": "5.8",
+    "files": [
+      "src/lib/types.ts",
+      "src/views/SettingsView.tsx",
+      "tests/settingsScanFailure.test.tsx"
+    ],
+    "tests": [
+      "Settings draft/save and preference tests"
+    ],
+    "accept": "Expose notifyScanFailures through the existing Settings draft/save path, preserve persisted false and navigation guarding, and prove draft comparison, toggle/save/discard, disabled behavior and rendered controls. Run assembled lint, full tests and build before acceptance."
   }
 ]

@@ -1,5 +1,8 @@
 # Decision wiki
 
+- [2026-11-16: Paused redesign session handoff](2026-11-16-redesign-session-handoff.md) — resume entry point, accepted commits, interrupted patches, contracts, proof limits and next tasks.
+- [2026-11-16: Redesign resume acceptance](2026-11-16-redesign-resume-acceptance.md) — B08A accepted native proof; B09B and 04C2 remain partial pending assembled gates.
+
 This wiki preserves dated decisions and their evidence. It is not the live tracker; use GitHub Issues for current work state.
 
 - [2026-11-15: Redesign foundation acceptance and shared-controls split](2026-11-15-redesign-foundation-and-controls.md) — accepted foundation/B01 evidence, bounded 02A/02B task graph, protected B02 lease, and small-context/screenshot milestone preference.
