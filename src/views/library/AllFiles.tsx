@@ -1,7 +1,10 @@
 import { useSessionValue } from "../../hooks/useSessionViews";
 import { useMaterialActions } from "../../hooks/useMaterialActions";
 import { MaterialButtons } from "../../components/MaterialButtons";
-import { useEffect, useMemo } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { api } from "../../lib/api";
+import { getListNavigationIntent, recoverFocusedId, type ListNavigationInput } from "../../lib/listNavigation";
+import ConfirmDialog from "../../components/ConfirmDialog";
 import { cx } from "../../lib/cx";
 import { typeOptions } from "../../lib/courseLibrary";
 import { dedupeCourseResources } from "../../lib/courseTree";
@@ -11,7 +14,7 @@ import { describeUpload, formatBytes, parseTimestamp } from "../../lib/format";
 import { formatSectionPath } from "../../lib/sectionPath";
 import type { DetailsAdapter } from "../../lib/details";
 import type { Course, Resource } from "../../lib/types";
-import DataTable, { type DataColumn } from "../../components/DataTable";
+import DataTable, { type DataColumn, type DataTableNavigationHandle } from "../../components/DataTable";
 import { Button } from "../../components/ui/Button";
 import { Select } from "../../components/ui/Select";
 import { CoursePill } from "../../components/ui/CoursePill";
@@ -32,6 +35,16 @@ interface AllFilesProps {
   onFocusSearch?: () => void;
   inventoryPending?: boolean;
   inventoryError?: string | null;
+}
+
+const identity = (resource: Resource) => resource.externalResourceId || `local:${resource.id}`;
+const modalOpen = () => Boolean(document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], .sidebar-drawer'));
+interface Capture {
+  generation: number;
+  resourceIds: number[];
+  eventIds: number[];
+  action: "read" | "unread" | "dismiss";
+  done: boolean;
 }
 
 type SortId = "title" | "course" | "section" | "type" | "uploaded";
@@ -70,6 +83,10 @@ export default function AllFiles({
   details,
   onClearSearch,
   onCourse,
+  onChanged,
+  onFocusSearch,
+  inventoryPending = false,
+  inventoryError,
 }: AllFilesProps) {
   const destinations = useMaterialActions({ onOpen, onPreview });
   const [courseFilter, setCourseFilter] = useSessionValue("library:files:course", "all");
@@ -144,14 +161,154 @@ export default function AllFiles({
     onClearSearch?.();
   };
 
-  const selectedId = details?.selected?.kind === "resource" ? details.selected.resource.id : null;
+  const navigation = useRef<DataTableNavigationHandle>(null);
+  const container = useRef<HTMLDivElement>(null);
+  const [focusedId, setFocusedId] = useState<string | null>(null);
+  const [selection, setSelection] = useState<string[]>([]);
+  const [capture, setCapture] = useState<Capture | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
+  const [, setBusy] = useState(false);
+  const [refreshWait, setRefreshWait] = useState<{ resolve: (error: string | null) => void } | null>(null);
+  useEffect(() => {
+    if (refreshWait) {
+      refreshWait.resolve(inventoryError ?? null);
+      setRefreshWait(null);
+    }
+  }, [refreshWait, inventoryError]);
+  const generation = useRef(0);
+  const lock = useRef<number | null>(null);
+  const previousIds = useRef<string[]>([]);
+  const ownedFocus = useRef(false);
+  const ids = useMemo(() => rows.map(identity), [rows]);
+  const currentFocus = recoverFocusedId(previousIds.current, ids, focusedId);
+  const latest = useRef({ inventoryError, inventoryPending, currentFocus });
+  latest.current = { inventoryError, inventoryPending, currentFocus };
   const selected = details?.selected;
+  const selectedId = selected?.kind === "resource" ? identity(selected.resource) : null;
+  const context = `${search}\0${courseFilter}\0${typeFilter}`;
+
+  useLayoutEffect(() => {
+    generation.current += 1;
+    lock.current = null;
+    setCapture(null);
+    setBusy(false);
+    setStatus(null);
+    return () => { generation.current += 1; lock.current = null; };
+  }, [context]);
+
+  useLayoutEffect(() => {
+    const changed = previousIds.current.join("\0") !== ids.join("\0");
+    previousIds.current = ids;
+    setFocusedId(currentFocus);
+    setSelection(prev => prev.filter(id => ids.includes(id)));
+    if (changed && ownedFocus.current && !modalOpen()) {
+      if (currentFocus) navigation.current?.focusKey(currentFocus);
+      else onFocusSearch?.();
+    }
+  }, [ids, currentFocus, onFocusSearch]);
 
   useEffect(() => {
-    if (selected?.kind === "resource" && !rows.some((resource) => resource.id === selected.resource.id)) {
-      details?.clear();
-    }
+    if (selected?.kind === "resource" && !rows.some(resource => resource.id === selected.resource.id)) details?.clear();
   }, [details, rows, selected]);
+
+  const restore = (id: string | null) => {
+    // The destination tab/route owns fallback focus after this list unmounts.
+    if (!container.current?.isConnected) return false;
+    if (id && navigation.current?.focusKey(id)) return true;
+    if (latest.current.currentFocus && navigation.current?.focusKey(latest.current.currentFocus)) return true;
+    onFocusSearch?.();
+    return true;
+  };
+  const inspect = (resource: Resource, origin: HTMLElement) => {
+    const id = identity(resource);
+    details?.selectResource(resource, origin, () => restore(id));
+  };
+  const mutate = async (scope: Capture) => {
+    const token = scope.generation;
+    if (generation.current !== token || lock.current !== null) return;
+    lock.current = token;
+    setBusy(true);
+    setStatus(null);
+    try {
+      if (!scope.done) {
+        if (scope.action === "dismiss") await api.dismissInboxEvents(scope.eventIds);
+        else await api.setEventReadState(scope.eventIds, scope.action === "read");
+        // Remember backend success even if refresh subsequently fails.
+        scope.done = true;
+      }
+      if (generation.current !== token) return;
+      await onChanged?.();
+      if (generation.current !== token) return;
+      // App reports refresh failure through props, after its promise completes.
+      // A render acknowledgement observes that publication before closing.
+      const refreshError = await new Promise<string | null>(resolve => setRefreshWait({ resolve }));
+      if (generation.current !== token) return;
+      if (refreshError) throw new Error(`Changes saved; inventory refresh failed: ${refreshError}`);
+      setStatus("Captured changes saved.");
+    } catch (error) {
+      if (generation.current !== token) return;
+      setStatus(`${scope.done ? "Changes saved; retry refresh only. " : ""}${String(error)}`);
+      throw error;
+    } finally {
+      if (generation.current === token && lock.current === token) { lock.current = null; setBusy(false); }
+    }
+  };
+  const beginCapture = async (targetIds: readonly string[], action: Capture["action"], confirm: boolean, policy: ListNavigationInput) => {
+    if (lock.current !== null || capture) return;
+    if (inventoryPending || inventoryError) {
+      setStatus(inventoryError ? "Inventory refresh failed. Retry loading before changing events." : "Inventory is refreshing. Wait before changing events.");
+      return;
+    }
+    const resourceIds = rows.filter(resource => targetIds.includes(identity(resource))).map(resource => resource.id);
+    if (!resourceIds.length) { setStatus("No matching materials to capture."); return; }
+    const token = ++generation.current;
+    lock.current = token;
+    setBusy(true);
+    setStatus("Capturing recorded changes…");
+    try {
+      const snapshot = await api.snapshotResourceEventIds([...resourceIds]);
+      if (generation.current !== token) return;
+      const intent = getListNavigationIntent({ ...policy, completeEventIds: snapshot });
+      const eventIds = intent?.type === "openCapturedScope" ? [...intent.eventIds] : [...snapshot];
+      if (!eventIds.length) { setStatus("No eligible recorded changes in the captured scope."); return; }
+      const scope: Capture = { generation: token, resourceIds, eventIds, action, done: false };
+      lock.current = null;
+      if (confirm) { setStatus(null); setCapture(scope); }
+      else {
+        try { await mutate(scope); }
+        catch { if (generation.current === token) setCapture(scope); }
+      }
+    } catch (error) {
+      if (generation.current === token) setStatus(`Could not capture changes: ${String(error)}. Try the shortcut again.`);
+    } finally {
+      if (generation.current === token && (lock.current === token || lock.current === null)) { lock.current = null; setBusy(false); }
+    }
+  };
+  const handleKey = (event: KeyboardEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement;
+    const input: ListNavigationInput = {
+      ids, focusedId: currentFocus, inspectedId: selectedId, selectedIds: selection,
+      key: event.key, activeSurface: Boolean(target.closest("tr[data-row-key]")),
+      editableTarget: Boolean(target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')),
+      nestedControl: Boolean(target.closest('button, a, [role="button"], [role="checkbox"]')),
+      modalOpen: modalOpen(), isComposing: event.nativeEvent.isComposing,
+      imeKeyCode229: event.keyCode === 229, repeat: event.repeat, defaultPrevented: event.defaultPrevented,
+      shiftKey: event.shiftKey, ctrlKey: event.ctrlKey, altKey: event.altKey, metaKey: event.metaKey, completeEventIds: [],
+    };
+    const intent = getListNavigationIntent(input);
+    if (!intent) return;
+    event.preventDefault(); event.stopPropagation();
+    if (intent.type === "focus") { setFocusedId(intent.id); navigation.current?.focusKey(intent.id); }
+    else if (intent.type === "toggleSelection") setSelection(prev => prev.includes(intent.id) ? prev.filter(id => id !== intent.id) : [...prev, intent.id]);
+    else if (intent.type === "inspect" || intent.type === "preview") {
+      const resource = rows.find(resource => identity(resource) === intent.id);
+      if (!resource) return;
+      if (intent.type === "inspect") inspect(resource, target);
+      else destinations?.(resource).find(action => action.id === "preview")?.onSelect?.();
+    } else if (intent.type === "openCapturedScope") void beginCapture([...ids], "read", true, input);
+    else if (intent.type === "confirmDelete") void beginCapture(intent.ids, "dismiss", true, input);
+    else void beginCapture(intent.ids, intent.isRead ? "read" : "unread", false, input);
+  };
 
   const columns: DataColumn<Resource>[] = [
     {
@@ -171,7 +328,7 @@ export default function AllFiles({
             aria-label={`Show details for ${resource.title}`}
             onClick={(event) => {
               event.stopPropagation();
-              details?.selectResource(resource, event.currentTarget);
+              inspect(resource, event.currentTarget);
             }}
           >
             <span className="cell-title-main">{resource.title}</span>
@@ -256,7 +413,13 @@ export default function AllFiles({
   ];
 
   return (
-    <>
+    <div ref={container} onKeyDown={handleKey}
+      onFocusCapture={event => { ownedFocus.current = event.target instanceof HTMLElement && event.target.matches("tr[data-row-key]"); }}
+      onBlurCapture={event => { if (event.relatedTarget instanceof Node && !container.current?.contains(event.relatedTarget)) ownedFocus.current = false; }}>
+      {(status || inventoryPending || inventoryError) && <p role={status?.includes("failed") || inventoryError ? "alert" : "status"}>
+        {status ?? (inventoryError ? "Inventory refresh failed. Retained materials remain inspectable; new changes are blocked." : "Inventory is refreshing; new changes are blocked.")}
+      </p>}
+      <span className="sr-only" aria-live="polite">{selection.length} materials selected</span>
       <div className="filter-bar">
         <div className="filter-bar-left">
           <Select
@@ -300,13 +463,16 @@ export default function AllFiles({
         sessionKey="library:files:table"
         columns={columns}
         rows={rows}
-        getKey={(resource) => resource.id}
+        getKey={identity}
+        navigationRef={navigation}
+        focusedKey={currentFocus}
+        multiSelectedKeys={selection}
+        onRowFocus={resource => setFocusedId(identity(resource))}
         sort={sort}
         onSort={onSort}
         onRowClick={(resource) => {
-          const row = document.querySelector<HTMLElement>(`[data-resource-id="${resource.id}"]`)?.closest("tr") ?? null;
-          if (row) row.tabIndex = -1;
-          details?.selectResource(resource, row ?? (document.activeElement as HTMLElement));
+          const row = navigation.current?.getRowElement(identity(resource));
+          if (row) inspect(resource, row);
         }}
         selectedKey={selectedId}
         ariaLabel="All course files"
@@ -323,6 +489,18 @@ export default function AllFiles({
         }
       />
 
-    </>
+      {capture && <ConfirmDialog key={capture.generation} open onOpenChange={open => {
+        if (!open && generation.current === capture.generation && lock.current === null) {
+          setCapture(null); setStatus(null);
+          requestAnimationFrame(() => { if (generation.current === capture.generation && !modalOpen()) restore(latest.current.currentFocus); });
+        }
+      }} title={capture.action === "dismiss" ? "Dismiss captured Inbox changes?" : capture.action === "unread" ? "Mark captured changes unread?" : "Mark captured changes read?"}
+        destructive={capture.action === "dismiss"}
+        body={<><p>{capture.eventIds.length} recorded changes across {capture.resourceIds.length} materials.</p>
+          <p>{capture.action === "dismiss" ? "Dismiss these captured changes from Inbox? Library materials, History, saved files and your baseline are kept." : "Only these captured changes will be updated. Later arrivals are excluded."}</p>
+          {status && <p role="alert">{status}</p>}</>}
+        confirmLabel={capture.done ? "Retry refresh" : capture.action === "dismiss" ? "Dismiss captured changes" : capture.action === "unread" ? "Mark captured changes unread" : "Mark captured changes read"}
+        onConfirm={() => mutate(capture)} />}
+    </div>
   );
 }
