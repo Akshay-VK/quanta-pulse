@@ -82,6 +82,7 @@ interface Capture {
   eventIds: number[];
   action: "read" | "unread" | "dismiss";
   done: boolean;
+  activity?: boolean;
 }
 
 const VIRTUAL_THRESHOLD = 200;
@@ -144,13 +145,27 @@ export default function CoursePage({
   onOpen,
   onPreview,
   onChanged,
+  activityEvents,
+  activityCourseId,
+  activityPending = false,
+  activityError,
+  activityScopeReady = false,
+  onActivityChanged,
   onSyncNow = () => {},
   details,
 }: CoursePageProps) {
   const items = useMemo(() => inventory?.filter(resource => resource.courseId === course.id) ?? null, [inventory, course.id]);
-  const [events, setEvents] = useState<ChangeEvent[] | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const activityMatchingCourse = activityCourseId === course.id;
+  const activityEventsList = activityMatchingCourse ? (activityEvents ?? []) : [];
+  const events = activityMatchingCourse ? (activityEvents ?? null) : null;
+  const activityGroups = useMemo(() => {
+    const byDay = groupEventsByDay(activityEventsList);
+    return [...byDay.entries()].sort((a, b) => b[0].localeCompare(a[0]));
+  }, [activityEventsList]);
+  const activityIds = useMemo(() => activityGroups.flatMap(([, group]) => group.map((event) => `change:${event.id}`)), [activityGroups]);
+  const activityScopeReadyEffective = activityMatchingCourse && Boolean(activityScopeReady) && !activityPending && !activityError && Array.isArray(activityEvents);
+  const loading = inventoryPending;
+  const loadError = activityMatchingCourse ? (activityError ?? null) : null;
   const [busy, setBusy] = useState(false);
   const [confirmRebaseline, setConfirmRebaseline] = useState(false);
 
@@ -167,27 +182,6 @@ export default function CoursePage({
   const [expanded, setExpanded] = useSessionValue<Set<string>>(`course:${course.id}:expanded`, new Set());
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [initialised, setInitialised] = useSessionValue(`course:${course.id}:initialised`, false);
-
-  const loadGeneration = useRef(0);
-  const load = useCallback(async () => {
-    const generation = ++loadGeneration.current;
-    setLoading(true);
-    setLoadError(null);
-    try {
-      const courseEvents = await api.eventsRange(undefined, undefined, course.id, 2000);
-      if (generation !== loadGeneration.current) return;
-      setEvents(courseEvents);
-    } catch (err) {
-      if (generation === loadGeneration.current) setLoadError(err instanceof Error ? err.message : String(err));
-    } finally {
-      if (generation === loadGeneration.current) setLoading(false);
-    }
-  }, [course.id]);
-
-  useEffect(() => {
-    void load();
-    return () => { ++loadGeneration.current; };
-  }, [load, inventory]);
 
   const unique = useMemo(() => dedupeCourseResources(items ?? []), [items]);
   const types = useMemo(() => typeOptions(unique), [unique]);
@@ -383,6 +377,11 @@ export default function CoursePage({
   });
   const restore = (id: string | null) => focusIdentity(
     latestNavigation.current.rows.some(row => row.id === id) ? id : latestNavigation.current.currentFocus);
+  const restoreActivity = (id: string | null) => {
+    const target = id && activityRows.current.has(id) ? id : activityFocusedId;
+    if (target) { setActivityFocusedId(target); activityRows.current.get(target)?.focus(); return true; }
+    return false;
+  };
   const inspect = (resource: Resource, origin: HTMLElement) => {
     const id = identity(resource);
     details?.selectResource(resource, origin, () => restore(id));
@@ -391,6 +390,21 @@ export default function CoursePage({
   const matching = searching ? searchResults : filtered;
   const matchingIds = useMemo(() => matching.map(identity), [matching]);
   useEffect(() => { setSelection(prev => prev.filter(id => matchingIds.includes(id))); }, [matchingIds]);
+  const [activitySelection, setActivitySelection] = useState<string[]>([]);
+  const [activityFocusedId, setActivityFocusedId] = useState<string | null>(null);
+  const activityRows = useRef(new Map<string, HTMLButtonElement>());
+  const activityPreviousIds = useRef<string[]>([]);
+  const activityOwnedFocus = useRef(false);
+  useEffect(() => { setActivitySelection(prev => prev.filter(id => activityIds.includes(id))); }, [activityIds]);
+  useEffect(() => {
+    const recovered = recoverFocusedId(activityPreviousIds.current, activityIds, activityFocusedId);
+    const owned = activityOwnedFocus.current && (document.activeElement === document.body || (document.activeElement instanceof HTMLElement && document.activeElement.matches(".row-select")));
+    activityPreviousIds.current = activityIds;
+    if (recovered !== activityFocusedId) {
+      setActivityFocusedId(recovered);
+      if (owned) (recovered ? activityRows.current.get(recovered) : null)?.focus();
+    }
+  }, [activityIds, activityFocusedId]);
   const [capture, setCapture] = useState<Capture | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [refreshWait, setRefreshWait] = useState<{ resolve: (error: string | null) => void } | null>(null);
@@ -402,6 +416,15 @@ export default function CoursePage({
   }, [refreshWait, inventoryError, inventoryPending]);
   const waitRef = useRef(refreshWait);
   waitRef.current = refreshWait;
+  const [activityRefreshWait, setActivityRefreshWait] = useState<{ resolve: (error: string | null) => void } | null>(null);
+  useEffect(() => {
+    if (activityRefreshWait && !activityPending) {
+      activityRefreshWait.resolve(activityError ?? null);
+      setActivityRefreshWait(null);
+    }
+  }, [activityRefreshWait, activityError, activityPending]);
+  const activityWaitRef = useRef(activityRefreshWait);
+  activityWaitRef.current = activityRefreshWait;
   const generation = useRef(0);
   const lock = useRef<number | null>(null);
   const context = JSON.stringify([course.id, folderPath, tab, search, type, category, sort]);
@@ -411,7 +434,7 @@ export default function CoursePage({
     setCapture(null);
     setStatus(null);
     setRefreshWait(null);
-    return () => { generation.current += 1; lock.current = null; pendingFocus.current = null; waitRef.current?.resolve(null); };
+    return () => { generation.current += 1; lock.current = null; pendingFocus.current = null; waitRef.current?.resolve(null); activityWaitRef.current?.resolve(null); };
   }, [context]);
   const typed = useRef({ text: "", at: 0 });
   const typeahead = useCallback(
@@ -464,6 +487,34 @@ export default function CoursePage({
       if (generation.current === token && lock.current === token) { lock.current = null; }
     }
   };
+  const mutateActivity = async (scope: Capture) => {
+    const token = scope.generation;
+    if (generation.current !== token || lock.current !== null) return;
+    lock.current = token;
+
+    setStatus(null);
+    try {
+      if (!scope.done) {
+        if (scope.action === "dismiss") await api.dismissInboxEvents(scope.eventIds);
+        else await api.setEventReadState(scope.eventIds, scope.action === "read");
+        scope.done = true;
+      }
+      if (generation.current !== token) return;
+      await onActivityChanged?.();
+      if (generation.current !== token) return;
+      const refreshError = await new Promise<string | null>(resolve => setActivityRefreshWait({ resolve }));
+      if (generation.current !== token) return;
+      if (refreshError) throw new Error(`Changes saved; inventory refresh failed: ${refreshError}`);
+      setStatus("Captured changes saved.");
+    } catch (error) {
+      if (generation.current !== token) return;
+      setStatus(`${scope.done ? "Changes saved; retry refresh only. " : ""}${String(error)}`);
+      throw error;
+    } finally {
+      if (generation.current === token && lock.current === token) { lock.current = null; }
+    }
+  };
+
   const beginCapture = async (targetIds: readonly string[], action: Capture["action"], confirm: boolean, policy: ListNavigationInput) => {
     if (lock.current !== null || capture) return;
     if (!inventory || inventoryPending || inventoryError) {
@@ -495,6 +546,37 @@ export default function CoursePage({
       if (generation.current === token && (lock.current === token || lock.current === null)) { lock.current = null; }
     }
   };
+  const beginActivityCapture = useCallback(async (targetIds: readonly (string | number)[], action: Capture["action"], confirm: boolean) => {
+    if (lock.current !== null || capture) return;
+    if (!activityScopeReadyEffective) {
+      setStatus(activityError ? "Activity refresh failed. Retry loading before changing events." : "Activity is refreshing. Wait before changing events.");
+      return;
+    }
+    const rowIds = targetIds.map((value) => (typeof value === "number" ? `change:${value}` : value));
+    const eventIds = [...new Set(rowIds.map((value) => Number(String(value).replace(/^change:/, ""))).filter((value) => Number.isSafeInteger(value) && value > 0))];
+    const matchingEvents = activityEventsList.filter((event) => eventIds.includes(event.id));
+    const eligibleEvents = matchingEvents.filter((event) => event.changeType !== "baseline");
+    const eligibleIds = [...new Set(eligibleEvents.map((event) => event.id))];
+    if (!eligibleIds.length) { setStatus("No eligible recorded changes in the captured scope."); return; }
+    const resourceIds = [...new Set(eligibleEvents.map((event) => event.resourceId).filter((value): value is number => typeof value === "number"))];
+    const token = ++generation.current;
+    lock.current = token;
+    setStatus("Capturing recorded changes…");
+    try {
+      const scope: Capture = { generation: token, resourceIds, eventIds: eligibleIds, action, done: false, activity: true };
+      lock.current = null;
+      if (confirm) { setStatus(null); setCapture(scope); }
+      else {
+        try { await mutateActivity(scope); }
+        catch { if (generation.current === token) setCapture(scope); }
+      }
+    } catch (error) {
+      if (generation.current === token) setStatus(`Could not capture changes: ${String(error)}. Try the shortcut again.`);
+    } finally {
+      if (generation.current === token && (lock.current === token || lock.current === null)) { lock.current = null; }
+    }
+  }, [activityScopeReadyEffective, activityError, activityEventsList, capture, mutateActivity]);
+
   const destinations = useMaterialActions({ onOpen, onPreview });
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
@@ -552,6 +634,68 @@ export default function CoursePage({
     }
   };
 
+  const onActivityKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    const rowControl = target?.closest<HTMLButtonElement>(".row-select");
+    const id = [...activityRows.current].find(([, node]) => node === rowControl)?.[0] ?? activityFocusedId;
+    const eligible = (ids: readonly string[]) => {
+      const matching = new Set(ids);
+      return activityEventsList
+        .filter((eventItem) => matching.has(`change:${eventItem.id}`) && Number.isSafeInteger(eventItem.id) && eventItem.id > 0 && eventItem.changeType !== "baseline")
+        .map((eventItem) => eventItem.id);
+    };
+    const input: ListNavigationInput = {
+      ids: activityIds,
+      focusedId: id,
+      inspectedId: details?.selected?.kind === "change" ? `change:${details.selected.change.id}` : null,
+      selectedIds: activitySelection,
+      key: event.key,
+      activeSurface: tab === "activity" && Boolean(rowControl),
+      editableTarget: Boolean(target?.closest("input, textarea, select, [contenteditable]:not([contenteditable=\"false\"])")),
+      nestedControl: !rowControl,
+      modalOpen: modalOpen() || capture !== null,
+      isComposing: event.nativeEvent.isComposing,
+      imeKeyCode229: event.keyCode === 229,
+      repeat: event.repeat,
+      defaultPrevented: event.defaultPrevented,
+      shiftKey: event.shiftKey,
+      ctrlKey: event.ctrlKey,
+      altKey: event.altKey,
+      metaKey: event.metaKey,
+      completeEventIds: eligible(activityIds),
+    };
+    if (target?.closest("input, textarea, select, [contenteditable]:not([contenteditable=\"false\"])")) return;
+    const intent = getListNavigationIntent(input);
+    if (!intent) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (intent.type === "focus") {
+      setActivityFocusedId(intent.id);
+      activityRows.current.get(intent.id)?.focus();
+      return;
+    }
+    if (intent.type === "toggleSelection") {
+      setActivitySelection((prev) => (prev.includes(intent.id) ? prev.filter((value) => value !== intent.id) : [...prev, intent.id]));
+      return;
+    }
+    if (intent.type === "inspect" || intent.type === "preview") {
+      const recorded = activityEventsList.find((item) => `change:${item.id}` === intent.id);
+      if (!recorded) return;
+      const currentResource = unique.find((resource) => resource.id === recorded.resourceId) ?? null;
+      if (intent.type === "preview") {
+        destinations?.(currentResource, recorded).find((action) => action.id === "preview")?.onSelect?.();
+      } else {
+        const origin = activityRows.current.get(intent.id);
+        if (origin) details?.selectChange(recorded, origin, currentResource, () => restoreActivity(intent.id));
+      }
+      return;
+    }
+    if (!activityScopeReadyEffective || activityPending || activityError || capture || lock.current !== null || !onActivityChanged) return;
+    if (intent.type === "openCapturedScope") void beginActivityCapture(activityIds, "read", true);
+    else if (intent.type === "setReadState") void beginActivityCapture(intent.ids, intent.isRead ? "read" : "unread", false);
+    else if (intent.type === "confirmDelete") void beginActivityCapture(intent.ids, "dismiss", true);
+  };
+
   const paused = course.monitoringStatus === "paused";
   const home = courseHomeUrl(course);
   const label = courseLabel(course.id);
@@ -568,10 +712,6 @@ export default function CoursePage({
     return latest;
   }, [events]);
 
-  const activityGroups = useMemo(() => {
-    const byDay = groupEventsByDay(events ?? []);
-    return [...byDay.entries()].sort((a, b) => b[0].localeCompare(a[0]));
-  }, [events]);
 
   async function toggleMonitoring() {
     setBusy(true);
@@ -793,7 +933,7 @@ export default function CoursePage({
       )}
       {tab === "contents" && <span role="status">{selection.length} {selection.length === 1 ? "material" : "materials"} selected</span>}
       {loadError && (
-        <Banner kind="error" action={{ label: "Retry", onClick: () => void load() }}>
+        <Banner kind="error" action={{ label: "Retry", onClick: () => void (onActivityChanged?.() ?? onChanged()) }}>
           {loadError}
         </Banner>
       )}
@@ -890,41 +1030,54 @@ export default function CoursePage({
           body="Changes for this course appear here once a scan finds them."
         />
       ) : (
-        activityGroups.map(([key, group]) => (
-          <div key={key}>
-            <GroupHeader label={longDayLabel(key)} count={group.length} />
-            {group.map((event) => {
-              const meta = eventKindMeta(event.changeType);
-              const currentResource = unique.find((resource) => resource.id === event.resourceId) ?? null;
-              return (
-                <ResourceRow
-                  resource={currentResource}
-                  recorded={event}
-                  key={event.id}
-                  title={event.resourceTitle ?? event.title}
-                  type={event.resourceType}
-                  courseId={event.courseId}
-                  courseCode={courseTitle(event.courseId, event.courseName)}
-                  courseName={event.courseName}
-                  unread={false}
-                  selected={details?.selected?.kind === "change" && details.selected.change.id === event.id}
-                  unavailable={event.changeType === "unavailable"}
-                  status={{ kind: STATUS_KIND[event.changeType] ?? "new", label: meta.label }}
-                  timeLabel={formatTimeOfDay(event.detectedAt)}
-                  onSelect={(origin) => details?.selectChange(event, origin, currentResource)}
-                  local={currentResource && !currentResource.isExternal ? mirror?.statusOf(currentResource.id) : undefined}
-                  menu={[]}
-                />
-              );
-            })}
-          </div>
-        ))
+        <div
+          className="activity-list"
+          onKeyDown={onActivityKeyDown}
+          onFocusCapture={(event) => { activityOwnedFocus.current = event.target instanceof HTMLElement && event.target.matches(".row-select"); }}
+          onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) activityOwnedFocus.current = false; }}
+        >
+          {activityGroups.map(([key, group]) => (
+            <div key={key}>
+              <GroupHeader label={longDayLabel(key)} count={group.length} />
+              {group.map((event) => {
+                const meta = eventKindMeta(event.changeType);
+                const currentResource = unique.find((resource) => resource.id === event.resourceId) ?? null;
+                const identityId = `change:${event.id}`;
+                return (
+                  <ResourceRow
+                    resource={currentResource}
+                    recorded={event}
+                    key={event.id}
+                    title={event.resourceTitle ?? event.title}
+                    type={event.resourceType}
+                    courseId={event.courseId}
+                    courseCode={courseTitle(event.courseId, event.courseName)}
+                    courseName={event.courseName}
+                    unread={false}
+                    selected={details?.selected?.kind === "change" && details.selected.change.id === event.id}
+                    unavailable={event.changeType === "unavailable"}
+                    status={{ kind: STATUS_KIND[event.changeType] ?? "new", label: meta.label }}
+                    timeLabel={formatTimeOfDay(event.detectedAt)}
+                    onSelect={(origin) => details?.selectChange(event, origin, currentResource, () => restoreActivity(identityId))}
+                    local={currentResource && !currentResource.isExternal ? mirror?.statusOf(currentResource.id) : undefined}
+                    menu={[]}
+                    keyboardFocused={activityFocusedId === identityId}
+                    multiSelected={activitySelection.includes(identityId)}
+                    tabStop={activityFocusedId === identityId || (!activityFocusedId && activityIds[0] === identityId)}
+                    selectRef={(node) => { if (node) activityRows.current.set(identityId, node); else activityRows.current.delete(identityId); }}
+                    onKeyboardFocus={() => setActivityFocusedId(identityId)}
+                  />
+                );
+              })}
+            </div>
+          ))}
+        </div>
       )}
 
       {capture && <ConfirmDialog key={capture.generation} open onOpenChange={open => {
         if (!open && generation.current === capture.generation && lock.current === null) {
           setCapture(null); setStatus(null);
-          requestAnimationFrame(() => { if (generation.current === capture.generation && !modalOpen()) restore(latestNavigation.current.currentFocus); });
+          requestAnimationFrame(() => { if (generation.current === capture.generation && !modalOpen()) { if (capture.activity) restoreActivity(activityFocusedId); else restore(latestNavigation.current.currentFocus); } });
         }
       }} title={capture.action === "dismiss" ? "Dismiss captured Inbox changes?" : capture.action === "unread" ? "Mark captured changes unread?" : "Mark captured changes read?"}
         destructive={capture.action === "dismiss"}
@@ -932,7 +1085,7 @@ export default function CoursePage({
           <p>{capture.action === "dismiss" ? "Dismiss these captured changes from Inbox? Library materials, History, saved files and your baseline are kept." : "Only these captured changes will be updated. Later arrivals are excluded."}</p>
           {status && <p role="alert">{status}</p>}</>}
         confirmLabel={capture.done ? "Retry refresh" : capture.action === "dismiss" ? "Dismiss captured changes" : capture.action === "unread" ? "Mark captured changes unread" : "Mark captured changes read"}
-        onConfirm={() => mutate(capture)} />}
+        onConfirm={() => (capture.activity ? mutateActivity(capture) : mutate(capture))} />}
 
       <ConfirmDialog
         open={confirmRebaseline}
