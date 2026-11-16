@@ -71,6 +71,7 @@ pub fn run() {
             commands::list_history_scans,
             commands::query_history_scans,
             commands::snapshot_resource_unread_event_ids,
+            commands::snapshot_resource_event_ids,
             commands::scan_details,
             commands::sync_now,
             commands::cancel_sync,

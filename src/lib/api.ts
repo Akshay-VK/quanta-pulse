@@ -96,6 +96,8 @@ export const api = {
     invoke<ScanPage>("query_history_scans", { filter }),
   snapshotResourceUnreadEventIds: (resourceId: number) =>
     invoke<number[]>("snapshot_resource_unread_event_ids", { resourceId }),
+  snapshotResourceEventIds: (resourceIds: number[]) =>
+    invoke<number[]>("snapshot_resource_event_ids", { resourceIds }),
   eventsRange: (from?: string, to?: string, courseId?: number, limit = 2000) =>
     invoke<ChangeEvent[]>("events_range", {
       from: from ?? null,

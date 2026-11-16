@@ -151,7 +151,7 @@
   {
     "id": "04C",
     "title": "Serialized list keyboard and collapse integration",
-    "deps": "04C1",
+    "deps": "04C0,04C1",
     "spec": "3, 4, 6",
     "files": [
       "src/App.tsx",
@@ -169,6 +169,29 @@
       "tests/appInteractions.test.tsx"
     ],
     "accept": "Coordinator dispatches surface-sized child leases after policy acceptance. Wire existing App-owned intents without read-on-inspect change until I01. Prove focus distinct from inspected and multi-selected state, all task04 keys, captured scope, section/time collapse, virtualization/filter/overlay restoration, and editable/modal suppression. Do not accept umbrella before wiring passes. Inbox child 04C1 alone is insufficient: Agenda, Library/Course, History and collapse/focus requirements remain explicit pending surface dispatches."
+  },
+  {
+    "id": "04C0",
+    "title": "Complete resource event snapshot API",
+    "deps": "B05A,B07B",
+    "spec": "4, 7",
+    "files": [
+      "src-tauri/src/attention.rs",
+      "src-tauri/src/attention_tests.rs",
+      "src-tauri/src/commands.rs",
+      "src-tauri/src/lib.rs",
+      "src/lib/api.ts",
+      "tests/resourceEventSnapshot-api.test.ts",
+      "docs/research/redesign/implementation-plan/tasks/04C0.md",
+      "docs/research/redesign/implementation-plan/task-index.json",
+      "docs/research/redesign/implementation-plan/README.md",
+      "docs/research/redesign/implementation-plan/contracts/04C0-handoff.md"
+    ],
+    "tests": [
+      "tests/resourceEventSnapshot-api.test.ts",
+      "focused Rust attention tests"
+    ],
+    "accept": "Expose api.snapshotResourceEventIds(resourceIds: number[]): Promise<number[]> through snapshot_resource_event_ids with camelCase resourceIds. Return complete stable ascending unique eligible event IDs for exactly the selected resources, including read and unread events while excluding baseline and calendar-suppressed events; ignore History clear watermark and Inbox dismissal. Reject nonpositive resource IDs; duplicates are harmless; empty selection returns empty. Handle selections beyond SQLite bind limits without caps. Membership is frozen at query time and does not mutate state. Preserve snapshotResourceUnreadEventIds unchanged. Prove >1,000 resources, >legacy caps, eligibility, isolation, validation, ordering and unchanged DB/read state. No UI integration."
   },
   {
     "id": "04C1",

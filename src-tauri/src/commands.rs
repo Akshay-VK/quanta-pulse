@@ -240,6 +240,15 @@ pub fn snapshot_resource_unread_event_ids(
     crate::attention::snapshot_resource_unread_event_ids(&state.conn(), resource_id)
 }
 
+/// Capture all eligible event IDs associated with the selected resources.
+#[tauri::command]
+pub fn snapshot_resource_event_ids(
+    state: State<AppState>,
+    resource_ids: Vec<i64>,
+) -> Result<Vec<i64>, String> {
+    crate::attention::snapshot_resource_event_ids(&state.conn(), &resource_ids)
+}
+
 /// Fetch observed per-course diagnostics for one scan; legacy scans return none.
 #[tauri::command]
 pub fn scan_details(

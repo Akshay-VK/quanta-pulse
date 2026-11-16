@@ -153,6 +153,80 @@ fn resource_unread_snapshot_is_complete_and_independent_of_inbox_and_history_vis
         vec![1_207]
     );
 }
+
+#[test]
+fn resource_event_snapshot_captures_complete_eligible_membership_for_many_resources() {
+    let (_dir, conn) = fixture();
+    for resource_id in 1..=1_005 {
+        resource(&conn, resource_id, 1, None);
+    }
+    for id in 1..=1_205 {
+        event(&conn, id, Some(1), "new");
+    }
+    event(&conn, 1_206, Some(1), "new");
+    event(&conn, 1_207, Some(2), "new");
+    event(&conn, 1_208, Some(1), "baseline");
+    event(&conn, 1_209, Some(1_005), "updated");
+    set_event_read_state(&conn, &[1, 1_209], true, "2026-11-14T13:00:00Z").unwrap();
+    dismiss_inbox(&conn, &[2], "2026-11-14T13:00:00Z").unwrap();
+    conn.execute(
+        "UPDATE change_events SET calendar_suppressed=1 WHERE id=3",
+        [],
+    )
+    .unwrap();
+    db::clear_history_activity(&conn).unwrap();
+
+    let mut selected_resource_ids = (1..=1_005).collect::<Vec<_>>();
+    selected_resource_ids.extend([1, 1]);
+    let ids = snapshot_resource_event_ids(&conn, &selected_resource_ids).unwrap();
+    assert_eq!(ids.len(), 1_207);
+    assert_eq!(ids.first(), Some(&1));
+    assert_eq!(
+        ids.get(1),
+        Some(&2),
+        "dismissal does not acknowledge events"
+    );
+    assert_eq!(ids.last(), Some(&1_209));
+    assert!(!ids.contains(&3), "suppressed events are excluded");
+    assert!(!ids.contains(&1_208), "baseline events are excluded");
+    assert!(ids.contains(&1_207));
+    assert_eq!(
+        snapshot_resource_event_ids(&conn, &[1, 1_005])
+            .unwrap()
+            .len(),
+        1_206,
+        "resources outside this narrower selection are excluded"
+    );
+    assert_eq!(
+        snapshot_resource_event_ids(&conn, &[2]).unwrap(),
+        vec![1_207]
+    );
+    event(&conn, 1_210, Some(1), "new");
+    assert!(!ids.contains(&1_210), "later arrivals stay outside the captured IDs");
+    assert_eq!(
+        snapshot_resource_event_ids(&conn, &[]).unwrap(),
+        Vec::<i64>::new()
+    );
+    assert!(snapshot_resource_event_ids(&conn, &[1, 0]).is_err());
+    assert!(snapshot_resource_event_ids(&conn, &[-1]).is_err());
+
+    let read_at: Option<String> = conn
+        .query_row("SELECT read_at FROM change_events WHERE id=1", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(read_at.as_deref(), Some("2026-11-14T13:00:00Z"));
+    let event_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM change_events", [], |row| row.get(0))
+        .unwrap();
+    let dismissal_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM inbox_dismissals", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(event_count, 1_210);
+    assert_eq!(dismissal_count, 1);
+}
 #[test]
 fn state_is_idempotent_validated_and_atomic() {
     let (_dir, conn) = fixture();

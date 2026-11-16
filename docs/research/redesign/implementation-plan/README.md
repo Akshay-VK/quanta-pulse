@@ -87,4 +87,6 @@ Settings packets are deliberately sequential even where operations are independe
 
 On 2026-11-16, task 04 was split into 04A visual geometry, 04B pure keyboard policy, and 04C serialized surface integration. Dependencies remain on umbrella 04; I01 stays downstream, avoiding a keyboard/read-on-inspect integration cycle. The original 98 screen ownership rows are unchanged.
 
+On 2026-11-16, the resource action membership gap was split into prerequisite 04C0 under 04C. It adds a complete, uncapped API snapshot for selected resource event IDs, independent of read state, Inbox dismissal and History clear watermarks, while excluding baseline and calendar-suppressed events. 04C remains dependent on both 04C0 and 04C1; all original 98 screen owners remain unchanged.
+
 On 2026-11-16, B07 was split into core B07A and API B07B; 04C’s first surface packet is 04C1 Inbox. The coordinator validated 46 acyclic packets with all 98 unique screen assignments unchanged. B07A depends on plan tasks 00 and B02 (GitHub issues #15 and #18), not final validation task18. Later 04C surfaces remain required before umbrella acceptance.

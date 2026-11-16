@@ -181,6 +181,36 @@ pub fn snapshot_resource_unread_event_ids(
         .map_err(|error| error.to_string())?;
     Ok(ids)
 }
+/// Capture all eligible event IDs for a set of resources, independent of
+/// read state, Inbox dismissal, and History's clear watermark.
+pub fn snapshot_resource_event_ids(
+    conn: &Connection,
+    resource_ids: &[i64],
+) -> Result<Vec<i64>, String> {
+    if resource_ids.iter().any(|id| *id <= 0) {
+        return Err("resourceIds must contain positive integers".into());
+    }
+    let unique_ids: BTreeSet<_> = resource_ids.iter().copied().collect();
+    let mut event_ids = BTreeSet::new();
+    for chunk in unique_ids.into_iter().collect::<Vec<_>>().chunks(500) {
+        let placeholders = (1..=chunk.len())
+            .map(|index| format!("?{index}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!(
+            "SELECT id FROM change_events WHERE resource_id IN ({placeholders})\
+             AND change_type <> 'baseline' AND calendar_suppressed=0 ORDER BY id"
+        );
+        let mut statement = conn.prepare(&sql).map_err(|error| error.to_string())?;
+        let rows = statement
+            .query_map(rusqlite::params_from_iter(chunk.iter()), |row| row.get(0))
+            .map_err(|error| error.to_string())?;
+        for id in rows {
+            event_ids.insert(id.map_err(|error| error.to_string())?);
+        }
+    }
+    Ok(event_ids.into_iter().collect())
+}
 fn validate_ids(ids: &[i64]) -> Result<(), String> {
     if ids.iter().any(|id| *id <= 0) {
         return Err("eventIds must contain positive integers".into());
