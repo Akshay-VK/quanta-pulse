@@ -36,7 +36,7 @@ interface DataTableProps<T> {
   sessionKey?: string;
 }
 
-const ROW_H = 40;
+const ROW_H = 34;
 const VIRTUAL_THRESHOLD = 200;
 const OVERSCAN = 8;
 

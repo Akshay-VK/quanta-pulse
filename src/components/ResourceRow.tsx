@@ -61,6 +61,7 @@ export default function ResourceRow({
   courseId,
   courseCode,
   courseName,
+  sectionLabel,
   unread,
   selected,
   unavailable,
@@ -86,6 +87,8 @@ export default function ResourceRow({
   courseId: number | null;
   courseCode?: string | null;
   courseName?: string | null;
+  /** Optional mono section label, shown between the course and time slots. */
+  sectionLabel?: string | null;
   unread: boolean;
   selected: boolean;
   unavailable: boolean;
@@ -151,6 +154,7 @@ export default function ResourceRow({
           inside a button is invalid and fails the a11y check. */}
       {(courseCode || status) && (
         <span className="row-meta">
+          {status && <StatusTag kind={status.kind} label={status.label} />}
           {courseCode && (
             <CoursePill
               courseId={courseId}
@@ -159,9 +163,10 @@ export default function ResourceRow({
               onOpen={onCourse}
             />
           )}
-          {status && <StatusTag kind={status.kind} label={status.label} />}
         </span>
       )}
+
+      {sectionLabel && <span className="row-section">{sectionLabel}</span>}
 
       {local && (
         <span className="row-mirror" title={mirrorTip(local) ?? undefined}>
@@ -169,7 +174,7 @@ export default function ResourceRow({
         </span>
       )}
 
-      <span className="row-time">{timeLabel}</span>
+      <span className="row-time" title={timeLabel}>{timeLabel}</span>
 
       <span className="row-actions">
         {actions ? <MaterialButtons actions={actions} menu={menu} /> : <>
