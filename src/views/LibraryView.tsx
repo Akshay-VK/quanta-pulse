@@ -1,10 +1,11 @@
 import { useSessionScroll, useSessionValue } from "../hooks/useSessionViews";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCourseActivity } from "../hooks/useCourseActivity";
 import PageHeader from "../components/PageHeader";
 import PreviewDialog from "../components/PreviewDialog";
 import { SearchField } from "../components/ui/SearchField";
 import { ToggleGroup } from "../components/ui/ToggleGroup";
-import type { Course, Resource } from "../lib/types";
+import type { ChangeEvent, Course, Resource } from "../lib/types";
 import type { DetailsAdapter } from "../lib/details";
 import { Banner } from "../components/ui/Banner";
 import { Skeleton } from "../components/ui/Skeleton";
@@ -22,6 +23,13 @@ export interface LibraryViewProps {
   /** The one navigation entry point: a course (or null for the list). */
   onNavigate: (courseId: number | null, folderPath?: string[] | null) => void;
   onChanged: () => void | Promise<void>;
+  /** Independent complete course Activity publication; owner may be retained. */
+  activityEvents?: ChangeEvent[];
+  activityCourseId?: number;
+  activityPending?: boolean;
+  activityError?: string | null;
+  activityScopeReady?: boolean;
+  onActivityChanged?: () => Promise<void>;
   onOpen: (url: string) => void;
   /** Empty-state "Sync now" buttons; wired to the app's sync action. */
   onSyncNow?: () => void;
@@ -48,6 +56,7 @@ export default function LibraryView({
   folderPath,
   onNavigate,
   onChanged,
+  onActivityChanged,
   onOpen,
   onSyncNow,
   unreadByCourse,
@@ -77,6 +86,13 @@ export default function LibraryView({
     }
   }, [initialSearch, searchRequest, appliedSearch, setAppliedSearch, setSearch, setTab]);
   const [previewResource, setPreviewResource] = useState<Resource | null>(null);
+  const activity = useCourseActivity(courseId);
+  const { refresh: refreshActivityPublication, ...activityPublication } = activity;
+  // A mutation retry must refresh the Activity publication and App collections
+  // together; failure of either rejects so the view never claims success.
+  const handleActivityChanged = useCallback(async () => {
+    await Promise.all([refreshActivityPublication(), onActivityChanged?.()]);
+  }, [refreshActivityPublication, onActivityChanged]);
 
   const course = courseId == null ? null : courses.find((c) => c.id === courseId) ?? null;
 
@@ -97,6 +113,12 @@ export default function LibraryView({
           onOpen={onOpen}
           onPreview={setPreviewResource}
           onChanged={onChanged}
+          activityEvents={activityPublication.items}
+          activityCourseId={activityPublication.courseId}
+          activityPending={activityPublication.pending}
+          activityError={activityPublication.error}
+          activityScopeReady={activityPublication.scopeReady}
+          onActivityChanged={handleActivityChanged}
           onSyncNow={onSyncNow}
           details={details}
         />

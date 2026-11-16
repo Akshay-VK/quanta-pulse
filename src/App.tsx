@@ -901,6 +901,7 @@ function AppShell() {
                     error={loadError}
                     onRetry={() => void refresh()}
                     onChanged={refresh}
+                    onActivityChanged={() => refresh(true)}
                     onOpen={(url) => void open(url)}
                     initialSearch={librarySearch}
                     initialSearchKey={librarySearchRequest}

@@ -63,6 +63,13 @@ interface CoursePageProps {
   onOpen: (url: string) => void;
   onPreview: (resource: Resource) => void;
   onChanged: () => void | Promise<void>;
+  /** Independent complete course Activity publication; owner may be retained. */
+  activityEvents?: ChangeEvent[];
+  activityCourseId?: number;
+  activityPending?: boolean;
+  activityError?: string | null;
+  activityScopeReady?: boolean;
+  onActivityChanged?: () => Promise<void>;
   onSyncNow?: () => void;
   details?: DetailsAdapter;
 }
