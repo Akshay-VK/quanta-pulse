@@ -201,20 +201,153 @@ pub fn events_range(
     to: Option<String>,
     course_id: Option<i64>,
     limit: Option<i64>,
+    offset: Option<i64>,
 ) -> Result<Vec<ChangeEvent>, String> {
     let conn = state.conn();
-    let (since, until) = local_date_range(from.as_deref(), to.as_deref())?;
     db::list_events_filtered(
         &conn,
-        &EventFilter {
-            course_id,
-            since,
-            until,
-            limit: Some(limit.unwrap_or(2000).clamp(1, 5000)),
-            ..EventFilter::default()
-        },
+        &events_range_filter(from.as_deref(), to.as_deref(), course_id, limit, offset)?,
     )
     .map_err(|e| e.to_string())
+}
+
+/// Preserve calendar membership while normalizing the existing range query.
+fn events_range_filter(
+    from: Option<&str>,
+    to: Option<&str>,
+    course_id: Option<i64>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Result<EventFilter, String> {
+    let (since, until) = local_date_range(from, to)?;
+    Ok(EventFilter {
+        course_id,
+        since,
+        until,
+        limit: Some(limit.unwrap_or(2000).clamp(1, 5000)),
+        offset: Some(offset.unwrap_or(0).max(0)),
+        ..EventFilter::default()
+    })
+}
+
+#[cfg(test)]
+mod events_range_tests {
+    use super::*;
+
+    #[test]
+    fn events_range_normalizes_defaults_offsets_and_limits() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        db::migrate(&conn).unwrap();
+        let tx = conn.unchecked_transaction().unwrap();
+        for id in 1..=6001 {
+            db::insert_event(
+                &tx,
+                None,
+                None,
+                "new",
+                "event",
+                None,
+                &format!("range-{id}"),
+                "2026-11-16T10:00:00Z",
+            )
+            .unwrap();
+        }
+        tx.commit().unwrap();
+        for (limit, expected) in [
+            (None, 2000),
+            (Some(0), 1),
+            (Some(-1), 1),
+            (Some(5000), 5000),
+            (Some(9000), 5000),
+            (Some(123), 123),
+        ] {
+            for offset in [None, Some(0), Some(-10)] {
+                let filter = events_range_filter(None, None, None, limit, offset).unwrap();
+                assert_eq!(filter.offset, Some(0));
+                let page = db::list_events_filtered(&conn, &filter).unwrap();
+                assert_eq!(page.len(), expected);
+            }
+        }
+        let filter = events_range_filter(None, None, None, Some(2000), Some(6000)).unwrap();
+        let page = db::list_events_filtered(&conn, &filter).unwrap();
+        assert_eq!(page.len(), 1);
+        assert_eq!(page[0].id, 1);
+        let filter = events_range_filter(None, None, None, None, Some(6001)).unwrap();
+        assert!(db::list_events_filtered(&conn, &filter).unwrap().is_empty());
+        // The shared DB default stays 500, independent of the command's 2000.
+        assert_eq!(
+            db::list_events_filtered(&conn, &EventFilter::default())
+                .unwrap()
+                .len(),
+            500
+        );
+    }
+
+    #[test]
+    fn events_range_local_dates_are_half_open_and_errors_unchanged() {
+        use chrono::{TimeZone, Timelike};
+        let filter = events_range_filter(
+            Some("2026-11-16"),
+            Some("2026-11-16"),
+            Some(7),
+            None,
+            Some(1),
+        )
+        .unwrap();
+        let since = chrono::DateTime::parse_from_rfc3339(filter.since.as_deref().unwrap()).unwrap();
+        let until = chrono::DateTime::parse_from_rfc3339(filter.until.as_deref().unwrap()).unwrap();
+        assert_eq!(
+            since.with_timezone(&chrono::Local).date_naive().to_string(),
+            "2026-11-16"
+        );
+        assert_eq!(
+            until.with_timezone(&chrono::Local).date_naive().to_string(),
+            "2026-11-17"
+        );
+        assert_eq!(since.with_timezone(&chrono::Local).hour(), 0);
+        assert_eq!(until.with_timezone(&chrono::Local).hour(), 0);
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        db::migrate(&conn).unwrap();
+        let before = (since - chrono::Duration::seconds(1))
+            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        for (id, time, course) in [
+            (1, before.as_str(), 7),
+            (2, filter.since.as_deref().unwrap(), 7),
+            (3, filter.since.as_deref().unwrap(), 7),
+            (4, filter.until.as_deref().unwrap(), 7),
+            (5, filter.since.as_deref().unwrap(), 8),
+        ] {
+            db::insert_event(
+                &conn,
+                None,
+                Some(course),
+                "new",
+                "boundary",
+                None,
+                &format!("boundary-{id}"),
+                time,
+            )
+            .unwrap();
+        }
+        let page = db::list_events_filtered(&conn, &filter).unwrap();
+        assert_eq!(page.iter().map(|e| e.id).collect::<Vec<_>>(), vec![2]);
+        for (from, to) in [(Some("invalid"), None), (None, Some("2026-02-30"))] {
+            assert_eq!(
+                events_range_filter(from, to, None, None, None).unwrap_err(),
+                "Invalid date (expected YYYY-MM-DD)."
+            );
+        }
+        let open = events_range_filter(Some(" "), None, None, None, None).unwrap();
+        assert!(open.since.is_none() && open.until.is_none());
+        // Assert conversion independently using the host local timezone.
+        let expected = chrono::Local
+            .with_ymd_and_hms(2026, 11, 16, 0, 0, 0)
+            .earliest()
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        assert_eq!(filter.since.as_deref(), Some(expected.as_str()));
+    }
 }
 
 #[tauri::command]

@@ -1171,7 +1171,7 @@ pub fn list_events_filtered(
     if f.unread_only {
         sql.push_str(" AND e.read_at IS NULL");
     }
-    sql.push_str(" ORDER BY e.detected_at DESC LIMIT :limit OFFSET :offset");
+    sql.push_str(" ORDER BY e.detected_at DESC, e.id DESC LIMIT :limit OFFSET :offset");
     binds.push((":limit", &limit));
     binds.push((":offset", &offset));
 
@@ -2076,6 +2076,194 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         migrate(&conn).unwrap();
         conn
+    }
+
+    #[test]
+    fn events_range_fixed_data_pages_have_no_gaps_and_stable_raw_ties() {
+        // Exact multiples must request an empty terminal page, not stop early.
+        for (count, page_size) in [(4000, 2000), (10000, 5000), (6001, 2000), (6001, 5000)] {
+            let conn = mem();
+            let tx = conn.unchecked_transaction().unwrap();
+            for id in 1..=count {
+                insert_event(
+                    &tx,
+                    None,
+                    Some(7),
+                    "new",
+                    "tied",
+                    None,
+                    &format!("paging-{id}"),
+                    "2026-11-16T10:00:00Z",
+                )
+                .unwrap();
+            }
+            tx.commit().unwrap();
+            let mut ids = Vec::new();
+            let mut lengths = Vec::new();
+            loop {
+                let page = list_events_filtered(
+                    &conn,
+                    &EventFilter {
+                        course_id: Some(7),
+                        limit: Some(page_size),
+                        offset: Some(ids.len() as i64),
+                        ..EventFilter::default()
+                    },
+                )
+                .unwrap();
+                lengths.push(page.len());
+                ids.extend(page.iter().map(|event| event.id));
+                if page.len() < page_size as usize {
+                    break;
+                }
+            }
+            assert_eq!(ids, (1..=count).rev().collect::<Vec<_>>());
+            assert_eq!(
+                ids.iter().collect::<std::collections::HashSet<_>>().len(),
+                count as usize
+            );
+            assert_eq!(*lengths.last().unwrap(), (count % page_size) as usize);
+            assert_eq!(lengths.len(), (count / page_size + 1) as usize);
+        }
+    }
+
+    #[test]
+    fn events_range_membership_and_shared_filters_remain_unchanged() {
+        let conn = mem();
+        let since = "2026-11-16T00:00:00Z";
+        let until = "2026-11-17T00:00:00Z";
+        for (id, course, kind, time) in [
+            (1, 7, "baseline", since),
+            (2, 7, "updated", since),
+            (3, 7, "new", since),
+            (4, 7, "new", since),
+            (5, 7, "new", until),
+            (6, 8, "new", since),
+            (7, 7, "new", "2026-11-15T23:59:59Z"),
+            (8, 7, "new", since),
+        ] {
+            insert_event(
+                &conn,
+                None,
+                Some(course),
+                kind,
+                "orphan",
+                None,
+                &format!("member-{id}"),
+                time,
+            )
+            .unwrap();
+        }
+        mark_read(&conn, &[2], since).unwrap();
+        conn.execute("INSERT INTO inbox_dismissals VALUES (3, ?1)", [since])
+            .unwrap();
+        conn.execute(
+            "UPDATE change_events SET calendar_suppressed=1 WHERE id=4",
+            [],
+        )
+        .unwrap();
+        conn.execute("DELETE FROM change_events WHERE id=8", [])
+            .unwrap();
+        clear_history_activity(&conn).unwrap();
+        clear_dashboard_activity(&conn).unwrap();
+        let filter = EventFilter {
+            course_id: Some(7),
+            since: Some(since.into()),
+            until: Some(until.into()),
+            ..EventFilter::default()
+        };
+        let ids = |rows: Vec<ChangeEvent>| rows.into_iter().map(|e| e.id).collect::<Vec<_>>();
+        assert_eq!(
+            ids(list_events_filtered(&conn, &filter).unwrap()),
+            vec![3, 2, 1]
+        );
+        assert_eq!(
+            ids(list_events_filtered(
+                &conn,
+                &EventFilter {
+                    unread_only: true,
+                    ..filter.clone()
+                }
+            )
+            .unwrap()),
+            vec![3, 1]
+        );
+        assert_eq!(
+            ids(list_events_filtered(
+                &conn,
+                &EventFilter {
+                    change_type: Some(" updated ".into()),
+                    ..filter.clone()
+                }
+            )
+            .unwrap()),
+            vec![2]
+        );
+        assert_eq!(
+            ids(list_events_filtered(
+                &conn,
+                &EventFilter {
+                    offset: Some(1),
+                    limit: Some(1),
+                    ..filter.clone()
+                }
+            )
+            .unwrap()),
+            vec![2]
+        );
+        for offset in [None, Some(0), Some(-3)] {
+            assert_eq!(
+                ids(list_events_filtered(
+                    &conn,
+                    &EventFilter {
+                        offset,
+                        ..filter.clone()
+                    }
+                )
+                .unwrap()),
+                vec![3, 2, 1]
+            );
+        }
+        assert_eq!(
+            ids(list_events(&conn, true, 100).unwrap()),
+            vec![5, 6, 3, 1, 7]
+        );
+        assert_eq!(list_events(&conn, false, 100).unwrap().len(), 6);
+        // Keep raw lexical timestamp order, even when parsed-instant order differs.
+        insert_event(
+            &conn,
+            None,
+            Some(9),
+            "new",
+            "fractional",
+            None,
+            "fractional",
+            "2026-11-16T10:00:00.900Z",
+        )
+        .unwrap();
+        insert_event(
+            &conn,
+            None,
+            Some(9),
+            "new",
+            "whole",
+            None,
+            "whole",
+            "2026-11-16T10:00:00Z",
+        )
+        .unwrap();
+        let raw = list_events_filtered(
+            &conn,
+            &EventFilter {
+                course_id: Some(9),
+                ..EventFilter::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            raw.iter().map(|e| e.title.as_str()).collect::<Vec<_>>(),
+            vec!["whole", "fractional"]
+        );
     }
 
     #[test]

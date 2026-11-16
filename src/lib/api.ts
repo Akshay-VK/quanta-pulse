@@ -100,12 +100,13 @@ export const api = {
     invoke<number[]>("snapshot_resource_unread_event_ids", { resourceId }),
   snapshotResourceEventIds: (resourceIds: number[]) =>
     invoke<number[]>("snapshot_resource_event_ids", { resourceIds }),
-  eventsRange: (from?: string, to?: string, courseId?: number, limit = 2000) =>
+  eventsRange: (from?: string, to?: string, courseId?: number, limit = 2000, offset = 0) =>
     invoke<ChangeEvent[]>("events_range", {
       from: from ?? null,
       to: to ?? null,
       courseId: courseId ?? null,
       limit,
+      offset,
     }),
   listScans: (limit = 50) => invoke<ScanRun[]>("list_scans", { limit }),
   listHistoryScans: (limit = 50) => invoke<ScanRun[]>("list_history_scans", { limit }),
