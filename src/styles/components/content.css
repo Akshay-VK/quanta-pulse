@@ -640,7 +640,7 @@
     align-items: center;
     gap: var(--sp-2);
     width: 100%;
-    min-height: var(--row-h);
+    min-height: 26px;
     padding-right: var(--sp-2);
     border-radius: var(--radius-sm);
     outline: none;

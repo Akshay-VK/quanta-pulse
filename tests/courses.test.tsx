@@ -238,9 +238,9 @@ describe("CourseList", () => {
     const onChanged = vi.fn();
     await renderCourses([buildCourse()], { onChanged });
     await openMenu(buildCourse());
-    await clickMenuItem("Re-baseline course…");
+    await clickMenuItem("Reset baseline…");
     expect(api.rebuildBaseline).not.toHaveBeenCalled();
-    await clickDialogButton("Re-baseline");
+    await clickDialogButton("Reset baseline");
     expect(api.rebuildBaseline).toHaveBeenCalledWith(1);
     expect(onChanged).toHaveBeenCalled();
   });
@@ -249,7 +249,7 @@ describe("CourseList", () => {
     const onOpen = vi.fn();
     await renderCourses([buildCourse()], { onOpen });
     await openMenu(buildCourse());
-    await clickMenuItem("Open Quanta course");
+    await clickMenuItem("Open in Quanta");
     expect(onOpen).toHaveBeenCalledWith(
       "https://quanta.bits-pilani.ac.in/course/view.php?id=1",
     );

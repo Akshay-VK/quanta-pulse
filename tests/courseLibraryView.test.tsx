@@ -189,6 +189,33 @@ async function click(button: HTMLButtonElement) {
   await act(async () => button.click());
 }
 
+async function openCourseMenu() {
+  const trigger = [...container.querySelectorAll("button")].find(
+    (item) => item.getAttribute("aria-label") === "Course actions",
+  );
+  if (!trigger) throw new Error("Missing Course actions button");
+  await act(async () => {
+    trigger.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0, ctrlKey: false }));
+  });
+}
+
+function menuItem(label: string): HTMLElement {
+  const item = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+    (node) => node.textContent?.includes(label),
+  );
+  if (!item) throw new Error(`Missing menu item: ${label}`);
+  return item;
+}
+
+function dialogButton(label: string): HTMLButtonElement {
+  const dialog = document.querySelector<HTMLElement>('[role="alertdialog"]');
+  const button = [...(dialog?.querySelectorAll("button") ?? [])].find(
+    (node) => node.textContent === label,
+  );
+  if (!button) throw new Error(`Missing dialog button: ${label}`);
+  return button as HTMLButtonElement;
+}
+
 async function typeSearch(text: string) {
   const search = container.querySelector<HTMLInputElement>(
     'input[aria-label="Search resources in this course"]',
@@ -360,7 +387,8 @@ describe("CoursePage tree", () => {
     expect(container.textContent).toContain("Course resources unavailable");
 
     await render([], { course: makeCourse({ id: 13 }) });
-    expect(container.textContent).toContain("This course has not been scanned yet");
+    expect(container.textContent).toContain("Nothing here yet");
+    expect(container.textContent).toContain("This course has no materials on Quanta.");
     expect(byText("Sync now")).toBeTruthy();
   });
 
@@ -369,5 +397,34 @@ describe("CoursePage tree", () => {
     await collapseAll();
     await click(byText("Pause"));
     expect(api.setMonitoring).toHaveBeenCalledWith(1, "paused");
+  });
+
+  it("renames a course from the actions menu and persists the alias", async () => {
+    localStorage.removeItem("quanta-pulse-course-aliases");
+    const onChanged = vi.fn();
+    await render(initialResources, { onChanged });
+    await openCourseMenu();
+    await click(menuItem("Rename…") as HTMLButtonElement);
+    const dialog = document.querySelector<HTMLElement>('[role="alertdialog"]')!;
+    expect(dialog.textContent).toContain("Only changes how this course appears in Pulse.");
+    const input = dialog.querySelector<HTMLInputElement>("#course-alias-input")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "MATH F211 · Discrete Math");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(dialogButton("Save"));
+    expect(JSON.parse(localStorage.getItem("quanta-pulse-course-aliases") ?? "{}")["1"]).toBe("MATH F211 · Discrete Math");
+    expect(onChanged).toHaveBeenCalled();
+  });
+
+  it("uses the exact reset-baseline confirmation copy", async () => {
+    await render(initialResources, { course: makeCourse({ shortName: "CS F111" }) });
+    await openCourseMenu();
+    await click(menuItem("Reset baseline…") as HTMLButtonElement);
+    const dialog = document.querySelector<HTMLElement>('[role="alertdialog"]')!;
+    expect(dialog.textContent).toContain("Reset the baseline for MATH F211?");
+    expect(dialog.textContent).toContain("The next scan records everything currently on Quanta as your starting point.");
+    expect(dialog.textContent).toContain("History and saved files are kept.");
+    expect(dialogButton("Reset baseline")).toBeTruthy();
   });
 });

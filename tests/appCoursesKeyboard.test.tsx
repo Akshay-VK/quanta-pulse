@@ -137,8 +137,8 @@ describe("Courses keyboard in the actual App", () => {
     await key("j"); expect(document.activeElement?.id).toBe("course-alias-input");
     await click(button("Cancel"));
     act(() => button("Actions for Course 1").focus()); await key("ArrowDown");
-    await click([...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(n => n.textContent?.includes("Re-baseline"))!);
-    expect(appApi.rebuildBaseline).not.toHaveBeenCalled(); await click(button("Re-baseline"));
+    await click([...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(n => n.textContent?.includes("Reset baseline"))!);
+    expect(appApi.rebuildBaseline).not.toHaveBeenCalled(); await click(button("Reset baseline"));
     expect(appApi.rebuildBaseline).toHaveBeenCalledWith(1);
   });
 });

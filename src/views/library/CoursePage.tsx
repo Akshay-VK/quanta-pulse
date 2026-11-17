@@ -10,6 +10,7 @@ import {
   FolderTree,
   MoreHorizontal,
   Pause,
+  Pencil,
   Play,
   RotateCcw,
 } from "lucide-react";
@@ -33,7 +34,7 @@ import {
 import { groupEventsByDay, eventKindMeta, longDayLabel } from "../../lib/events";
 import { activityTimestamp } from "../../lib/filter";
 import { formatTimeOfDay, parseTimestamp, relativeLabel } from "../../lib/format";
-import { courseLabel, courseTitle } from "../../lib/courseName";
+import { courseLabel, courseTitle, loadAliases, saveAliases } from "../../lib/courseName";
 import { courseDotClass } from "../../components/ui/CoursePill";
 import type { ChangeEvent, Course, Resource } from "../../lib/types";
 import type { StatusKind } from "../../components/ui/StatusTag";
@@ -169,6 +170,8 @@ export default function CoursePage({
   const loadError = activityMatchingCourse ? (activityError ?? null) : null;
   const [busy, setBusy] = useState(false);
   const [confirmRebaseline, setConfirmRebaseline] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
 
   const [tab, setTab] = useSessionValue<"contents" | "activity">(`course:${course.id}:tab`, "contents");
   const previousTab = useRef(tab);
@@ -725,23 +728,50 @@ export default function CoursePage({
     }
   }
 
+  function commitRename() {
+    const value = renameValue.trim();
+    const aliases = loadAliases();
+    if (value) aliases[String(course.id)] = value;
+    else delete aliases[String(course.id)];
+    saveAliases(aliases);
+    setRenameOpen(false);
+    onChanged();
+  }
+
   const menuItems: MenuItemSpec[] = [
     {
-      id: "rebaseline",
-      label: "Re-baseline course…",
-      icon: <RotateCcw aria-hidden="true" />,
-      onSelect: () => setConfirmRebaseline(true),
+      id: "rename",
+      label: "Rename…",
+      icon: <Pencil aria-hidden="true" />,
+      onSelect: () => {
+        setRenameValue(display);
+        setRenameOpen(true);
+      },
+    },
+    {
+      id: "monitor",
+      label: paused ? "Resume monitoring" : "Pause monitoring",
+      icon: paused ? <Play aria-hidden="true" /> : <Pause aria-hidden="true" />,
+      onSelect: () => void toggleMonitoring(),
     },
     ...(home
       ? [
           {
             id: "open-page",
-            label: "Open Quanta page",
+            label: "Open in Quanta",
             icon: <ExternalLink aria-hidden="true" />,
             onSelect: () => onOpen(home),
           },
         ]
       : []),
+    { id: "divider", label: "", divider: true },
+    {
+      id: "rebaseline",
+      label: "Reset baseline…",
+      icon: <RotateCcw aria-hidden="true" />,
+      danger: true,
+      onSelect: () => setConfirmRebaseline(true),
+    },
   ];
 
   const clearFilters = () => {
@@ -754,9 +784,8 @@ export default function CoursePage({
     <>
       {rows.length === 0 ? (
         <EmptyState
-          title="No files match"
-          body="Try a different search term or clear the filters."
-          action={{ label: "Clear filters", onClick: clearFilters }}
+          title="No files match your search"
+          action={{ label: "Clear", onClick: clearFilters }}
         />
       ) : (
         <div
@@ -943,8 +972,8 @@ export default function CoursePage({
         <Skeleton rows={8} />
       ) : items === null ? null : total === 0 ? (
         <EmptyState
-          title="This course has not been scanned yet"
-          body="Quanta Pulse has not discovered any resources here. Run a sync to check again."
+          title="Nothing here yet"
+          body="This course has no materials on Quanta."
           action={{ label: "Sync now", onClick: onSyncNow }}
         />
       ) : tab === "contents" ? (
@@ -1092,20 +1121,41 @@ export default function CoursePage({
       <ConfirmDialog
         open={confirmRebaseline}
         onOpenChange={setConfirmRebaseline}
-        title="Re-baseline course?"
-        body={
-          <>
-            Existing history is kept, but everything currently in{" "}
-            <strong>{raw}</strong> will be treated as the new starting point,
-            so it will not surface as new changes.
-          </>
-        }
-        confirmLabel="Re-baseline"
+        title={`Reset the baseline for ${display}?`}
+        body="The next scan records everything currently on Quanta as your starting point. Those items will not be reported as new. History and saved files are kept."
+        confirmLabel="Reset baseline"
         destructive
         onConfirm={async () => {
           await api.rebuildBaseline(course.id);
           onChanged();
         }}
+      />
+
+      <ConfirmDialog
+        open={renameOpen}
+        onOpenChange={(open) => {
+          if (!open) setRenameOpen(false);
+        }}
+        title="Rename course"
+        body={
+          <>
+            <label className="setting-desc" htmlFor="course-alias-input">
+              Only changes how this course appears in Pulse.
+            </label>
+            <input
+              id="course-alias-input"
+              className="text-field"
+              value={renameValue}
+              autoFocus
+              onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitRename();
+              }}
+            />
+          </>
+        }
+        confirmLabel="Save"
+        onConfirm={commitRename}
       />
     </div>
   );

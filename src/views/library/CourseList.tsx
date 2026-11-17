@@ -179,33 +179,37 @@ export default function CourseList({
     const paused = course.monitoringStatus === "paused";
     const items: MenuItemSpec[] = [
       {
-        id: "monitor",
-        label: paused ? "Resume monitoring" : "Pause monitoring",
-        icon: paused ? <Play aria-hidden="true" /> : <Pause aria-hidden="true" />,
-        onSelect: () => void setMonitoring(course),
-      },
-      {
         id: "rename",
         label: "Rename…",
         icon: <Pencil aria-hidden="true" />,
         onSelect: () => setRenaming(course),
       },
       {
-        id: "rebaseline",
-        label: "Re-baseline course…",
-        icon: <RotateCcw aria-hidden="true" />,
-        onSelect: () => setConfirmCourse(course),
+        id: "monitor",
+        label: paused ? "Resume monitoring" : "Pause monitoring",
+        icon: paused ? <Play aria-hidden="true" /> : <Pause aria-hidden="true" />,
+        onSelect: () => void setMonitoring(course),
       },
     ];
     const home = courseHomeUrl(course);
     if (home) {
       items.push({
         id: "open",
-        label: "Open Quanta course",
+        label: "Open in Quanta",
         icon: <ExternalLink aria-hidden="true" />,
         onSelect: () => onOpen(home),
       });
     }
+    items.push(
+      { id: "divider", label: "", divider: true },
+      {
+        id: "rebaseline",
+        label: "Reset baseline…",
+        icon: <RotateCcw aria-hidden="true" />,
+        danger: true,
+        onSelect: () => setConfirmCourse(course),
+      },
+    );
     return items;
   }
 
@@ -297,8 +301,7 @@ export default function CourseList({
         body={
           <>
             <label className="setting-desc" htmlFor="course-alias-input">
-              Shown everywhere in place of the course code. Leave empty to restore the
-              default.
+              Only changes how this course appears in Pulse.
             </label>
             <input
               id="course-alias-input"
@@ -325,15 +328,9 @@ export default function CourseList({
         onOpenChange={(open) => {
           if (!open) setConfirmCourse(null);
         }}
-        title="Re-baseline course?"
-        body={
-          <>
-            Existing history is kept, but everything currently in{" "}
-            <strong>{confirmCourse?.name}</strong> will be treated as the new starting
-            point, so it will not surface as new changes.
-          </>
-        }
-        confirmLabel="Re-baseline"
+        title={confirmCourse ? `Reset the baseline for ${courseTitle(confirmCourse.id, confirmCourse.name)}?` : "Reset the baseline?"}
+        body="The next scan records everything currently on Quanta as your starting point. Those items will not be reported as new. History and saved files are kept."
+        confirmLabel="Reset baseline"
         destructive
         onConfirm={async () => {
           if (!confirmCourse) return;
