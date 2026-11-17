@@ -280,4 +280,35 @@
       padding-right: 16px;
     }
   }
+
+  /* 200% zoom (about 720x480 CSS px): one column, wrapping header, no page
+     horizontal scroll. Filters scroll inside their own bar, never the page. */
+  @media (max-width: 760px) {
+    .workspace-toolbar-slot {
+      flex-basis: auto;
+      height: auto;
+      min-height: 40px;
+    }
+
+    .topbar {
+      flex-wrap: wrap;
+      height: auto;
+      min-height: var(--topbar-h);
+      flex-basis: auto;
+    }
+
+    .workspace-content,
+    .workspace-route-slot {
+      flex-direction: column;
+    }
+
+    .app-main {
+      overflow-x: hidden;
+    }
+
+    .page {
+      padding-left: 8px;
+      padding-right: 8px;
+    }
+  }
 }

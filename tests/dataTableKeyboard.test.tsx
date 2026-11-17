@@ -55,6 +55,11 @@ describe("DataTable keyed navigation foundation", () => {
     expect(host.querySelectorAll("tbody tr[data-row-key]").length).toBeLessThan(40);
   });
 
+  it("applies a column's className to its header so responsive rules can drop it", () => {
+    act(() => root.render(<DataTable rows={rows.slice(0, 2)} columns={[{ ...columns[0], className: "section-cell" }]} getKey={(row) => row.id} />));
+    expect(host.querySelector("th.section-cell")).toBeTruthy();
+  });
+
   it("uses current row indices after reordering and does not focus when a pending key disappears", async () => {
     const ref = createRef<DataTableNavigationHandle>();
     const reversed = [...rows].reverse();

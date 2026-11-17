@@ -360,6 +360,7 @@ export default function AllFiles({
     {
       id: "detected",
       header: "Detected",
+      className: "detected-cell",
       width: 140,
       sortable: true,
       title: (resource) => formatCompact(activityTimestamp(resource) ?? resource.firstSeenAt),

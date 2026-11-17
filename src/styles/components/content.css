@@ -1128,3 +1128,29 @@
   .inbox-view .row-focus-hint { flex: 0 0 auto; }
   .inbox-view .row-time-focused { font-size: 0; }
 }
+
+@layer components {
+  @media (max-width: 959px) {
+    .data-table th.section-cell,
+    .data-table td.section-cell {
+      display: none;
+    }
+  }
+
+  @media (max-width: 759px) {
+    .data-table th.detected-cell,
+    .data-table td.detected-cell {
+      display: none;
+    }
+
+    .filter-bar {
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      overscroll-behavior-inline: contain;
+    }
+
+    .filter-bar > * {
+      flex: 0 0 auto;
+    }
+  }
+}

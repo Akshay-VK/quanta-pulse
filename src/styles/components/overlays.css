@@ -558,4 +558,14 @@
     color: var(--muted);
     overflow-wrap: anywhere;
   }
+
+  @media (max-width: 760px) {
+    .dialog-content,
+    .dialog-content.dialog-confirm,
+    .dialog-content.dialog-confirm-scope {
+      width: calc(100vw - 16px);
+      max-width: calc(100vw - 16px);
+      max-height: calc(100vh - 16px);
+    }
+  }
 }

@@ -162,7 +162,7 @@ export default function DataTable<T>({
               return (
                 <th
                   key={column.id}
-                  className={cx(column.sortable && "sortable")}
+                  className={cx(column.sortable && "sortable", column.className)}
                   style={{
                     width: column.width,
                     minWidth: column.width,
