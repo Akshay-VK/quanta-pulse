@@ -145,7 +145,7 @@ describe("Settings save and navigation in the real application", () => {
     if (intent === "course") await click(document.querySelector<HTMLButtonElement>(".course-nav-item")!);
     else if (intent === "palette") {
       await click(document.querySelector<HTMLButtonElement>(".search-trigger")!);
-      const target = [...document.querySelectorAll<HTMLElement>(".palette-item")].find((node) => node.textContent?.startsWith("History"))!;
+      const target = [...document.querySelectorAll<HTMLElement>(".palette-item")].find((node) => node.textContent?.startsWith("Go to History"))!;
       await click(target);
     } else {
       await act(async () => {

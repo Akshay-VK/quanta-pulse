@@ -43,6 +43,7 @@ describe("App keyboard shortcuts", () => {
       setter.call(input, "Lecture 4");
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
+    expect(document.body.textContent).toContain("Files");
     const match = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) => item.textContent?.includes("Lecture 4"));
     expect(match).toBeTruthy();
     await click(match!);
@@ -61,12 +62,27 @@ describe("App keyboard shortcuts", () => {
       setter.call(input, "Lecture");
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    const all = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) => item.textContent?.includes("See all results in Library"));
+    const all = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) => /See all results/.test(item.textContent ?? ""));
     expect(all).toBeTruthy();
     await click(all!);
     expect(document.querySelector("main h1")?.textContent).toBe("Library");
     expect(document.querySelector<HTMLInputElement>('[aria-label="Search library"]')?.value).toBe("Lecture");
     expect(document.querySelector('[aria-label="All course files"]')).toBeTruthy();
+  });
+
+  it("keeps token-only palette queries scoped to matching files", async () => {
+    app = await renderApp();
+    await act(async () => { document.querySelector<HTMLButtonElement>(".search-trigger")!.click(); });
+    const input = document.querySelector<HTMLInputElement>(".palette-input")!;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(input, "course:math");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect([...document.querySelectorAll<HTMLElement>('[role="option"]')].some((item) =>
+      item.textContent?.includes("Lecture 4"))).toBe(true);
+    expect([...document.querySelectorAll<HTMLElement>('[role="option"]')].some((item) =>
+      /See all results/.test(item.textContent ?? ""))).toBe(true);
   });
 
   it("uses Mod+comma for Settings and leaves bare comma alone", async () => {
@@ -184,7 +200,7 @@ it("reapplies the same See all query after the Library query was edited", async 
   async function seeAll() {
     await click(document.querySelector<HTMLButtonElement>(".search-trigger")!);
     await type(".palette-input", "Lecture");
-    await click([...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) => item.textContent?.includes("See all results in Library"))!);
+    await click([...document.querySelectorAll<HTMLElement>('[role="option"]')].find((item) => /See all results|Search all files/.test(item.textContent ?? ""))!);
   }
   await seeAll();
   await type('[aria-label="Search library"]', "Different query");
