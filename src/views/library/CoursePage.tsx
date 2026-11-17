@@ -86,6 +86,7 @@ interface Capture {
 }
 
 const VIRTUAL_THRESHOLD = 200;
+const EMPTY_EVENTS: ChangeEvent[] = [];
 const TREE_HEIGHT = 560;
 
 const STATUS_KIND: Record<string, StatusKind> = {
@@ -156,7 +157,7 @@ export default function CoursePage({
 }: CoursePageProps) {
   const items = useMemo(() => inventory?.filter(resource => resource.courseId === course.id) ?? null, [inventory, course.id]);
   const activityMatchingCourse = activityCourseId === course.id;
-  const activityEventsList = activityMatchingCourse ? (activityEvents ?? []) : [];
+  const activityEventsList = activityMatchingCourse && Array.isArray(activityEvents) ? activityEvents : EMPTY_EVENTS;
   const events = activityMatchingCourse ? (activityEvents ?? null) : null;
   const activityGroups = useMemo(() => {
     const byDay = groupEventsByDay(activityEventsList);
@@ -379,7 +380,8 @@ export default function CoursePage({
     latestNavigation.current.rows.some(row => row.id === id) ? id : latestNavigation.current.currentFocus);
   const restoreActivity = (id: string | null) => {
     const target = id && activityRows.current.has(id) ? id : activityFocusedId;
-    if (target) { setActivityFocusedId(target); activityRows.current.get(target)?.focus(); return true; }
+    const row = target ? activityRows.current.get(target) : null;
+    if (row?.isConnected) { setActivityFocusedId(target); row.focus(); return true; }
     return false;
   };
   const inspect = (resource: Resource, origin: HTMLElement) => {
@@ -395,7 +397,7 @@ export default function CoursePage({
   const activityRows = useRef(new Map<string, HTMLButtonElement>());
   const activityPreviousIds = useRef<string[]>([]);
   const activityOwnedFocus = useRef(false);
-  useEffect(() => { setActivitySelection(prev => prev.filter(id => activityIds.includes(id))); }, [activityIds]);
+  useEffect(() => { setActivitySelection(prev => { const next = prev.filter(id => activityIds.includes(id)); return next.length === prev.length ? prev : next; }); }, [activityIds]);
   useEffect(() => {
     const recovered = recoverFocusedId(activityPreviousIds.current, activityIds, activityFocusedId);
     const owned = activityOwnedFocus.current && (document.activeElement === document.body || (document.activeElement instanceof HTMLElement && document.activeElement.matches(".row-select")));

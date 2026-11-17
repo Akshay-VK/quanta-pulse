@@ -4,6 +4,10 @@ import type { HistoryViewProps } from "../src/views/HistoryView";
 import type { ChangeEvent, HistoryPage } from "../src/lib/types";
 import { appApi, button, change, deferred, emitAppEvent, flushApp, renderApp, setupApp } from "./helpers/renderApp";
 
+// The 1001-event pagination scenarios render the real App under jsdom; the
+// default 5s limit trips on loaded CI even though the assertions pass alone.
+vi.setConfig({ testTimeout: 30000 });
+
 // Observe App's real boundary without replacing History rendering or behavior.
 const history = vi.hoisted(() => ({ current: undefined as HistoryViewProps | undefined }));
 vi.mock("../src/views/HistoryView", async (importOriginal) => {

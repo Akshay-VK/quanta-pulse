@@ -86,7 +86,7 @@ describe("Course Activity keyboard in the real App", () => {
     await open(Array.from({ length: 5 }, (_, i) => change({ id: i + 1, resourceTitle: `Event ${i}`, changeType: i === 0 ? "baseline" : "new" })));
     focus("Event 0");
     await key("A", undefined, { shiftKey: true });
-    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain("4 captured changes");
+    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain("4 recorded changes");
   });
 
   it("Delete confirms Inbox dismissal, Cancel returns identity", async () => {
