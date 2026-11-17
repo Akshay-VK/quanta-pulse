@@ -16,7 +16,6 @@ import {
   clampDayToMonth,
   dayKeyOf,
   dayKeyToDate,
-  dotKinds,
   eventKindMeta,
   groupEventsByDay,
   isSameMonth,
@@ -309,7 +308,6 @@ export default function CalendarView({
                   const isToday = key === today;
                   const isSelected = key === selected;
                   const events = inMonth ? byDay.get(key) ?? [] : [];
-                  const kinds = inMonth ? dotKinds(events, 3) : [];
                   const count = events.length;
                   return (
                     <button
@@ -361,15 +359,8 @@ export default function CalendarView({
                     >
                       <span className="cal-num">{date.getDate()}</span>
                       {count > 0 && (
-                        <span className="cal-dots" aria-hidden="true">
-                          {kinds.map((kind) => (
-                            <span key={kind} className={`cal-dot ${eventKindMeta(kind).dot}`} />
-                          ))}
-                          {count > 3 && (
-                            <span className="cal-more">
-                              {count - 3 > 99 ? "99+" : `+${count - 3}`}
-                            </span>
-                          )}
+                        <span className="cal-pill" aria-hidden="true">
+                          {count} changes
                         </span>
                       )}
                     </button>
@@ -399,6 +390,7 @@ export default function CalendarView({
           ) : digest?.date === selected ? (
             <>
               {dayPending && <p className="cal-sync-line" role="status">Refreshing day activity…</p>}
+              <p className="cal-summary">{digest.newCount} new · {digest.updatedCount} updated</p>
               <div className="stat-grid">
                 <StatBlock label="New" value={digest.newCount} />
                 <StatBlock label="Updated" value={digest.updatedCount} />

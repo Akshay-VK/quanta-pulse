@@ -75,8 +75,10 @@
     flex-direction: column;
     justify-content: space-between;
     align-items: flex-start;
-    height: 84px;
+    height: 96px;
     padding: var(--sp-1) var(--sp-2);
+    border-right: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
     border-radius: var(--radius-sm);
     font: 400 14px/20px var(--type-ui);
     text-align: left;
@@ -89,6 +91,16 @@
 
   .cal-day.outside {
     color: var(--muted);
+    opacity: 0.4;
+  }
+
+  .cal-pill {
+    font: 500 11px/18px var(--type-mono);
+    color: var(--muted);
+    background: var(--selected);
+    border-radius: var(--radius-sm);
+    padding: 0 6px;
+    width: fit-content;
   }
 
   .cal-day.selected {

@@ -161,8 +161,9 @@ describe("CalendarView", () => {
     const selectedBtn = container.querySelector(".cal-day.selected") as HTMLButtonElement | null;
     expect(selectedBtn).toBeTruthy();
     expect(selectedBtn!.querySelector(".cal-num")?.textContent).toBe(String(day));
-    // A semantic dot on the day with activity.
-    expect(selectedBtn!.querySelector(".cal-dot.ev-new")).toBeTruthy();
+    // A neutral changes pill on the day with activity.
+    expect(selectedBtn!.querySelector(".cal-pill")).toBeTruthy();
+    expect(selectedBtn!.querySelector(".cal-pill")?.textContent).toContain("1 changes");
 
     // The day digest shows the new-upload and failed-course figures.
     expect(statValue("New")).toBe("1");
@@ -238,7 +239,7 @@ describe("CalendarView", () => {
     expect(api.eventsRange).toHaveBeenCalledTimes(2);
     expect(api.dailyDigest).toHaveBeenCalledTimes(1);
     expect(container.textContent).not.toContain("Could not load activity for this month");
-    expect(container.querySelector(".cal-day.selected .cal-dot.ev-new")).toBeTruthy();
+    expect(container.querySelector(".cal-day.selected .cal-pill")).toBeTruthy();
   });
 
   it("reports a failed day request and retries it independently", async () => {
