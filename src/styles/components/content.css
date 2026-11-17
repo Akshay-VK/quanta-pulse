@@ -972,6 +972,20 @@
     max-width: 360px;
   }
 
+  .downloads-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: var(--radius-pill);
+    background: var(--accent);
+    color: #fff;
+    font: 600 10px/1 var(--type-small);
+    margin-left: 2px;
+  }
+
   .popover-header {
     display: flex;
     align-items: center;

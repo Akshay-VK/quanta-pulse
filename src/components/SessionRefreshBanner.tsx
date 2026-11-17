@@ -7,31 +7,49 @@ interface Props {
   sessionExpired: boolean;
   onRestart: () => Promise<SessionResetResult>;
   onSignInAgain?: () => void;
+  /** Abort an in-flight SSO window. Omitted in tests that only assert UI. */
+  onCancel?: () => void | Promise<void>;
+  /** Called when the user dismisses a terminal banner. */
+  onDismiss?: () => void;
 }
 
-type State = "connected" | "session_expired" | "resetting" | "login_required" | "failed" | "success";
+type State = "connected" | "expired" | "reconnecting" | "succeeded" | "failed";
 
-const EXPIRED_MESSAGE = "Your Quanta session expired";
-const SUCCESS_MESSAGE = "Quanta session verified";
+const RECONNECTING_MESSAGE = "Waiting for sign-in…";
+const SUCCEEDED_MESSAGE = "Reconnected. Monitoring resumed.";
+const FAILED_MESSAGE = "Couldn't reconnect.";
+const FAILED_DETAIL = "Sign-in was cancelled or failed.";
 
-export default function SessionRefreshBanner({ sessionExpired, onRestart, onSignInAgain }: Props) {
-  const [state, setState] = useState<State>(sessionExpired ? "session_expired" : "connected");
-  const [message, setMessage] = useState(sessionExpired ? EXPIRED_MESSAGE : "");
-  const [reason, setReason] = useState<string>("");
+export default function SessionRefreshBanner({
+  sessionExpired,
+  onRestart,
+  onSignInAgain,
+  onCancel,
+  onDismiss,
+}: Props) {
+  const [state, setState] = useState<State>(sessionExpired ? "expired" : "connected");
+  const [detail, setDetail] = useState("");
   const request = useRef(false);
+  const cancelled = useRef(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (sessionExpired && state === "connected") {
-      setState("session_expired");
-      setMessage(EXPIRED_MESSAGE);
-      setReason("");
-    } else if (!sessionExpired && (state === "session_expired" || state === "login_required" || state === "failed")) {
+    if (sessionExpired) {
+      if (state === "connected") {
+        setState("expired");
+        setDetail("");
+      }
+    } else if (
+      state === "expired" ||
+      state === "reconnecting" ||
+      state === "failed"
+    ) {
+      // Only settle back to connected when the backend agrees the session
+      // is healthy again; a succeeded banner keeps its own 4s timer.
       setState("connected");
-      setMessage("");
-      setReason("");
+      setDetail("");
     }
-  }, [sessionExpired, state]);
+  }, [sessionExpired]);
 
   useEffect(() => {
     return () => {
@@ -42,96 +60,111 @@ export default function SessionRefreshBanner({ sessionExpired, onRestart, onSign
   async function restart() {
     if (request.current) return;
     request.current = true;
-    setState("resetting");
-    setMessage("Restarting session");
-    setReason("");
+    cancelled.current = false;
+    setState("reconnecting");
+    setDetail("");
     try {
       const result = await onRestart();
+      if (cancelled.current) {
+        setState("failed");
+        setDetail(FAILED_DETAIL);
+        return;
+      }
       if (result.status === "connected") {
-        setState("success");
-        setMessage(SUCCESS_MESSAGE);
-        setReason(result.message || "");
+        setState("succeeded");
+        setDetail(result.message || "");
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
         timeoutRef.current = setTimeout(() => {
           setState("connected");
-          setMessage("");
-          setReason("");
+          setDetail("");
         }, 4000);
-      } else if (result.status === "login_required") {
-        setState("login_required");
-        setMessage("Login Required");
-        setReason(result.message || "Sign-in was cancelled.");
       } else {
         setState("failed");
-        setMessage("Connection Failed");
-        setReason(result.message || "Could not restart the Quanta session");
+        setDetail(result.message || FAILED_DETAIL);
       }
     } catch (error) {
+      if (cancelled.current) {
+        setState("failed");
+        setDetail(FAILED_DETAIL);
+        return;
+      }
       setState("failed");
-      setMessage("Connection Failed");
-      setReason(String(error));
+      setDetail(String(error));
     } finally {
       request.current = false;
     }
   }
 
-  if (state === "connected") {
-    return null;
+  async function cancel() {
+    if (!request.current) return;
+    cancelled.current = true;
+    request.current = false;
+    try {
+      await onCancel?.();
+    } catch {
+      // Cancel is best-effort; the banner still reports failure.
+    }
+    setState("failed");
+    setDetail(FAILED_DETAIL);
   }
 
-  if (state === "success") {
-    return (
-      <Banner kind="ok">
-        <strong>{message}</strong>
-        {reason && <div>{reason}</div>}
-      </Banner>
-    );
+  function dismiss() {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    setState("connected");
+    setDetail("");
+    onDismiss?.();
   }
 
-  if (state === "session_expired" || state === "resetting") {
-    const isResetting = state === "resetting";
-    return (
-      <Banner
-        kind="info"
-        action={isResetting ? undefined : { label: "Reconnect", onClick: () => void restart() }}
-      >
-        {isResetting ? (
-          <>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-              <span className="spinner" aria-hidden="true" />
-              <strong>Waiting for Quanta sign-in</strong>
-            </span>
-            <div>Complete sign-in in the Quanta window. Close that window to cancel. Your saved files remain available.</div>
-          </>
-        ) : (
-          <>
-            <strong>{EXPIRED_MESSAGE}</strong>
-            <div>Saved files stay available while you reconnect.</div>
-          </>
-        )}
-      </Banner>
-    );
-  }
+  if (state === "connected") return null;
 
-  if (state === "login_required") {
+  if (state === "expired") {
     return (
       <Banner
-        kind="info"
+        kind="error"
         action={{ label: "Reconnect", onClick: () => void restart() }}
       >
-        <strong>{message}</strong>
-        <div>{reason}</div>
-        <div>Your saved files remain available. Reconnect when you are ready to try again.</div>
+        <strong>Session expired.</strong> Sign in again to keep monitoring.
       </Banner>
     );
   }
 
+  if (state === "reconnecting") {
+    return (
+      <Banner kind="info" action={{ label: "Cancel", onClick: () => void cancel() }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          <span className="spinner" aria-hidden="true" />
+          <strong>{RECONNECTING_MESSAGE}</strong>
+        </span>
+        <div>Complete sign-in in the Quanta window. Close that window to cancel. Your saved files remain available.</div>
+      </Banner>
+    );
+  }
+
+  if (state === "succeeded") {
+    return (
+      <Banner kind="ok" action={{ label: "Dismiss", onClick: dismiss }}>
+        <strong>Reconnected.</strong> Monitoring resumed.
+        {detail && detail !== SUCCEEDED_MESSAGE && <div>{detail}</div>}
+      </Banner>
+    );
+  }
+
+  // failed
   return (
     <Banner
       kind="error"
       action={{ label: "Try again", onClick: () => void restart() }}
     >
-      <strong>{message}</strong>
-      <div>{reason}</div>
+      <strong>{FAILED_MESSAGE}</strong>
+      {detail && <div>{detail}</div>}
+      <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+        <Button variant="ghost" size="sm" onClick={dismiss}>
+          Dismiss
+        </Button>
+      </div>
       {onSignInAgain && (
         <div style={{ marginTop: 8 }}>
           <Button variant="ghost" size="sm" onClick={onSignInAgain}>

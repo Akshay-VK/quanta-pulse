@@ -14,9 +14,11 @@ import { formatBytes } from "../lib/format";
 export default function SyncStatus({
   sync,
   onOpenScans,
+  sessionExpired = false,
 }: {
   sync: SyncStatusModel | null;
   onOpenScans?: () => void;
+  sessionExpired?: boolean;
 }) {
   const [, setTick] = useState(0);
   const mirror = useMirror();
@@ -31,14 +33,14 @@ export default function SyncStatus({
   let copy: string;
   let clickable = false;
 
-  if (!sync) {
+  if (sessionExpired || sync?.authState === "expired") {
+    dot = "danger";
+    copy = "Session expired";
+  } else if (!sync) {
     copy = "Checking…";
   } else if (sync.running) {
     dot = "warn";
     copy = sync.phase && sync.phase !== "Starting" ? sync.phase : "Scanning";
-  } else if (sync.authState === "expired") {
-    dot = "danger";
-    copy = "Session expired";
   } else if (sync.lastError) {
     dot = "danger";
     copy = "Last scan failed";

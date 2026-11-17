@@ -23,6 +23,7 @@ export default function DownloadsPopover() {
       trigger={
         <IconButton label="Open downloads" size={28} tooltip={false}>
           <ChevronDown aria-hidden="true" />
+          {pending > 0 && <span className="downloads-badge">{pending}</span>}
         </IconButton>
       }
     >
