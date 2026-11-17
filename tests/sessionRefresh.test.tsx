@@ -33,7 +33,7 @@ async function render(
 }
 
 function actionButton(): HTMLButtonElement | null {
-  return [...container.querySelectorAll("button")].find((item) => item.textContent?.trim() === "Reconnect" || item.textContent?.trim() === "Try again") as HTMLButtonElement | null;
+  return ([...container.querySelectorAll("button")].find((item) => item.textContent?.trim() === "Reconnect" || item.textContent?.trim() === "Try again") as HTMLButtonElement | undefined) ?? null;
 }
 
 describe("SessionRefreshBanner", () => {
@@ -82,5 +82,12 @@ describe("SessionRefreshBanner", () => {
     expect(container.textContent).toContain("cookie store unavailable");
     const retry = [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Try again") as HTMLButtonElement;
     expect(retry.disabled).toBe(false);
+  });
+
+  it("keeps no banner UI when session is not expired", async () => {
+    const onRestart = vi.fn();
+    await render(onRestart, false);
+    expect(container.textContent ?? "").not.toContain("Your Quanta session expired");
+    expect(actionButton()).toBeNull();
   });
 });
