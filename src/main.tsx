@@ -12,6 +12,7 @@ import "./styles/layout.css";
 import "./styles/components/ui.css";
 import "./styles/components/shell.css";
 import "./styles/components/content.css";
+import "./styles/components/inspector.css";
 import "./styles/components/overlays.css";
 import "./styles/components/screens.css";
 
