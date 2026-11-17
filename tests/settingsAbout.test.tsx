@@ -139,7 +139,7 @@ describe("Settings > About states", () => {
     await clickCheck();
     await tick();
     expect(container.textContent).toContain("Update 9.9.9 available");
-    expect(container.textContent).toContain("Restart to update");
+    expect(container.textContent).toContain("Download");
   });
 
   it("keeps the update action available after prepare or install fails, without claiming success", async () => {
@@ -147,9 +147,10 @@ describe("Settings > About states", () => {
     vi.mocked(api.prepareForUpdate).mockRejectedValueOnce(new Error("busy"));
     render();
     await clickCheck();
-    const install = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Restart to update"));
+    const install = [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Download");
     expect(install).toBeTruthy();
-    await act(async () => { install!.click(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    await act(async () => { install!.click(); await new Promise((resolve) => setTimeout(resolve, 50)); });
+    await tick();
     expect(container.textContent).toContain("Update failed");
     expect(container.textContent).not.toContain("Check failed");
     expect(container.textContent).not.toContain("Up to date");

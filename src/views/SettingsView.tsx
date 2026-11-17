@@ -139,15 +139,17 @@ export default function SettingsView({
 
   // About / updates
   const [aboutVersion, setAboutVersion] = useState<string>("");
-  const [updateStatus, setUpdateStatus] = useState<"idle" | "checking" | "upToDate" | "available" | "installing" | "checkError" | "installError">("idle");
+  const [updateStatus, setUpdateStatus] = useState<"idle" | "checking" | "upToDate" | "available" | "downloading" | "installing" | "failed" | "restartRequired" | "checkError" | "installError">("idle");
   const [updateVersion, setUpdateVersion] = useState<string | null>(null);
   const [updateNotes, setUpdateNotes] = useState<string | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
+  const [updateProgress, setUpdateProgress] = useState<{ downloaded: number; total: number | null } | null>(null);
   const [savingAutoUpdate, setSavingAutoUpdate] = useState(false);
   const [lastUpdateCheck, setLastUpdateCheck] = useState<string | null>(() => {
     try { return localStorage.getItem("quanta-pulse-update-last-checked"); } catch { return null; }
   });
   const updateCheckRef = useRef(false);
+  const updateInstallRef = useRef(false);
 
   useEffect(() => {
     if (!dirtyRef.current) setDraft(settings);
@@ -287,14 +289,48 @@ export default function SettingsView({
   }
 
   async function installUpdate() {
-    setUpdateStatus("installing");
+    if (updateInstallRef.current) return;
+    updateInstallRef.current = true;
+    setUpdateStatus("downloading");
+    setUpdateProgress({ downloaded: 0, total: null });
     setUpdateError(null);
     try {
-      const installed = await installAvailableUpdate();
-      setUpdateStatus(installed ? "upToDate" : "idle");
+      const installed = await installAvailableUpdate((event) => {
+        if (event.event === "Started") {
+          setUpdateStatus("downloading");
+          setUpdateProgress({ downloaded: 0, total: event.data.contentLength ?? null });
+        } else if (event.event === "Progress") {
+          setUpdateProgress((previous) => ({
+            downloaded: (previous?.downloaded ?? 0) + event.data.chunkLength,
+            total: previous?.total ?? null,
+          }));
+        } else if (event.event === "Finished") {
+          setUpdateStatus("installing");
+        }
+      });
+      if (installed) {
+        setUpdateStatus("restartRequired");
+      } else {
+        setUpdateStatus("upToDate");
+      }
     } catch (err) {
-      setUpdateStatus("installError");
-      setUpdateError(err instanceof UpdateRelaunchError ? err.message : String(err));
+      if (err instanceof UpdateRelaunchError) {
+        setUpdateStatus("restartRequired");
+        setUpdateError(err.message);
+      } else {
+        setUpdateStatus("failed");
+        setUpdateError(err instanceof Error ? err.message : String(err));
+      }
+    } finally {
+      updateInstallRef.current = false;
+    }
+  }
+
+  async function restartNow() {
+    try {
+      await api.relaunchApp();
+    } catch (err) {
+      setUpdateError(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -1030,7 +1066,7 @@ export default function SettingsView({
               variant="secondary"
               size="sm"
               loading={updateStatus === "checking"}
-              disabled={updateStatus === "checking"}
+              disabled={updateStatus === "checking" || updateStatus === "downloading" || updateStatus === "installing"}
               onClick={() => void checkForUpdate()}
             >
               {updateStatus === "checking" ? "Checking..." : "Check now"}
@@ -1040,30 +1076,73 @@ export default function SettingsView({
             title="Status"
             description={updateError ?? undefined}
           >
-            <span className={cx("settings-inline", (updateStatus === "checkError" || updateStatus === "installError") && "danger")}>
+            <span className={cx("settings-inline", (updateStatus === "checkError" || updateStatus === "failed" || updateStatus === "installError") && "danger")}>
               {updateStatus === "idle" && "Idle"}
               {updateStatus === "checking" && "Looking..."}
               {updateStatus === "upToDate" && "Up to date"}
               {updateStatus === "available" && `Update ${updateVersion} available`}
+              {updateStatus === "downloading" && `Downloading ${updateVersion ?? ""}`}
               {updateStatus === "installing" && "Installing..."}
-              {updateStatus === "checkError" && "Check failed"}
+              {updateStatus === "failed" && "Update failed"}
               {updateStatus === "installError" && "Update failed"}
+              {updateStatus === "restartRequired" && "Restart required"}
+              {updateStatus === "checkError" && "Check failed"}
             </span>
           </SettingRow>
           {updateStatus === "available" && updateVersion && (
-            <div className="settings-banner">
+            <div className="settings-banner" role="status">
               <span>Quanta Pulse {updateVersion} is available.</span>
               <div className="settings-inline">
-                <Button variant="primary" size="sm" onClick={() => void installUpdate()}>
-                  Restart to update
+                <Button variant="primary" size="sm" onClick={() => void installUpdate()} disabled={updateInstallRef.current}>
+                  Download
                 </Button>
                 <Button variant="ghost" size="sm" onClick={() => window.open(updateNotes ?? "https://github.com/Akshay-VK/quanta-pulse/releases", "_blank")}>
                   Release notes
                 </Button>
-                <Button variant="ghost" size="sm" onClick={() => { setUpdateStatus("idle"); }}>
+                <Button variant="ghost" size="sm" onClick={() => { setUpdateStatus("idle"); setUpdateProgress(null); }}>
                   Later
                 </Button>
               </div>
+            </div>
+          )}
+          {updateStatus === "downloading" && (
+            <div className="settings-banner" role="status">
+              <span>Downloading {updateVersion ?? ""}…</span>
+              <progress value={updateProgress?.downloaded ?? 0} max={updateProgress?.total ?? updateProgress?.downloaded ?? 1} />
+              <span className="muted">
+                {formatBytes(updateProgress?.downloaded ?? 0)}
+                {updateProgress?.total ? ` / ${formatBytes(updateProgress.total)}` : ""}
+              </span>
+            </div>
+          )}
+          {updateStatus === "installing" && (
+            <div className="settings-banner" role="status">
+              <span className="spinner" aria-hidden="true" />
+              <span>Installing…</span>
+            </div>
+          )}
+          {updateStatus === "failed" && (
+            <div className="settings-banner" role="alert">
+              <span>Update failed.</span>
+              {updateError && <span>{updateError}</span>}
+              <div className="settings-inline">
+                <Button variant="primary" size="sm" onClick={() => void installUpdate()}>
+                  Retry
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => { setUpdateStatus(updateVersion ? "available" : "idle"); setUpdateProgress(null); }}>
+                  Later
+                </Button>
+              </div>
+            </div>
+          )}
+          {updateStatus === "restartRequired" && (
+            <div className="settings-banner" role="status">
+              <span>Update ready.</span>
+              <span>Restart Pulse to finish installing {updateVersion ?? ""}.</span>
+              {updateError && <span>{updateError}</span>}
+              <Button variant="primary" size="sm" onClick={() => void restartNow()}>
+                Restart now
+              </Button>
             </div>
           )}
           <SettingRow
