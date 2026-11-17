@@ -83,7 +83,7 @@ describe("App shared material destinations", () => {
     await input("Search library", "Lecture");
     await choose("Filter by course", "MATH F111");
     await choose("Filter by file type", "pdf (1)");
-    await click(button("Title", document.querySelector("thead")!));
+    await click(button("Name", document.querySelector("thead")!));
     const main = document.querySelector("main")!; main.scrollTop = 137;
     main.dispatchEvent(new Event("scroll"));
     await click(document.querySelector<HTMLButtonElement>(".course-nav-item")!);
@@ -93,7 +93,7 @@ describe("App shared material destinations", () => {
     expect(main.scrollTop).toBe(137);
     expect(button("Filter by course").textContent).toContain("MATH F111");
     expect(button("Filter by file type").textContent).toContain("pdf");
-    expect(document.querySelector('th[aria-sort="ascending"]')?.textContent).toBe("Title");
+    expect(document.querySelector('th[aria-sort="ascending"]')?.textContent).toBe("Name");
   });
 
   it("keeps external links out of local destinations", async () => {

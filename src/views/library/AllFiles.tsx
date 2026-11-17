@@ -1,24 +1,23 @@
 import { useSessionValue } from "../../hooks/useSessionViews";
 import { useMaterialActions } from "../../hooks/useMaterialActions";
-import { MaterialButtons } from "../../components/MaterialButtons";
+import { useMirror } from "../../hooks/useMirror";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { api } from "../../lib/api";
 import { getListNavigationIntent, recoverFocusedId, type ListNavigationInput } from "../../lib/listNavigation";
 import ConfirmDialog from "../../components/ConfirmDialog";
-import { cx } from "../../lib/cx";
+import { MaterialButtons } from "../../components/MaterialButtons";
+import { Select } from "../../components/ui/Select";
 import { typeOptions } from "../../lib/courseLibrary";
 import { dedupeCourseResources } from "../../lib/courseTree";
-import { activityTimestamp } from "../../lib/filter";
-import { fileTone } from "../../lib/filetype";
-import { describeUpload, formatBytes, parseTimestamp } from "../../lib/format";
+import { activityTimestamp, splitLiteralMatches } from "../../lib/filter";
+import { isLocal } from "../../lib/mirrorState";
+import { courseTitle } from "../../lib/courseName";
+import { formatCompact, parseTimestamp } from "../../lib/format";
 import { formatSectionPath } from "../../lib/sectionPath";
 import type { DetailsAdapter } from "../../lib/details";
 import type { Course, Resource } from "../../lib/types";
 import DataTable, { type DataColumn, type DataTableNavigationHandle } from "../../components/DataTable";
-import { Button } from "../../components/ui/Button";
-import { Select } from "../../components/ui/Select";
 import { CoursePill } from "../../components/ui/CoursePill";
-import { StatusTag } from "../../components/ui/StatusTag";
 import { EmptyState } from "../../components/ui/EmptyState";
 
 interface AllFilesProps {
@@ -47,30 +46,24 @@ interface Capture {
   done: boolean;
 }
 
-type SortId = "title" | "course" | "section" | "type" | "uploaded";
+type SortId = "title" | "course" | "section" | "detected" | "saved";
 
 const DEFAULT_DIR: Record<SortId, "asc" | "desc"> = {
   title: "asc",
   course: "asc",
   section: "asc",
-  type: "asc",
-  uploaded: "desc",
+  detected: "desc",
+  saved: "desc",
 };
 
-function uploadedAt(resource: Resource): number | null {
-  const at = activityTimestamp(resource);
+function detectedAt(resource: Resource): number | null {
+  const at = activityTimestamp(resource) ?? resource.firstSeenAt;
   return at ? (parseTimestamp(at)?.getTime() ?? null) : null;
 }
 
-/** Availability as a muted label, or a StatusTag for the two notable states. */
-function availabilityCell(resource: Resource) {
-  if (resource.availabilityStatus === "unavailable") {
-    return <StatusTag kind="unavailable" label="Unavailable" />;
-  }
-  if (resource.availabilityStatus === "restored") {
-    return <StatusTag kind="restored" label="Restored" />;
-  }
-  return <span className="cell-title-sub">Available</span>;
+function Highlight({ text, query }: { text: string; query: string }) {
+  const parts = splitLiteralMatches(text, query);
+  return <>{parts.map((p, i) => p.match ? <mark className="match-hl" key={i}>{p.text}</mark> : <span key={i}>{p.text}</span>)}</>;
 }
 
 /** Every discovered resource as one sortable, filterable table. */
@@ -89,75 +82,75 @@ export default function AllFiles({
   inventoryError,
 }: AllFilesProps) {
   const destinations = useMaterialActions({ onOpen, onPreview });
+  const mirror = useMirror();
   const [courseFilter, setCourseFilter] = useSessionValue("library:files:course", "all");
   const [typeFilter, setTypeFilter] = useSessionValue("library:files:type", "all");
+  const [savedFilter, setSavedFilter] = useSessionValue("library:files:saved", "all");
   const [sort, setSort] = useSessionValue<{ id: SortId; dir: "asc" | "desc" }>("library:files:sort", {
-    id: "uploaded",
+    id: "detected",
     dir: "desc",
   });
 
   const unique = useMemo(() => dedupeCourseResources(resources), [resources]);
   const types = useMemo(() => typeOptions(unique), [unique]);
-  const codeByCourse = useMemo(() => {
-    const map = new Map<number, string>();
-    for (const course of courses) map.set(course.id, course.shortName ?? course.name);
-    return map;
-  }, [courses]);
 
+  const isSaved = (r: Resource) => Boolean(mirror && isLocal(mirror.statusOf(r.id)));
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase();
     const type = typeFilter === "all" ? "" : typeFilter.toLowerCase();
     return unique.filter((r) => {
       if (courseFilter !== "all" && r.courseId !== Number(courseFilter)) return false;
       if (type && r.resourceType.trim().toLowerCase() !== type) return false;
+      if (savedFilter === "saved" && !isSaved(r)) return false;
+      if (savedFilter === "unsaved" && isSaved(r)) return false;
       if (needle) {
         const haystack =
-          `${r.title} ${r.courseName ?? ""} ${r.resourceType} ${formatSectionPath(r)}`.toLowerCase();
+          `${r.title} ${courseTitle(r.courseId, r.courseName)} ${r.resourceType} ${formatSectionPath(r)} ${r.sourcePageUrl ?? ""}`.toLowerCase();
         if (!haystack.includes(needle)) return false;
       }
       return true;
     });
-  }, [unique, search, typeFilter, courseFilter]);
+  }, [unique, search, typeFilter, courseFilter, savedFilter, mirror]);
 
   const rows = useMemo(() => {
+    const sortId: SortId = (["title", "course", "section", "detected", "saved"] as const).includes(sort.id as SortId)
+      ? (sort.id as SortId) : "detected";
     const dir = sort.dir === "asc" ? 1 : -1;
     const byTitle = (a: Resource, b: Resource) =>
-      a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
+      a.title.localeCompare(b.title, undefined, { sensitivity: "base" }) || a.id - b.id;
     return [...filtered].sort((a, b) => {
-      switch (sort.id) {
-        case "title":
-          return byTitle(a, b) * dir;
-        case "course":
-          return (a.courseName ?? "").localeCompare(b.courseName ?? "") * dir;
-        case "section":
-          return formatSectionPath(a).localeCompare(formatSectionPath(b)) * dir;
-        case "type":
-          return a.resourceType.localeCompare(b.resourceType) * dir;
-        case "uploaded":
+      let cmp = 0;
+      switch (sortId) {
+        case "title": cmp = byTitle(a, b); break;
+        case "course": cmp = courseTitle(a.courseId, a.courseName).localeCompare(courseTitle(b.courseId, b.courseName), undefined, { sensitivity: "base" }); break;
+        case "section": cmp = formatSectionPath(a).localeCompare(formatSectionPath(b), undefined, { sensitivity: "base" }); break;
+        case "saved": cmp = Number(isSaved(a)) - Number(isSaved(b)); break;
+        case "detected":
         default: {
-          const ta = uploadedAt(a);
-          const tb = uploadedAt(b);
-          if (ta === null && tb === null) return byTitle(a, b);
-          if (ta === null) return 1;
-          if (tb === null) return -1;
-          return ta !== tb ? (ta - tb) * dir : byTitle(a, b);
+          const ta = detectedAt(a); const tb = detectedAt(b);
+          if (ta === null && tb === null) cmp = 0;
+          else if (ta === null) return 1;
+          else if (tb === null) return -1;
+          else cmp = ta - tb;
         }
       }
+      return cmp !== 0 ? cmp * dir : byTitle(a, b);
     });
-  }, [filtered, sort]);
+  }, [filtered, sort, mirror]);
 
-  const filtersActive = courseFilter !== "all" || typeFilter !== "all" || search.trim() !== "";
+  const filtersActive = courseFilter !== "all" || typeFilter !== "all" || savedFilter !== "all" || search.trim() !== "";
 
   const onSort = (id: string) => {
     const key = id as SortId;
     setSort((prev) =>
-      prev.id === key ? { id: key, dir: prev.dir === "asc" ? "desc" : "asc" } : { id: key, dir: DEFAULT_DIR[key] },
+      prev.id === key ? { id: key, dir: prev.dir === "asc" ? "desc" : "asc" } : { id: key, dir: DEFAULT_DIR[key] ?? "asc" },
     );
   };
 
   const clearFilters = () => {
     setCourseFilter("all");
     setTypeFilter("all");
+    setSavedFilter("all");
     onClearSearch?.();
   };
 
@@ -310,16 +303,17 @@ export default function AllFiles({
     else void beginCapture(intent.ids, intent.isRead ? "read" : "unread", false, input);
   };
 
+  const query = search.trim();
   const columns: DataColumn<Resource>[] = [
     {
       id: "title",
-      header: "Title",
+      header: "Name",
       className: "title-cell",
-      width: 280,
+      width: 320,
       sortable: true,
       title: (resource) => resource.title,
       cell: (resource) => {
-        const size = resource.sizeBytes ? formatBytes(resource.sizeBytes) : "";
+        const path = [courseTitle(resource.courseId, resource.courseName), ...formatSectionPath(resource).split(" / ").filter(Boolean)].join(" / ");
         return (
           <button
             type="button"
@@ -331,8 +325,8 @@ export default function AllFiles({
               inspect(resource, event.currentTarget);
             }}
           >
-            <span className="cell-title-main">{resource.title}</span>
-            {size && <span className="cell-title-sub">{size}</span>}
+            <span className="cell-title-main"><Highlight text={resource.title} query={query} /></span>
+            {query && <span className="cell-title-sub"><Highlight text={path} query={query} /></span>}
           </button>
         );
       },
@@ -340,19 +334,15 @@ export default function AllFiles({
     {
       id: "course",
       header: "Course",
-      width: 120,
+      width: 140,
       sortable: true,
-      title: (resource) => resource.courseName ?? undefined,
+      title: (resource) => courseTitle(resource.courseId, resource.courseName),
       cell: (resource) => (
         <span className="row-course-pill">
           <CoursePill
             courseId={resource.courseId}
             onOpen={resource.courseId != null && onCourse ? () => onCourse(resource.courseId!) : undefined}
-            code={
-              (resource.courseId != null && codeByCourse.get(resource.courseId)) ||
-              resource.courseName ||
-              "—"
-            }
+            code={courseTitle(resource.courseId, resource.courseName)}
             name={resource.courseName}
           />
         </span>
@@ -365,43 +355,24 @@ export default function AllFiles({
       width: 160,
       sortable: true,
       title: (resource) => formatSectionPath(resource),
-      cell: (resource) => formatSectionPath(resource),
+      cell: (resource) => <Highlight text={formatSectionPath(resource)} query={query} />,
     },
     {
-      id: "type",
-      header: "Type",
-      width: 112,
-      sortable: true,
-      cell: (resource) => (
-        <span className={cx("file-tone", fileTone(resource.resourceType))}>
-          <span className="file-dot" aria-hidden="true" />
-          {resource.resourceType}
-        </span>
-      ),
-    },
-    {
-      id: "uploaded",
-      header: "Uploaded",
+      id: "detected",
+      header: "Detected",
       width: 140,
       sortable: true,
-      title: (resource) => describeUpload(resource).label,
-      cell: (resource) => {
-        const upload = describeUpload(resource);
-        return upload.source === "unavailable" ? "Upload date unavailable" : upload.label;
-      },
+      title: (resource) => formatCompact(activityTimestamp(resource) ?? resource.firstSeenAt),
+      cell: (resource) => formatCompact(activityTimestamp(resource) ?? resource.firstSeenAt),
     },
     {
-      id: "availability",
-      header: "Availability",
-      width: 112,
-      cell: availabilityCell,
-    },
-    {
-      id: "actions",
-      header: "",
-      width: 120,
+      id: "saved",
+      header: "Saved",
+      width: 160,
+      sortable: true,
       cell: (resource) => (
-        <div className="row-actions">
+        <div className="saved-cell">
+          <span>{isSaved(resource) ? "Saved" : "—"}</span>
           <MaterialButtons
             actions={destinations?.(resource) ?? []}
             label={`Actions for ${resource.title}`}
@@ -421,41 +392,31 @@ export default function AllFiles({
       </p>}
       <span className="sr-only" aria-live="polite">{selection.length} materials selected</span>
       <div className="filter-bar">
-        <div className="filter-bar-left">
-          <Select
-            value={courseFilter}
-            onValueChange={setCourseFilter}
-            options={[
-              { value: "all", label: "All courses" },
-              ...courses.map((course) => ({
-                value: String(course.id),
-                label: course.shortName ?? course.name,
-              })),
-            ]}
-            ariaLabel="Filter by course"
-          />
-          <Select
-            value={typeFilter}
-            onValueChange={setTypeFilter}
-            options={[
-              { value: "all", label: "All types" },
-              ...types.map((option) => ({
-                value: option.type,
-                label: `${option.type} (${option.count})`,
-              })),
-            ]}
-            ariaLabel="Filter by file type"
-          />
+        <div className="filter-bar-left filter-chips" role="group" aria-label="Filters">
+          <div className="filter-chip"><span className="mono">Type</span>
+            <Select value={typeFilter} onValueChange={setTypeFilter} ariaLabel="Filter by file type" options={[
+              { value: "all", label: "All" },
+              ...types.map((option) => ({ value: option.type, label: `${option.type} (${option.count})` })),
+            ]} />
+          </div>
+          <div className="filter-chip"><span className="mono">Course</span>
+            <Select value={courseFilter} onValueChange={setCourseFilter} ariaLabel="Filter by course" options={[
+              { value: "all", label: "All" },
+              ...courses.map((course) => ({ value: String(course.id), label: course.shortName ?? course.name })),
+            ]} />
+          </div>
+          <label className="filter-chip" aria-label="Saved filter"><span className="mono">Saved</span>
+            <select value={savedFilter} onChange={(e) => setSavedFilter(e.target.value)} aria-label="Saved">
+              <option value="all">All</option>
+              <option value="saved">Saved</option>
+              <option value="unsaved">Not saved</option>
+            </select>
+          </label>
+          {query && <span className="filter-chip active" aria-label="Search query"><span className="mono">Search</span><span>{query}</span></span>}
         </div>
         <div className="filter-bar-right">
-          <span className="result-count">
-            {rows.length} of {unique.length}
-          </span>
-          {filtersActive && (
-            <Button variant="ghost" size="sm" onClick={clearFilters}>
-              Clear filters
-            </Button>
-          )}
+          <span className="result-count">{rows.length} of {unique.length}</span>
+          {filtersActive && <button type="button" className="btn ghost sm" onClick={clearFilters}>Clear filters</button>}
         </div>
       </div>
 

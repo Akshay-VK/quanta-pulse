@@ -238,13 +238,17 @@
     flex-wrap: wrap;
   }
 
+  .course-attention-group {
+    margin-bottom: var(--sp-3);
+  }
+
   /* Course row: the whole row is one button, with the overflow menu beside it. */
   .course-row {
     display: flex;
     align-items: center;
     gap: var(--sp-3);
     width: 100%;
-    min-height: calc(var(--row-h) + var(--sp-4));
+    min-height: 48px;
     padding: var(--sp-2) 0;
     text-align: left;
     transition: background-color var(--dur-fast) var(--ease-inout);
@@ -256,6 +260,7 @@
     gap: var(--sp-4);
     flex: 1 1 auto;
     min-width: 0;
+    min-height: 48px;
     padding: var(--sp-2) var(--sp-3);
     border-radius: var(--radius-sm);
   }
@@ -295,6 +300,7 @@
   }
 
   .course-row-stat,
+  .course-row-unread,
   .course-row-last,
   .course-row-new {
     flex: 0 0 auto;

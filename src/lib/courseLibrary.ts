@@ -209,3 +209,17 @@ export function categoryOptions(
     count: counts.get(c.id) ?? 0,
   }));
 }
+
+/** Courses needing attention: paused or a failing last scan, before the rest. */
+export function splitCourseAttention<T extends { monitoringStatus: string; lastScanStatus: string | null }>(
+  courses: readonly T[],
+): { attention: T[]; rest: T[] } {
+  const attention: T[] = [];
+  const rest: T[] = [];
+  for (const course of courses) {
+    if (course.monitoringStatus === "paused" || (course.lastScanStatus && course.lastScanStatus !== "ok")) {
+      attention.push(course);
+    } else rest.push(course);
+  }
+  return { attention, rest };
+}

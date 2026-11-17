@@ -9,6 +9,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { api } from "../../lib/api";
+import { splitCourseAttention } from "../../lib/courseLibrary";
 import { cx } from "../../lib/cx";
 import { activityTimestamp } from "../../lib/filter";
 import { parseTimestamp, relativeLabel } from "../../lib/format";
@@ -45,9 +46,9 @@ type Status = { kind: "ok" | "warn" | "error"; label: string };
 function courseStatus(course: Course): Status {
   if (course.monitoringStatus === "paused") return { kind: "warn", label: "Paused" };
   if (course.lastScanStatus && course.lastScanStatus !== "ok") {
-    return { kind: "error", label: "Last scan failed" };
+    return { kind: "error", label: "Error" };
   }
-  return { kind: "ok", label: "Monitoring" };
+  return { kind: "ok", label: "Active" };
 }
 
 /** The course hub: one row per monitored course, opening its in-app library. */
@@ -94,8 +95,10 @@ export default function CourseList({
           .includes(needle);
       })
     : courses;
+  const { attention, rest } = splitCourseAttention(visible);
+  const ordered = attention.length ? [...attention, ...rest] : visible;
 
-  const ids = visible.map((course) => `course:${course.id}`);
+  const ids = ordered.map((course) => `course:${course.id}`);
   const overlayOpen = () => Boolean(document.querySelector(
     '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], .sidebar-drawer',
   ));
@@ -206,7 +209,7 @@ export default function CourseList({
     return items;
   }
 
-  if (visible.length === 0) {
+  if (ordered.length === 0) {
     return (
       <EmptyState
         title="No courses found"
@@ -216,83 +219,73 @@ export default function CourseList({
     );
   }
 
+  const renderCourse = (course: Course) => {
+    const status = courseStatus(course);
+    const lastChange = lastChangeByCourse.get(course.id);
+    const unread = unreadByCourse?.get(course.id) ?? 0;
+    const label = courseLabel(course.id);
+    const display = courseTitle(course.id, course.name);
+    const raw = label?.raw ?? course.name;
+    return (
+      <div className="course-row" key={course.id}>
+        <button
+          type="button"
+          className="course-row-main"
+          ref={(button) => {
+            const id = `course:${course.id}`;
+            if (button) buttons.current.set(id, button);
+            else buttons.current.delete(id);
+          }}
+          onFocus={(event) => {
+            focusedId.current = `course:${course.id}`;
+            focusedButton.current = event.currentTarget;
+            ownedFocus.current = true;
+          }}
+          onBlur={() => { ownedFocus.current = false; }}
+          onKeyDown={(event) => navigate(event, `course:${course.id}`)}
+          onClick={() => onOpenCourse(course)}
+          aria-label={`Open ${display} library`}
+        >
+          <span className={cx("course-dot", courseDotClass(course.id))} aria-hidden="true" />
+          <span className="course-row-code mono">{course.shortName ?? course.externalCourseId}</span>
+          <span className="course-row-copy">
+            <span className="course-row-name" title={raw}>{display}</span>
+          </span>
+          <span className="course-row-unread">{unread > 0 ? `${unread}` : "—"}</span>
+          <span className="course-row-last mono">
+            {lastChange ? relativeLabel(lastChange) : "—"}
+          </span>
+          <span className={cx("status-pill", status.kind)}>
+            <span className="s-dot" aria-hidden="true" />
+            {status.label}
+          </span>
+          <ChevronRight className="course-row-chevron" aria-hidden="true" />
+        </button>
+        <div className="course-row-actions">
+          <Menu
+            label={`Actions for ${display}`}
+            items={courseMenu(course)}
+            trigger={
+              <IconButton label={`Actions for ${display}`} size={28} tooltip={false} disabled={busyId === course.id}>
+                <MoreHorizontal aria-hidden="true" />
+              </IconButton>
+            }
+          />
+        </div>
+      </div>
+    );
+  };
+
   return (
     <>
       <div>
-        {visible.map((course) => {
-          const status = courseStatus(course);
-          const lastChange = lastChangeByCourse.get(course.id);
-          const unread = unreadByCourse?.get(course.id) ?? 0;
-          const label = courseLabel(course.id);
-          const display = courseTitle(course.id, course.name);
-          const raw = label?.raw ?? course.name;
-          const showRaw = raw !== display;
-          return (
-            <div className="course-row" key={course.id}>
-              {/* One button for the whole row; the menu stays outside it so no
-                  interactive element is nested inside another. */}
-              <button
-                type="button"
-                className="course-row-main"
-                ref={(button) => {
-                  const id = `course:${course.id}`;
-                  if (button) buttons.current.set(id, button);
-                  else buttons.current.delete(id);
-                }}
-                onFocus={(event) => {
-                  focusedId.current = `course:${course.id}`;
-                  focusedButton.current = event.currentTarget;
-                  ownedFocus.current = true;
-                }}
-                onBlur={() => { ownedFocus.current = false; }}
-                onKeyDown={(event) => navigate(event, `course:${course.id}`)}
-                onClick={() => onOpenCourse(course)}
-                aria-label={`Open ${display} library`}
-              >
-                <span
-                  className={cx("course-dot", courseDotClass(course.id))}
-                  aria-hidden="true"
-                />
-                <span className="course-row-copy">
-                  <span className="course-row-name" title={raw}>
-                    {display}
-                  </span>
-                  {showRaw && <span className="course-row-code">{raw}</span>}
-                </span>
-                <span className="course-row-stat" title={`${course.resourceCount} files`}>
-                  {course.resourceCount} files
-                </span>
-                {unread > 0 && (
-                  <span className="course-row-new">{unread} new</span>
-                )}
-                <span className="course-row-last">
-                  {lastChange ? relativeLabel(lastChange) : "No activity yet"}
-                </span>
-                <span className={cx("status-pill", status.kind)}>
-                  <span className="s-dot" aria-hidden="true" />
-                  {status.label}
-                </span>
-                <ChevronRight className="course-row-chevron" aria-hidden="true" />
-              </button>
-              <div className="course-row-actions">
-                <Menu
-                  label={`Actions for ${display}`}
-                  items={courseMenu(course)}
-                  trigger={
-                    <IconButton
-                      label={`Actions for ${display}`}
-                      size={28}
-                      tooltip={false}
-                      disabled={busyId === course.id}
-                    >
-                      <MoreHorizontal aria-hidden="true" />
-                    </IconButton>
-                  }
-                />
-              </div>
-            </div>
-          );
-        })}
+        {attention.length > 0 && (
+          <div className="course-attention-group">
+            <div className="group-header course-attention-header">Needs attention</div>
+            {attention.map(renderCourse)}
+          </div>
+        )}
+        {rest.map(renderCourse)}
       </div>
 
       <ConfirmDialog

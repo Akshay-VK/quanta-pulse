@@ -167,26 +167,24 @@ async function clickDialogButton(text: string) {
 }
 
 describe("CourseList", () => {
-  it("renders one row per course with its dot, file count, new badge and status", async () => {
+  it("renders one row per course with its dot, code, name and monitoring tag", async () => {
     await renderCourses([buildCourse(), buildCourse({ id: 2, name: "Physics", shortName: "PHYS F111", url: "https://quanta.bits-pilani.ac.in/course/view.php?id=2" })]);
     expect(container.querySelectorAll(".course-row")).toHaveLength(2);
     expect(container.textContent).toContain("Discrete Mathematics");
     expect(container.textContent).toContain("Physics");
-    expect(container.textContent).toContain("Monitoring");
+    expect(container.textContent).toContain("Active");
     expect(container.querySelector(".course-row .course-dot")).toBeTruthy();
-    expect(container.textContent).toContain("12 files");
-    // The raw name equals the display name here, so there is no second line.
-    expect(container.querySelector(".course-row-code")).toBeNull();
+    expect(container.querySelector(".course-row-code")?.textContent).toBe("MATH F211");
   });
 
-  it("shows unread badges from the unread map and file counts in mono", async () => {
+  it("shows unread counts and last change in dedicated columns", async () => {
     await renderCourses([buildCourse()], {
       unreadByCourse: new Map([[1, 3]]),
       resources: [buildResource()],
     });
     const found = container.querySelector(".course-row") as HTMLElement;
-    expect(found.textContent).toContain("3 new");
-    expect(found.querySelector(".course-row-stat")?.textContent).toBe("12 files");
+    expect(found.querySelector(".course-row-unread")?.textContent).toBe("3");
+    expect(found.querySelector(".course-row-last")?.textContent).toBeTruthy();
   });
 
   it("opens the course page from the row without fetching resources itself", async () => {
@@ -257,13 +255,13 @@ describe("CourseList", () => {
     );
   });
 
-  it("shows Paused and Last scan failed status pills", async () => {
+  it("shows Paused and Error status pills", async () => {
     await renderCourses([
       buildCourse({ monitoringStatus: "paused" }),
       buildCourse({ id: 2, name: "Physics", shortName: "PHYS F111", externalCourseId: "phys-f111", url: "https://quanta.bits-pilani.ac.in/course/view.php?id=2", lastScanStatus: "error" }),
     ]);
     expect(container.textContent).toContain("Paused");
-    expect(container.textContent).toContain("Last scan failed");
+    expect(container.textContent).toContain("Error");
     expect(container.querySelector(".status-pill.warn")).toBeTruthy();
     expect(container.querySelector(".status-pill.error")).toBeTruthy();
   });

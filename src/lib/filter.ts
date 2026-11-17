@@ -161,3 +161,29 @@ export function groupByDate(resources: Resource[], now: Date = new Date()): Date
   }
   return [...groups.values()];
 }
+
+export interface LiteralMatchPart {
+  text: string;
+  match: boolean;
+}
+
+/** Split `text` into literal, case-insensitive matches of `query`. Safe for any query. */
+export function splitLiteralMatches(text: string, query: string): LiteralMatchPart[] {
+  const needle = query.trim();
+  if (!needle) return [{ text, match: false }];
+  const lower = text.toLowerCase();
+  const find = needle.toLowerCase();
+  const parts: LiteralMatchPart[] = [];
+  let from = 0;
+  while (from < text.length) {
+    const at = lower.indexOf(find, from);
+    if (at === -1) {
+      parts.push({ text: text.slice(from), match: false });
+      break;
+    }
+    if (at > from) parts.push({ text: text.slice(from, at), match: false });
+    parts.push({ text: text.slice(at, at + needle.length), match: true });
+    from = at + needle.length;
+  }
+  return parts.length ? parts : [{ text, match: false }];
+}
