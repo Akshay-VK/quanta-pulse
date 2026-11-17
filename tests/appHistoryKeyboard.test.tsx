@@ -105,9 +105,10 @@ describe("actual App History Changes keyboard", () => {
     await open(); const pending = deferred<{ items: ChangeEvent[]; total: number }>();
     appApi.queryHistoryEvents.mockReturnValueOnce(pending.promise); await emitAppEvent("sync:done", {});
     focus(); await key("e"); await key("Delete"); await key("Enter");
-    expect(document.querySelector(".peek")).toBeTruthy(); expect(appApi.setEventReadState).not.toHaveBeenCalled();
+    expect(document.querySelector(".peek")).toBeTruthy(); expect(appApi.setEventReadState).toHaveBeenCalledWith([10], true);
+    const readsAfterInspect = appApi.setEventReadState.mock.calls.length;
     await escape(); await act(async () => pending.reject(new Error("unavailable"))); focus(); await key("u");
-    expect(appApi.setEventReadState).not.toHaveBeenCalled();
+    expect(appApi.setEventReadState).toHaveBeenCalledTimes(readsAfterInspect);
   });
 
   it("respects nested controls, modifiers, IME, repeat, menus and global search ownership", async () => {
@@ -209,7 +210,7 @@ describe("actual App History Changes keyboard", () => {
     expect(document.querySelector('.peek-title')?.textContent).toBe("Orphan"); await escape();
     await key("j"); await key("x"); await key("Enter");
     expect(document.querySelector('.peek-title')?.textContent).toBe("Baseline");
-    expect(appApi.setEventReadState).not.toHaveBeenCalled();
+    expect(appApi.setEventReadState).toHaveBeenCalledTimes(2);
     expect(appApi.markAllRead).not.toHaveBeenCalled();
   });
 

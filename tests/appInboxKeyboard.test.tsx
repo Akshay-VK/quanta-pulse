@@ -13,7 +13,7 @@ function key(target: Element, value: string, options: KeyboardEventInit = {}) {
 }
 
 describe('Inbox keyboard integration', () => {
-  it('moves focus without inspection or acknowledgement, and Enter inspects once', async () => {
+  it('moves focus without inspection or acknowledgement, and Enter inspects once with acknowledgement', async () => {
     appApi.listDashboardEvents.mockResolvedValue([change(), change({ id: 11, resourceId: 2, resourceTitle: 'Problem set', title: 'Updated set' })]);
     appApi.listResources.mockResolvedValue([resource(), resource({ id: 2, externalResourceId: 'r2', title: 'Problem set' })]);
     app = await renderApp();
@@ -26,7 +26,7 @@ describe('Inbox keyboard integration', () => {
     const focused = document.activeElement as HTMLButtonElement;
     await act(async () => { key(focused, 'Enter'); });
     expect(document.querySelector('.peek-title')?.textContent).toBe('Problem set');
-    expect(appApi.setEventReadState).not.toHaveBeenCalled();
+    expect(appApi.setEventReadState).toHaveBeenCalledWith([11], true);
   });
   it('toggles accessible local multi-selection without inspecting; E and U use grouped IDs', async () => {
     appApi.listDashboardEvents.mockResolvedValue([change({ id: 10 }), change({ id: 11, title: 'Update' })]);

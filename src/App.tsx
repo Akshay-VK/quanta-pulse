@@ -109,6 +109,12 @@ function AppShell() {
   const [eventScopeReady, setEventScopeReady] = useState(false);
   const [scans, setScans] = useState<ScanRun[]>([]);
   const inbox = useInbox();
+  const inboxRefreshRef = useRef(inbox.refresh);
+  inboxRefreshRef.current = inbox.refresh;
+  const historyEventsRef = useRef(historyEvents);
+  historyEventsRef.current = historyEvents;
+  const inboxPageRef = useRef(inbox.page);
+  inboxPageRef.current = inbox.page;
   const [dueFilter, setDueFilter] = useState<DueFilter>({});
   const defaultDueFilter = useMemo(() => ({}), []);
   const due = useDueInventory(defaultDueFilter);
@@ -386,7 +392,17 @@ function AppShell() {
     };
   }, [refresh, refreshStatus, navigate]);
 
-  const eventKinds = useMemo(() => new Map((inbox.page?.items ?? []).flatMap(item => item.resourceId == null ? [] : [[item.resourceId, new Set(item.changeTypes)] as const])), [inbox.page]);
+  // Complete history inventory, not the first Inbox page, drives resource change kinds.
+  const eventKinds = useMemo(() => {
+    const map = new Map<number, Set<string>>();
+    for (const event of historyEvents) {
+      if (event.resourceId == null) continue;
+      const kinds = map.get(event.resourceId) ?? new Set<string>();
+      kinds.add(event.changeType);
+      map.set(event.resourceId, kinds);
+    }
+    return map;
+  }, [historyEvents]);
   const unreadByCourse = useMemo(() => new Map((inbox.global?.courseCounts ?? []).flatMap(count => count.courseId == null ? [] : [[count.courseId, count.unreadTotal] as const])), [inbox.global]);
 
   const open = useCallback(
@@ -453,6 +469,20 @@ function AppShell() {
 
   const lookupLocalFile = mirror?.lookupLocalFile ?? api.mirrorLocalFile;
 
+  const markInspectedRead = useCallback((eventIds: number[]) => {
+    const ids = [...new Set(eventIds)].filter((id) => Number.isSafeInteger(id) && id > 0);
+    if (ids.length === 0) return;
+    const previous = new Map(historyEventsRef.current.map((event) => [event.id, event.read]));
+    setHistoryEvents((current) => current.map((event) => (ids.includes(event.id) ? { ...event, read: true } : event)));
+    void api.setEventReadState(ids, true).then(() => {
+      void inboxRefreshRef.current();
+    }).catch((err) => {
+      setHistoryEvents((current) => current.map((event) => (previous.has(event.id) ? { ...event, read: previous.get(event.id)! } : event)));
+      void inboxRefreshRef.current();
+      notify(String(err), true);
+    });
+  }, [notify]);
+
   const selectDetails = useCallback((owner: ViewId, subject: DetailSubject, origin: HTMLElement, restoreFocus?: RestoreDetailFocus) => {
     const next = { ...subject, owner, identity: detailIdentity(subject) };
     selectionRef.current = next;
@@ -462,6 +492,28 @@ function AppShell() {
     restoreRow.current = restoreFocus;
     setSelection(next);
     setPeekLocal(null);
+    // Inspecting an unread item marks its captured event IDs read (optimistic, rolled back on failure).
+    // Focus, multi-select and preview never trigger this.
+    const capturedReadIds: number[] = [];
+    if (subject.kind === "resource") {
+      for (const event of historyEventsRef.current) {
+        if (event.resourceId === subject.resource.id && !event.read && !capturedReadIds.includes(event.id)) capturedReadIds.push(event.id);
+      }
+    } else if (subject.kind === "change") {
+      if (subject.change.resourceId == null) {
+        if (!subject.change.read) capturedReadIds.push(subject.change.id);
+      } else if (owner === "today") {
+        const item = (inboxPageRef.current?.items ?? []).find((candidate) => candidate.eventIds.includes(subject.change.id));
+        if (item) capturedReadIds.push(...item.eventIds);
+        else if (!subject.change.read) capturedReadIds.push(subject.change.id);
+      } else {
+        for (const event of historyEventsRef.current) {
+          if (event.resourceId === subject.change.resourceId && !event.read && !capturedReadIds.includes(event.id)) capturedReadIds.push(event.id);
+        }
+        if (!capturedReadIds.includes(subject.change.id) && !subject.change.read) capturedReadIds.push(subject.change.id);
+      }
+    }
+    markInspectedRead(capturedReadIds);
     if (subject.kind === "scan") {
       const scanId = subject.scan.id;
       setScanDetail({ scanId, details: null, loading: true });
@@ -488,7 +540,7 @@ function AppShell() {
         notify(`Could not load local copy: ${String(err)}`, true);
       }
     });
-  }, [notify, lookupLocalFile]);
+  }, [notify, lookupLocalFile, markInspectedRead]);
 
   /** Validate a saved copy before opening; a missing file requires explicit download. */
   const openLocal = useCallback(

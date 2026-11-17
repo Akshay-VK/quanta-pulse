@@ -45,7 +45,7 @@ describe('integrated attention material destinations', () => {
     await click(button('Show details for Lecture 4'));
     const panel = document.querySelector('.peek')!;
     for (const fact of ['Section', 'Week 4', 'Lectures', 'Preview', 'Availability', 'Change', '2026-11-15', 'date only']) expect(panel.textContent).toContain(fact);
-    expect(appApi.setEventReadState).not.toHaveBeenCalled();
+    expect(appApi.setEventReadState).toHaveBeenCalledWith([10], true);
   });
   it('previews an Inbox resource without acknowledging grouped attention or opening a source', async () => {
     app = await renderApp();

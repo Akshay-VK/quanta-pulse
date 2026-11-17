@@ -7,17 +7,25 @@ let app: Awaited<ReturnType<typeof renderApp>>;
 beforeEach(() => { setupApp(); vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-11-14T12:00:00Z')); appApi.queryInbox.mockResolvedValue(page()); appApi.queryDueResources.mockResolvedValue({ items: [], total: 0 }); });
 afterEach(() => { app?.unmount(); vi.useRealTimers(); });
 describe('complete attention workflows through App', () => {
-  it('uses complete grouped badges and explicit desired read state without acknowledging inspection', async () => {
+  it('uses complete grouped badges and marks captured events read on inspection', async () => {
     app = await renderApp();
     expect(document.querySelector('.nav-item')?.textContent).toContain('80');
     await click(button('Show details for Lecture 4'));
-    expect(appApi.setEventReadState).not.toHaveBeenCalled();
+    expect(appApi.setEventReadState).toHaveBeenCalledWith([10, 11], true);
     await click(button('Mark item read'));
     expect(appApi.setEventReadState).toHaveBeenCalledWith([10, 11], true);
     appApi.queryInbox.mockResolvedValue(page(10, false));
     await emitAppEvent('sync:done', {});
     await click(button('Mark item unread'));
     expect(appApi.setEventReadState).toHaveBeenLastCalledWith([10, 11], false);
+  });
+  it('surfaces a failed inspection acknowledgement without losing the selection', async () => {
+    appApi.setEventReadState.mockRejectedValueOnce(new Error('write failed'));
+    app = await renderApp();
+    await click(button('Show details for Lecture 4'));
+    expect(appApi.setEventReadState).toHaveBeenCalledWith([10, 11], true);
+    expect(document.body.textContent).toContain('write failed');
+    expect(document.querySelector('.peek-title')?.textContent).toBe('Lecture 4');
   });
   it('captures all matching IDs before confirming and ignores later arrivals', async () => {
     appApi.snapshotInboxEventIds.mockResolvedValue([10, 11, 999]);
@@ -91,7 +99,7 @@ describe('complete attention workflows through App', () => {
     expect(document.querySelector('main')?.textContent).toContain('Source unavailable');
     await click(button('Show details for Lecture 4'));
     expect(document.querySelector('.peek')?.textContent).toContain('2026-11-15');
-    expect(appApi.setEventReadState).not.toHaveBeenCalled();
+    expect(appApi.setEventReadState).toHaveBeenCalledWith([10], true);
   });
 });
 
@@ -137,7 +145,7 @@ describe('snapshot mutation and retained inventory protections', () => {
     await click(button('Show details for Removed notice'));
     expect(document.querySelector('.peek-title')?.textContent).toBe('Removed notice');
     expect(document.querySelector('.peek')?.textContent).not.toContain('Download now');
-    expect(appApi.setEventReadState).not.toHaveBeenCalled();
+    expect(appApi.setEventReadState).toHaveBeenCalledWith([10], true);
   });
   it('keeps global badges unfiltered while the bulk snapshot uses active attention', async () => {
     appApi.queryInbox.mockImplementation(async filter => filter?.attention ? { ...page(), items: [], total: 0, unreadTotal: 0 } : page());
@@ -256,7 +264,7 @@ describe('complete inspector enrichment', () => {
     await click(button('Show details for Beyond the default cap'));
     expect(appApi.listResources).toHaveBeenCalledWith({ offset: 2000, limit: 2000 });
     expect(button('Download and open', document.querySelector('.peek')!)).toBeTruthy();
-    expect(appApi.setEventReadState).not.toHaveBeenCalled();
+    expect(appApi.setEventReadState).toHaveBeenCalledWith([10, 11], true);
   });
 });
 
