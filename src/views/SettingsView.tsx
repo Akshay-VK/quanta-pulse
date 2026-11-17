@@ -4,7 +4,8 @@ import { api } from "../lib/api";
 import { cx } from "../lib/cx";
 import { formatBytes, formatCompact } from "../lib/format";
 import type { DetailProperty } from "../lib/details";
-import type { AuthStatus, CacheStats, DbInfo, Settings, MirrorStats, TelegramStatus } from "../lib/types";
+import type { AuthStatus, CacheStats, DbInfo, Settings, MirrorStats, MirrorDeleteScope, MirrorDeleteResult, MirrorDownloadProgress, TelegramStatus } from "../lib/types";
+import { useMirror } from "../hooks/useMirror";
 import PageHeader from "../components/PageHeader";
 import SettingRow from "../components/SettingRow";
 import { Switch } from "../components/ui/Switch";
@@ -15,6 +16,7 @@ import { PasswordField } from "../components/ui/PasswordField";
 import { Button } from "../components/ui/Button";
 import { Banner } from "../components/ui/Banner";
 import ConfirmDialog from "../components/ConfirmDialog";
+import { Dialog } from "../components/ui/Dialog";
 import PropertyList from "../components/PropertyList";
 import { hasValidationErrors, isSettingsDirty, validateSettingsDraft } from "../lib/settingsDraft";
 import { installAvailableUpdate, UpdateRelaunchError } from "../lib/updateLifecycle";
@@ -127,6 +129,13 @@ export default function SettingsView({
   const [testingTelegram, setTestingTelegram] = useState(false);
   const [telegramTest, setTelegramTest] = useState<string | null>(null);
   const [operationFeedback, setOperationFeedback] = useState<{ label: string; phase: "pending" | "success" | "error"; detail?: string } | null>(null);
+  const mirror = useMirror();
+  const [deleteScope, setDeleteScope] = useState<MirrorDeleteScope | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteText, setDeleteText] = useState("");
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteResult, setDeleteResult] = useState<MirrorDeleteResult | null>(null);
+  const [deletingFiles, setDeletingFiles] = useState(false);
 
   // About / updates
   const [aboutVersion, setAboutVersion] = useState<string>("");
@@ -341,6 +350,12 @@ export default function SettingsView({
   }
 
   const notificationsDisabled = !draft.notificationsEnabled;
+  const activeDownloads: MirrorDownloadProgress[] = mirror
+    ? [...mirror.downloads.values()].filter((item) => item.state === "queued" || item.state === "downloading")
+    : [];
+  const failedDownloads: MirrorDownloadProgress[] = mirror
+    ? [...mirror.downloads.values()].filter((item) => item.state === "failed")
+    : [];
 
   const dbProps: DetailProperty[] = [
     { label: "Database path", value: dbInfo?.path ?? "—", copy: dbInfo?.path },
@@ -367,8 +382,9 @@ export default function SettingsView({
   async function pickMirrorRoot() {
     setChangingMirrorRoot(true);
     const succeeded = await runOperation("Change saved files folder", async () => {
-      await api.pickMirrorRoot();
-      await api.mirrorStats().then(setMirrorStats);
+      const stats = await api.pickMirrorRoot();
+      setMirrorStats(stats);
+      if (stats?.root) set("mirrorRoot", stats.root);
     });
     if (!succeeded) setChangingMirrorRoot(false);
   }
@@ -406,8 +422,58 @@ export default function SettingsView({
     await runOperation("Retry failed downloads", async () => { await api.mirrorRetryFailed(); await api.mirrorStats().then(setMirrorStats); });
   }
 
+  async function retryDownloadItem(resourceId: number) {
+    if (!mirror) return;
+    try {
+      await mirror.retryDownload(resourceId);
+      try { setMirrorStats(await api.mirrorStats()); } catch {}
+    } catch (error) {
+      setOperationFeedback({ label: "Retry download", phase: "error", detail: String(error) });
+    }
+  }
+
   async function verifyFiles() {
     await runOperation("Verify mirrored files", async () => { await api.mirrorVerifyFiles(); await api.mirrorStats().then(setMirrorStats); });
+  }
+
+  async function openDeleteAll() {
+    setShowDeleteAll(true);
+    setDeleteScope(null);
+    setDeleteError(null);
+    setDeleteText("");
+    setDeleteResult(null);
+    setDeleteLoading(true);
+    try {
+      setDeleteScope(await api.snapshotMirrorDeleteScope());
+    } catch (error) {
+      setDeleteError(String(error));
+    } finally {
+      setDeleteLoading(false);
+    }
+  }
+
+  async function confirmDeleteAll() {
+    if (deleteText !== "DELETE" || !deleteScope || deletingFiles) return;
+    setDeletingFiles(true);
+    setDeleteError(null);
+    try {
+      const result = (await api.mirrorDeleteAll(deleteScope.scopeId)) as MirrorDeleteResult | undefined;
+      const normalized: MirrorDeleteResult = result ?? { removed: 0, failed: [] };
+      setDeleteResult(normalized);
+      try { setMirrorStats(await api.mirrorStats()); } catch {}
+      if (normalized.failed.length === 0) {
+        setShowDeleteAll(false);
+        setDeleteScope(null);
+        setDeleteText("");
+        setDeleteResult(null);
+      } else {
+        setDeleteError(`${normalized.removed} removed, ${normalized.failed.length} failed. Retry by typing DELETE again.`);
+      }
+    } catch (error) {
+      setDeleteError(String(error));
+    } finally {
+      setDeletingFiles(false);
+    }
   }
 
   /** Send one message so a wrong token or chat id is caught here, not at the
@@ -811,6 +877,37 @@ export default function SettingsView({
             </SettingRow>
           )}
 
+          {activeDownloads.length > 0 && (
+            <div className="settings-download-list">
+              <p className="settings-note">Active downloads</p>
+              {activeDownloads.map((item) => (
+                <div key={item.resourceId} className="settings-download-row">
+                  <span className="mono">Resource {item.resourceId}</span>
+                  <progress value={item.bytesDone} max={item.bytesTotal ?? item.bytesDone ?? 1} />
+                  <span className="muted">
+                    {formatBytes(item.bytesDone)}
+                    {item.bytesTotal ? ` / ${formatBytes(item.bytesTotal)}` : ""}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {failedDownloads.length > 0 && (
+            <div className="settings-download-list">
+              <p className="settings-note">Failed downloads</p>
+              {failedDownloads.map((item) => (
+                <div key={item.resourceId} className="settings-download-row">
+                  <span className="mono">Resource {item.resourceId}</span>
+                  {item.error && <span className="muted">{item.error}</span>}
+                  <Button variant="secondary" size="sm" onClick={() => void retryDownloadItem(item.resourceId)}>
+                    Retry
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+
           <SettingRow
             title="Verify files"
             description="Re-hash saved course files and re-download any that are missing or corrupt."
@@ -910,7 +1007,7 @@ export default function SettingsView({
               title="Delete all saved course files"
               description="Permanently remove every saved file in the Saved files folder. The preview cache and course history stay in place. This cannot be undone."
             >
-              <Button variant="danger" size="sm" onClick={() => setShowDeleteAll(true)}>
+              <Button variant="danger" size="sm" onClick={() => void openDeleteAll()}>
                 Delete all saved course files
               </Button>
             </SettingRow>
@@ -1046,19 +1143,77 @@ export default function SettingsView({
           await onRefresh();
         }}
       />
-      <ConfirmDialog
+      <Dialog
         open={showDeleteAll}
-        onOpenChange={setShowDeleteAll}
-        title="Delete all saved course files?"
-        body="This permanently removes every saved file in the Saved files folder. It does not clear the preview cache or delete course history. This cannot be undone."
-        confirmLabel="Delete all"
-        cancelLabel="Cancel"
-        destructive
-        onConfirm={async () => {
-          await api.mirrorDeleteAll();
-          await api.mirrorStats().then(setMirrorStats);
+        onOpenChange={(next) => {
+          if (!next && !deletingFiles) {
+            setShowDeleteAll(false);
+            setDeleteScope(null);
+            setDeleteError(null);
+            setDeleteText("");
+            setDeleteResult(null);
+          }
         }}
-      />
+        role="alertdialog"
+        label="Delete all saved course files"
+      >
+        <h2 className="dialog-title">Delete all saved course files?</h2>
+        <div className="dialog-body">
+          <p>This permanently removes every saved file in the Saved files folder. It does not clear the preview cache or delete course history. This cannot be undone.</p>
+          {deleteLoading && <p>Loading deletion scope…</p>}
+          {deleteScope && (
+            <p>
+              {deleteScope.count} saved {deleteScope.count === 1 ? "file" : "files"} will be removed. Course history and your baseline are retained.
+            </p>
+          )}
+          {deleteResult && deleteResult.failed.length > 0 && (
+            <ul>
+              {deleteResult.failed.map((failure) => (
+                <li key={`${failure.resourceId}-${failure.path}`}>
+                  {failure.path}: {failure.error}
+                </li>
+              ))}
+            </ul>
+          )}
+          {deleteError && <p role="alert">{deleteError}</p>}
+          <label className="settings-inline" style={{ flexDirection: "column", alignItems: "stretch" }}>
+            <span>Type DELETE to confirm</span>
+            <input
+              aria-label="DELETE"
+              placeholder="DELETE"
+              value={deleteText}
+              onChange={(event) => setDeleteText(event.target.value)}
+              disabled={deletingFiles}
+            />
+          </label>
+        </div>
+        <div className="dialog-footer">
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => {
+              if (deletingFiles) return;
+              setShowDeleteAll(false);
+              setDeleteScope(null);
+              setDeleteError(null);
+              setDeleteText("");
+              setDeleteResult(null);
+            }}
+            disabled={deletingFiles}
+          >
+            <span className="btn-label">Cancel</span>
+          </button>
+          <Button
+            variant="danger"
+            className="dialog-primary"
+            loading={deletingFiles}
+            disabled={deletingFiles || deleteLoading || deleteText !== "DELETE" || !deleteScope}
+            onClick={() => void confirmDeleteAll()}
+          >
+            Delete all
+          </Button>
+        </div>
+      </Dialog>
       </div>
     </div>
   );

@@ -1,24 +1,20 @@
 import { RotateCcw, ChevronDown } from "lucide-react";
-import { useState } from "react";
 import { Button } from "./ui/Button";
 import { IconButton } from "./ui/IconButton";
 import { Popover } from "./ui/Popover";
 import { formatBytes } from "../lib/format";
 import { useMirror } from "../hooks/useMirror";
+import { api } from "../lib/api";
 
-/**
- * The downloads popover: queue progress, the Pause/Resume control and the
- * failed count with 'Retry all'. Anchored to the chevron beside the sidebar's
- * second sync line, so it only mounts while the mirror has something to say.
- */
 export default function DownloadsPopover() {
   const mirror = useMirror();
-  const [expandedFailed, setExpandedFailed] = useState(false);
   const stats = mirror?.stats;
   if (!mirror || !stats) return null;
 
   const pending = stats.downloading + stats.queued;
   const paused = stats.state === "paused";
+  const active = [...mirror.downloads.values()].filter((item) => item.state === "queued" || item.state === "downloading");
+  const failed = [...mirror.downloads.values()].filter((item) => item.state === "failed");
 
   return (
     <Popover
@@ -60,6 +56,21 @@ export default function DownloadsPopover() {
           </div>
         </div>
 
+        {active.length > 0 && (
+          <div className="downloads-active">
+            {active.map((item) => (
+              <div key={item.resourceId} className="download-row">
+                <span className="mono">Resource {item.resourceId}</span>
+                <progress value={item.bytesDone} max={item.bytesTotal ?? item.bytesDone ?? 1} />
+                <span className="muted">
+                  {formatBytes(item.bytesDone)}
+                  {item.bytesTotal ? ` / ${formatBytes(item.bytesTotal)}` : ""}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
         {pending > 0 && (
           <div className="popover-actions">
             <Button
@@ -72,35 +83,39 @@ export default function DownloadsPopover() {
           </div>
         )}
 
-        {stats.failed > 0 && (
+        {failed.length > 0 && (
           <div className="popover-failed">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="failed-toggle"
-              aria-expanded={expandedFailed}
-              onClick={() => setExpandedFailed((v) => !v)}
-            >
-              {stats.failed} failed {expandedFailed ? "▲" : "▼"}
-            </Button>
-            {expandedFailed && (
-              <div className="failed-list">
-                <p className="failed-note">
-                  These files could not be downloaded. Fix the issue and retry.
-                </p>
+            {failed.map((item) => (
+              <div key={item.resourceId} className="download-failed-row">
+                <span className="mono">Resource {item.resourceId}</span>
+                {item.error && <span className="muted">{item.error}</span>}
                 <Button
-                  variant="primary"
+                  variant="secondary"
                   size="sm"
-                  className="retry-all"
-                  onClick={() => void mirror.retryFailed()}
+                  onClick={() => void mirror.retryDownload(item.resourceId)}
                 >
                   <RotateCcw aria-hidden="true" />
-                  Retry all
+                  Retry
                 </Button>
               </div>
-            )}
+            ))}
+            <Button
+              variant="primary"
+              size="sm"
+              className="retry-all"
+              onClick={() => void mirror.retryFailed()}
+            >
+              <RotateCcw aria-hidden="true" />
+              Retry all
+            </Button>
           </div>
         )}
+
+        <div className="downloads-footer">
+          <Button variant="ghost" size="sm" onClick={() => void api.openAppFolder("mirror")}>
+            Open folder
+          </Button>
+        </div>
       </div>
     </Popover>
   );
