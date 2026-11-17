@@ -57,6 +57,8 @@ export function validateSettingsDraft(draft: Settings): SettingsDraftValidation 
   if (draft.quietHoursStart && draft.quietHoursEnd && isValidHHMM(draft.quietHoursStart) && isValidHHMM(draft.quietHoursEnd)) {
     if (draft.quietHoursStart === draft.quietHoursEnd) {
       errors.quietHours = "Quiet hours start and end cannot be the same.";
+    } else if (draft.quietHoursStart > draft.quietHoursEnd) {
+      errors.quietHours = "Quiet hours start must be before the end.";
     }
   }
   if (!isValidBotToken(draft.telegramBotToken)) {

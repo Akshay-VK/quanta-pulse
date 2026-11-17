@@ -1,8 +1,14 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
+import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import type { Settings } from "../src/lib/types";
 import { appApi, button, click, deferred, emitAppEvent, escape, flushApp, renderApp, setupApp } from "./helpers/renderApp";
 import { settings } from "./helpers/data";
+
+vi.mock("@tauri-apps/plugin-notification", () => ({
+  isPermissionGranted: vi.fn().mockResolvedValue(true),
+  requestPermission: vi.fn().mockResolvedValue("granted"),
+}));
 
 let app: Awaited<ReturnType<typeof renderApp>>;
 beforeEach(() => setupApp());
@@ -151,13 +157,13 @@ describe("Settings save and navigation in the real application", () => {
     expect(document.querySelector('[role="alertdialog"]')).toBeTruthy();
     await click(button("Save"));
     await click(button("Stay"));
-    await editInterval("2 h");
+    await editInterval("5 min");
     await act(async () => pending.resolve({ ...settings, syncIntervalMinutes: 60 }));
     await flushApp();
     expect(document.querySelector("main h1")?.textContent).toBe("Settings");
-    expect(document.querySelector('[aria-label="Sync interval"]')?.textContent).toContain("2 h");
+    expect(document.querySelector('[aria-label="Sync interval"]')?.textContent).toContain("5 min");
     await click(button("Save settings"));
-    expect(appApi.setSettings).toHaveBeenLastCalledWith(expect.objectContaining({ syncIntervalMinutes: 120 }));
+    expect(appApi.setSettings).toHaveBeenLastCalledWith(expect.objectContaining({ syncIntervalMinutes: 5 }));
   });
 
   it("does not let an older save consume a replacement navigation intent", async () => {
@@ -288,5 +294,114 @@ describe("Settings save and navigation in the real application", () => {
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("Mirror is unavailable");
     expect(document.querySelector('[aria-label="Sync interval"]')?.textContent).toContain("60 min");
     expect(appApi.setSettings).not.toHaveBeenCalled();
+  });
+});
+
+describe("Settings task 14A account, notifications and Telegram", () => {
+  it("shows the signed-in username and the sign-in method badge", async () => {
+    app = await renderApp();
+    await openSettings();
+    expect(document.body.textContent).toContain("Student");
+    expect(document.body.textContent).toContain("Password");
+  });
+
+  it("shows the BITS SSO badge instead of a password badge for SSO sessions", async () => {
+    appApi.authStatus.mockResolvedValue({ authenticated: true, attemptId: null, email: "student@example.test", fullName: "Student", method: "sso", acquiredAt: null, sessionExpired: false });
+    app = await renderApp();
+    await openSettings();
+    expect(document.body.textContent).toContain("BITS SSO");
+  });
+
+  it("offers only the approved monitoring intervals", async () => {
+    app = await renderApp();
+    await openSettings();
+    await click(button("Sync interval"));
+    const labels = [...document.querySelectorAll<HTMLElement>('[role="option"]')].map((node) => node.textContent?.trim());
+    expect(labels).toEqual(["5 min", "10 min", "15 min", "30 min", "60 min"]);
+  });
+
+  it("keeps the keep-in-tray and start-at-login toggles in the draft until save", async () => {
+    app = await renderApp();
+    await openSettings();
+    const tray = document.querySelector<HTMLButtonElement>('[aria-label="Run in background"]')!;
+    expect(tray.getAttribute("data-state")).toBe("checked");
+    await click(tray);
+    expect(document.querySelector<HTMLButtonElement>('[aria-label="Run in background"]')?.getAttribute("data-state")).toBe("unchecked");
+    await click(button("Save settings"));
+    expect(appApi.setSettings).toHaveBeenCalledWith(expect.objectContaining({ runInBackground: false }));
+  });
+
+  it("shows the permission-denied state and opens the system settings page", async () => {
+    vi.mocked(isPermissionGranted).mockResolvedValue(false);
+    vi.mocked(requestPermission).mockResolvedValue("denied");
+    app = await renderApp();
+    await openSettings();
+    await click(button("Allow notifications"));
+    expect(document.body.textContent).toContain("Blocked");
+    await click(button("Open system settings"));
+    expect(appApi.openNotificationSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks the OS for notification permission from the settings row", async () => {
+    vi.mocked(isPermissionGranted).mockResolvedValue(false);
+    app = await renderApp();
+    await openSettings();
+    await click(button("Allow notifications"));
+    expect(requestPermission).toHaveBeenCalled();
+  });
+
+  it("blocks saving a quiet-hours range whose end is not after its start", async () => {
+    app = await renderApp();
+    await openSettings();
+    await setInput("Quiet hours start", "22:00");
+    await setInput("Quiet hours end", "06:00");
+    await click(button("Save settings"));
+    expect(appApi.setSettings).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain("Quiet hours start must be before the end.");
+  });
+
+  it("masks the bot token and reveals it for editing", async () => {
+    app = await renderApp();
+    await openSettings();
+    const token = document.querySelector<HTMLInputElement>('#integrations input[aria-label="Bot token"]')!;
+    expect(token.type).toBe("password");
+    expect(token.getAttribute("autocomplete")).toBe("off");
+    await click(button("Show password"));
+    expect(token.type).toBe("text");
+    await click(button("Hide password"));
+    expect(token.type).toBe("password");
+  });
+
+  it("flags an invalid chat id on the field and blocks the save", async () => {
+    app = await renderApp();
+    await openSettings();
+    const chatId = document.querySelector<HTMLInputElement>('#integrations input[aria-label="Chat id"]')!;
+    await setInput("Chat id", "not a chat");
+    expect(chatId.getAttribute("aria-invalid")).toBe("true");
+    await click(button("Save settings"));
+    expect(appApi.setSettings).not.toHaveBeenCalled();
+  });
+
+  it("sends a Telegram test message and shows the inline result", async () => {
+    appApi.telegramStatus.mockResolvedValue({ enabled: true, configured: true, chatId: "123456789", botUsername: "@quanta_pulse", error: null });
+    appApi.telegramTest.mockResolvedValue(undefined);
+    app = await renderApp();
+    await openSettings();
+    const test = button("Send test message");
+    expect(test.disabled).toBe(false);
+    await click(test);
+    expect(appApi.telegramTest).toHaveBeenCalledTimes(1);
+    await flushApp();
+    expect(document.body.textContent).toContain("Sent. Check your Telegram chat.");
+  });
+
+  it("shows the inline failure result when the Telegram test message fails", async () => {
+    appApi.telegramStatus.mockResolvedValue({ enabled: true, configured: true, chatId: "123456789", botUsername: "@quanta_pulse", error: null });
+    appApi.telegramTest.mockRejectedValueOnce(new Error("Bot was kicked"));
+    app = await renderApp();
+    await openSettings();
+    await click(button("Send test message"));
+    await flushApp();
+    expect(document.body.textContent).toContain("Bot was kicked");
   });
 });

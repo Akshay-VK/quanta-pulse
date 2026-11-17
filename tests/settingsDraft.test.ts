@@ -64,6 +64,18 @@ describe("settingsDraft", () => {
     }
   });
 
+  it("accepts the approved monitoring intervals offered by the settings UI", () => {
+    for (const interval of [5, 10, 15, 30, 60]) {
+      expect(validateSettingsDraft({ ...base, syncIntervalMinutes: interval }).syncIntervalMinutes).toBeUndefined();
+    }
+  });
+
+  it("rejects a quiet-hours range whose end is not after its start", () => {
+    expect(validateSettingsDraft({ ...base, quietHoursStart: "22:00", quietHoursEnd: "06:00" }).quietHours).toBeDefined();
+    expect(validateSettingsDraft({ ...base, quietHoursStart: "22:00", quietHoursEnd: "22:00" }).quietHours).toBeDefined();
+    expect(validateSettingsDraft({ ...base, quietHoursStart: "08:00", quietHoursEnd: "09:00" }).quietHours).toBeUndefined();
+  });
+
   it("rejects invalid monitoring intervals and other out-of-range settings", () => {
     for (const interval of [Number.NaN, Number.POSITIVE_INFINITY, 0, -1, 4, 1441, 5.5]) {
       expect(validateSettingsDraft({ ...base, syncIntervalMinutes: interval }).syncIntervalMinutes).toBeDefined();

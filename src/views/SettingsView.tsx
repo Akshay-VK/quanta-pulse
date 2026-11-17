@@ -11,6 +11,7 @@ import { Switch } from "../components/ui/Switch";
 import { Select } from "../components/ui/Select";
 import { TextField } from "../components/ui/TextField";
 import { TimeField } from "../components/ui/TimeField";
+import { PasswordField } from "../components/ui/PasswordField";
 import { Button } from "../components/ui/Button";
 import { Banner } from "../components/ui/Banner";
 import ConfirmDialog from "../components/ConfirmDialog";
@@ -39,14 +40,11 @@ export interface SettingsNavigationController {
 }
 
 const SYNC_INTERVALS = [
+  { value: "5", label: "5 min" },
+  { value: "10", label: "10 min" },
   { value: "15", label: "15 min" },
   { value: "30", label: "30 min" },
   { value: "60", label: "60 min" },
-  { value: "120", label: "2 h" },
-  { value: "240", label: "4 h" },
-  { value: "360", label: "6 h" },
-  { value: "720", label: "12 h" },
-  { value: "1440", label: "24 h" },
 ];
 
 const DEADLINE_OPTIONS = [
@@ -91,6 +89,11 @@ function telegramLabel(status: TelegramStatus | null, enabled: boolean): string 
   if (!enabled) return "Off";
   if (!status.configured) return "Add a bot token and a chat id";
   return status.botUsername ? `Connected as ${status.botUsername}` : "Connected";
+}
+
+/** The account handle: display name when the session carries one, else the email. */
+function accountName(auth: AuthStatus | null): string {
+  return auth?.fullName?.trim() || auth?.email || "—";
 }
 
 export default function SettingsView({
@@ -173,7 +176,8 @@ export default function SettingsView({
   useEffect(() => {
     void (async () => {
       try {
-        setPermission((await isPermissionGranted()) ? "granted" : "default");
+        const granted = await isPermissionGranted();
+        setPermission(granted ? "granted" : "default");
       } catch {
         setPermission("unavailable");
       }
@@ -199,6 +203,13 @@ export default function SettingsView({
 
   const errors = useMemo(() => validateSettingsDraft(draft), [draft]);
   const dirty = useMemo(() => isSettingsDirty(draft, settings), [draft, settings]);
+
+  /** Approved intervals plus any persisted legacy value, so nothing is clamped. */
+  const syncOptions = useMemo(() => {
+    const values = new Set<string>(SYNC_INTERVALS.map((option) => option.value));
+    values.add(String(draft.syncIntervalMinutes));
+    return [...values].map((value) => ({ value, label: `${Number(value)} min` }));
+  }, [draft.syncIntervalMinutes]);
 
   dirtyRef.current = dirty;
 
@@ -463,6 +474,9 @@ export default function SettingsView({
 
         <section id="account" className="settings-section">
           <h2 className="settings-group-title">Account &amp; connection</h2>
+          <SettingRow title="Account">
+            <span>{accountName(auth)}</span>
+          </SettingRow>
           <SettingRow title="Status">
             <span className="settings-inline">
               <span
@@ -476,7 +490,7 @@ export default function SettingsView({
             </span>
           </SettingRow>
           <SettingRow title="Sign-in method">
-            <span>{auth?.method === "sso" ? "BITS SSO" : auth?.method === "password" ? "Password" : "—"}</span>
+            <span className="tag tag-note">{auth?.method === "sso" ? "BITS SSO" : auth?.method === "password" ? "Password" : "—"}</span>
           </SettingRow>
           <SettingRow title="Session acquired">
             <span className="mono">{auth?.acquiredAt ? formatCompact(auth.acquiredAt) : "—"}</span>
@@ -494,11 +508,11 @@ export default function SettingsView({
           </SettingRow>
 
           <h3 className="settings-subgroup-title">Monitoring</h3>
-          <SettingRow title="Sync interval" description="How often Quanta is checked while the app is running (15–1440 min).">
+          <SettingRow title="Sync interval" description="How often Quanta is checked while the app is running.">
             <Select
               value={String(draft.syncIntervalMinutes)}
               onValueChange={(v) => set("syncIntervalMinutes", Number(v))}
-              options={SYNC_INTERVALS as Array<{ value: string; label: string }>}
+              options={syncOptions}
               ariaLabel="Sync interval"
             />
           </SettingRow>
@@ -844,13 +858,13 @@ export default function SettingsView({
             title="Bot token"
             description="From @BotFather. Stored on this computer and sent to no host but Telegram."
           >
-            <TextField
-              type="password"
+            <PasswordField
               value={draft.telegramBotToken ?? ""}
               onChange={(e) => set("telegramBotToken", e.target.value || null)}
               placeholder="123456789:AA…"
               aria-label="Bot token"
               autoComplete="off"
+              error={errors.telegramBotToken}
             />
           </SettingRow>
           {errors.telegramBotToken && <Banner kind="error">{errors.telegramBotToken}</Banner>}
@@ -861,6 +875,7 @@ export default function SettingsView({
               placeholder="123456789 or @my_channel"
               aria-label="Chat id"
               autoComplete="off"
+              error={errors.telegramChatId}
             />
           </SettingRow>
           {errors.telegramChatId && <Banner kind="error">{errors.telegramChatId}</Banner>}
