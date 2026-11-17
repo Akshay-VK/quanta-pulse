@@ -1,7 +1,7 @@
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { appApi, button, change, click, emitAppEvent, escape, renderApp, setupApp } from "./helpers/renderApp";
-import type { ScanRun } from "../src/lib/types";
+import { appApi, appClipboard, button, change, click, emitAppEvent, escape, renderApp, setupApp } from "./helpers/renderApp";
+import type { ScanDetails, ScanRun } from "../src/lib/types";
 
 let app: Awaited<ReturnType<typeof renderApp>>;
 beforeEach(() => setupApp());
@@ -12,6 +12,23 @@ const scan: ScanRun = {
   status: "partial", discoveredCount: 12, newCount: 2, updatedCount: 3,
   unavailableCount: 1, coursesScanned: 4, coursesFailed: 1,
   errorSummary: "Course A: timeout; Course B: unavailable", isBaseline: false,
+};
+
+const diagnostics: ScanDetails = {
+  scanId: 31,
+  courses: [
+    {
+      courseId: 1, courseName: "CS F111", status: "success",
+      startedAt: "2026-10-14T09:05:00Z", completedAt: "2026-10-14T09:05:20Z", error: null,
+      steps: [{ label: "Crawl", status: "success", startedAt: "2026-10-14T09:05:00Z", completedAt: "2026-10-14T09:05:20Z", error: null }],
+    },
+    {
+      courseId: 2, courseName: "PHY F111", status: "failed",
+      startedAt: "2026-10-14T09:05:20Z", completedAt: "2026-10-14T09:05:40Z",
+      error: "password=hunter2 rejected",
+      steps: [{ label: "Login", status: "failed", startedAt: "2026-10-14T09:05:20Z", completedAt: "2026-10-14T09:05:40Z", error: "password=hunter2 rejected" }],
+    },
+  ],
 };
 
 async function openHistory() {
@@ -109,5 +126,45 @@ describe("History shared details", () => {
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
     expect(document.querySelector(".peek")).toBeTruthy();
     expect(appApi.clearHistoryActivity).not.toHaveBeenCalled();
+  });
+
+  it("shows persisted per-course diagnostics with retry and redacted copy", async () => {
+    appApi.listHistoryScans.mockResolvedValue([scan]);
+    appApi.scanDetails.mockResolvedValue(diagnostics);
+    await openHistory();
+    await click(button("Scan history"));
+    await click(document.querySelector<HTMLButtonElement>('[aria-label^="Show details for scan of"]')!);
+
+    const peek = document.querySelector(".peek");
+    expect(peek?.textContent).toContain("CS F111");
+    expect(peek?.textContent).toContain("PHY F111");
+    expect(peek?.textContent).toContain("couldn't be read");
+    expect(peek?.textContent).not.toContain("hunter2");
+    expect(appApi.scanDetails).toHaveBeenCalledWith(31);
+
+    await click(button("Copy diagnostics"));
+    const copied = appClipboard.writeText.mock.calls.at(-1)?.[0] as string;
+    expect(copied).toContain("PHY F111");
+    expect(copied).toContain("[redacted: potential credential or session material]");
+    expect(copied).not.toContain("hunter2");
+    expect(appApi.syncNow).not.toHaveBeenCalled();
+
+    await click(button("Retry scan"));
+    expect(appApi.syncNow).toHaveBeenCalled();
+  });
+
+  it("marks older scans with no persisted diagnostics unavailable", async () => {
+    appApi.listHistoryScans.mockResolvedValue([scan]);
+    appApi.scanDetails.mockResolvedValue(null);
+    await openHistory();
+    await click(button("Scan history"));
+    await click(document.querySelector<HTMLButtonElement>('[aria-label^="Show details for scan of"]')!);
+
+    expect(document.querySelector(".peek")?.textContent).toContain(
+      "Diagnostics unavailable for this older scan. Only the scan summary was recorded.",
+    );
+    const labels = [...document.querySelectorAll(".peek button")].map((node) => node.textContent);
+    expect(labels).not.toContain("Retry scan");
+    expect(labels).not.toContain("Copy diagnostics");
   });
 });

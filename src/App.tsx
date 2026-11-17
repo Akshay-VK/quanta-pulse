@@ -39,7 +39,7 @@ import { useMediaQuery } from "./hooks/useMediaQuery";
 import { resolveView, NAV, type ViewId } from "./lib/nav";
 import { cx } from "./lib/cx";
 import {
-  changePresentation, detailIdentity, scanPresentation, todayPresentation,
+  changePresentation, detailIdentity, scanCourseProperties, scanDiagnosticsText, scanPresentation, todayPresentation,
   type DetailSelection, type DetailSubject, type DetailsAdapter, type RestoreDetailFocus,
 } from "./lib/details";
 import { canPreview } from "./lib/preview";
@@ -55,6 +55,7 @@ import type {
   DbInfo,
   LocalFile,
   Resource,
+  ScanDetails,
   ScanRun,
   Settings,
   SyncStatus,
@@ -133,6 +134,11 @@ function AppShell() {
   const [selection, setSelection] = useState<DetailSelection | null>(null);
   const selectionRef = useRef<DetailSelection | null>(null);
   const selectionGeneration = useRef(0);
+  const [scanDetail, setScanDetail] = useState<{
+    scanId: number;
+    details: ScanDetails | null;
+    loading: boolean;
+  } | null>(null);
   const localLookupGeneration = useRef(0);
   const mainRef = useRef<HTMLElement>(null);
   const restoreRow = useRef<RestoreDetailFocus | undefined>();
@@ -456,6 +462,17 @@ function AppShell() {
     restoreRow.current = restoreFocus;
     setSelection(next);
     setPeekLocal(null);
+    if (subject.kind === "scan") {
+      const scanId = subject.scan.id;
+      setScanDetail({ scanId, details: null, loading: true });
+      void api.scanDetails(scanId).then((details) => {
+        if (selectionGeneration.current === generation) setScanDetail({ scanId, details: details ?? null, loading: false });
+      }).catch(() => {
+        if (selectionGeneration.current === generation) setScanDetail({ scanId, details: null, loading: false });
+      });
+    } else {
+      setScanDetail(null);
+    }
     const resource = subject.kind === "resource" ? subject.resource
       : subject.kind === "change" ? subject.resource : null;
     if (!resource || resource.isExternal) return;
@@ -588,6 +605,7 @@ function AppShell() {
     ++selectionGeneration.current;
     setSelection(null);
     setPeekLocal(null);
+    setScanDetail(null);
     restorePeekFocus();
   }, [restorePeekFocus]);
 
@@ -634,7 +652,33 @@ function AppShell() {
         menu: actions.slice(1),
       };
     }
-    if (selection?.kind === "scan") return scanPresentation(selection.scan);
+    if (selection?.kind === "scan") {
+      const base = scanPresentation(selection.scan);
+      const detail = scanDetail?.scanId === selection.scan.id ? scanDetail : null;
+      const diagnostics = detail?.details;
+      if (!diagnostics) return {
+        ...base,
+        banner: {
+          kind: "neutral",
+          text: detail?.loading
+            ? "Loading diagnostics…"
+            : "Diagnostics unavailable for this older scan. Only the scan summary was recorded.",
+        },
+      };
+      const failed = diagnostics.courses.filter((course) => course.status !== "success");
+      return {
+        ...base,
+        properties: [...base.properties, ...scanCourseProperties(diagnostics)],
+        banner: failed.length
+          ? {
+              kind: "warning",
+              text: `${base.statusTag?.label ?? "Partial"}: ${failed.map((course) => course.courseName).join(", ")} couldn't be read. The other courses were scanned.`,
+            }
+          : null,
+        primaryAction: { label: "Retry scan", onClick: () => void handleSync() },
+        secondaryAction: { label: "Copy diagnostics", onClick: () => void copyText(scanDiagnosticsText(diagnostics), "Diagnostics copied.") },
+      };
+    }
     if (!peekResource) return null;
     const local = peekLocal && peekLocal.resourceId === peekResource.id ? peekLocal : null;
     const localStatus = peekResource.isExternal ? undefined : mirror?.statusOf(peekResource.id) ?? local;
@@ -682,7 +726,7 @@ function AppShell() {
         },
       ],
     };
-  }, [selection, peekResource, peekLocal, localLookup, mirror, eventKinds, now, timeZone, destinations, openLocal, copyLocalPath, copyText, notify]);
+  }, [selection, scanDetail, peekResource, peekLocal, localLookup, mirror, eventKinds, now, timeZone, destinations, openLocal, copyLocalPath, copyText, handleSync, notify]);
 
   const paletteActions: PaletteAction[] = useMemo(
     () => [
@@ -968,6 +1012,8 @@ function AppShell() {
               if (!next) setPreviewResource(null);
             }}
             onOpen={(url) => void open(url)}
+            onOpenLocal={(id) => void openLocal(id)}
+            onRevealLocal={(id) => void api.revealLocalFile(id).catch((err) => notify(String(err), true))}
           />
         )}
 

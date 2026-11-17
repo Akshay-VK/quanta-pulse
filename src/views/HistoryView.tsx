@@ -1,23 +1,32 @@
 // History: the full log of changes and scans.
 //
-// Changes are the same canonical `change_events` rows Today and the Calendar
-// read, grouped by local calendar day so a change looks identical everywhere.
-// Scans are the persisted `scan_runs` table, shown as a data table.
+// Changes are the same canonical `change_events` rows other views read, grouped
+// by local calendar day. Scans are persisted `scan_runs` with per-course
+// diagnostics available through the details panel/scan details API.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
+import { Copy, MoreHorizontal } from "lucide-react";
+import { api } from "../lib/api";
+import { courseTitle } from "../lib/courseName";
+import { eventKindMeta } from "../lib/events";
+import { formatCompact, formatTimeOfDay } from "../lib/format";
+import {
+  filterHistoryEvents,
+  frozenDeleteCopy,
+  groupHistoryEvents,
+  HISTORY_RANGE_OPTIONS,
+  HISTORY_TYPE_OPTIONS,
+  type HistoryDateRange,
+  type HistoryTypeFilter,
+} from "../lib/historyActions";
+import { scanDurationText, scanStatusMeta, type DetailsAdapter, type RestoreDetailFocus } from "../lib/details";
 import { getListNavigationIntent, recoverFocusedId } from "../lib/listNavigation";
 import { useMaterialActions } from "../hooks/useMaterialActions";
-import { Dialog } from "../components/ui/Dialog";
-import { Copy, MoreHorizontal } from "lucide-react";
-import type { ChangeEvent, Course, Resource, ScanRun } from "../lib/types";
-import { dayKeyOf, eventKindMeta, groupEventsByDay, todayKey } from "../lib/events";
-import { formatCompact, formatTimeOfDay } from "../lib/format";
-import { courseTitle } from "../lib/courseName";
-import { scanStatusMeta, type DetailsAdapter, type RestoreDetailFocus } from "../lib/details";
+import { useMirror } from "../hooks/useMirror";
+import type { ChangeEvent, Course, HistoryDeletionScope, Resource, ScanRun } from "../lib/types";
 import PageHeader from "../components/PageHeader";
 import ResourceRow from "../components/ResourceRow";
-import { useMirror } from "../hooks/useMirror";
 import GroupHeader from "../components/GroupHeader";
 import DataTable, { type DataColumn, type DataTableNavigationHandle } from "../components/DataTable";
 import ConfirmDialog from "../components/ConfirmDialog";
@@ -28,8 +37,17 @@ import { ViewTabs } from "../components/ui/Tabs";
 import { Select } from "../components/ui/Select";
 import { SearchField } from "../components/ui/SearchField";
 import { EmptyState } from "../components/ui/EmptyState";
+import { Dialog } from "../components/ui/Dialog";
 import type { StatusKind } from "../components/ui/StatusTag";
 import { Tooltip } from "../components/ui/Tooltip";
+
+/** Explicit interface for course-scoped historical activity lists (e.g. CoursePage). */
+export interface HistoryActivityListProps {
+  events: ChangeEvent[];
+  resources: Resource[];
+  details?: DetailsAdapter;
+  onSelect?: (event: ChangeEvent, origin: HTMLElement, resource: Resource | null) => void;
+}
 
 export interface HistoryViewProps {
   courses: Course[];
@@ -53,16 +71,6 @@ export interface HistoryViewProps {
   onRetry: () => void;
 }
 
-const TYPE_FILTERS = [
-  { value: "all", label: "All changes" },
-  { value: "new", label: "New" },
-  { value: "updated", label: "Updated" },
-  { value: "announcement", label: "Announcement" },
-  { value: "deadline", label: "Deadline" },
-  { value: "unavailable", label: "Unavailable" },
-  { value: "restored", label: "Restored" },
-];
-
 const STATUS_KIND: Record<string, StatusKind> = {
   new: "new",
   updated: "updated",
@@ -77,20 +85,6 @@ const BASELINE_TIP =
 
 function eventTitle(e: ChangeEvent): string {
   return e.resourceTitle ?? e.title;
-}
-
-function dayLabel(key: string): string {
-  const now = new Date();
-  const today = todayKey(now);
-  if (key === today) return "Today";
-  const yesterday = dayKeyOf(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1));
-  if (key === yesterday) return "Yesterday";
-  const [y, m, d] = key.split("-").map(Number);
-  return new Date(y, m - 1, d).toLocaleDateString(undefined, {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-  });
 }
 
 function numberCell(value: number) {
@@ -118,11 +112,16 @@ export default function HistoryView({
   onRetry,
 }: HistoryViewProps) {
   const mirror = useMirror();
-  const [tab, setTab] = useState("changes");
-  const [typeFilter, setTypeFilter] = useState("all");
-  const [courseFilter, setCourseFilter] = useState("all");
+  const [tab, setTab] = useState<"changes" | "scans">("changes");
+  const [typeFilter, setTypeFilter] = useState<HistoryTypeFilter>("all");
+  const [courseFilter, setCourseFilter] = useState<string>("all");
+  const [range, setRange] = useState<HistoryDateRange>("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [search, setSearch] = useState("");
   const [confirmClear, setConfirmClear] = useState(false);
+  const [deleteScope, setDeleteScope] = useState<HistoryDeletionScope | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [markingRead, setMarkingRead] = useState(false);
   const readRequest = useRef(false);
@@ -156,6 +155,8 @@ export default function HistoryView({
   const viewRoot = useRef<HTMLDivElement>(null);
   const scanGeneration = useRef(0);
   const scanMounted = useRef(true);
+  const clearRequest = useRef(false);
+
   const invalidate = () => {
     generation.current += 1;
     locked.current = false;
@@ -190,7 +191,6 @@ export default function HistoryView({
       if (action.generation !== generation.current) return;
       captureRef.current = null;
       setCapture(null);
-      // Dialog's close callback resolves the current event identity.
       requestAnimationFrame(() => { if (action.generation === generation.current) restore(action.origin); });
     } catch (err) {
       if (action.generation === generation.current) setActionError(`${action.written ? "Changes saved; refresh failed" : "Changes could not be saved"}: ${String(err)}`);
@@ -200,7 +200,6 @@ export default function HistoryView({
   }
 
   const courseById = useMemo(() => new Map(courses.map((c) => [c.id, c])), [courses]);
-
   const courseOptions = useMemo(
     () => [
       { value: "all", label: "All courses" },
@@ -209,29 +208,19 @@ export default function HistoryView({
     [courses],
   );
 
-  const filtered = useMemo(() => {
-    const needle = search.trim().toLowerCase();
-    const courseId = courseFilter === "all" ? null : Number(courseFilter);
-    return events.filter((e) => {
-      if (typeFilter !== "all" && e.changeType !== typeFilter) return false;
-      if (courseId != null && e.courseId !== courseId) return false;
-      if (needle) {
-        const haystack = `${eventTitle(e)} ${e.courseName ?? ""}`.toLowerCase();
-        if (!haystack.includes(needle)) return false;
-      }
-      return true;
-    });
-  }, [events, typeFilter, courseFilter, search]);
+  const filtered = useMemo(() => filterHistoryEvents(events, {
+    type: typeFilter,
+    courseId: courseFilter === "all" ? "all" : Number(courseFilter),
+    search,
+    range,
+    from: dateFrom || undefined,
+    to: dateTo || undefined,
+  }), [events, typeFilter, courseFilter, search, range, dateFrom, dateTo]);
 
-  const groups = useMemo(() => {
-    const byDay = groupEventsByDay(filtered);
-    return [...byDay.keys()]
-      .sort((a, b) => b.localeCompare(a))
-      .map((key) => ({ key, label: dayLabel(key), items: byDay.get(key) ?? [] }));
-  }, [filtered]);
-
+  const groups = useMemo(() => groupHistoryEvents(filtered), [filtered]);
   const navigationIds = useMemo(() => groups.flatMap(group => group.items.map(e => `change:${e.id}`)), [groups]);
   currentIds.current = navigationIds;
+
   useEffect(() => {
     const recovered = recoverFocusedId(previousIds.current, navigationIds, focused);
     const ownedFocus = listOwnedFocus.current && (document.activeElement === document.body || (document.activeElement instanceof HTMLElement && document.activeElement.matches('.row-select')));
@@ -251,14 +240,13 @@ export default function HistoryView({
     scanMounted.current = true;
     return () => {
       scanMounted.current = false;
-      // Tab, route and unmount invalidate deferred focus requests.
       scanGeneration.current += 1;
     };
   }, []);
 
   const scansTabControl = () =>
     [...(viewRoot.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? [])]
-      .find((node) => node.textContent?.trim() === "Scan history") ?? null;
+      .find((node) => /Scan/i.test(node.textContent ?? "")) ?? null;
 
   function scanModalOpen() {
     return Boolean(document.querySelector(
@@ -269,10 +257,10 @@ export default function HistoryView({
   /** Focus the inspected scan's current row, its surviving neighbor, or the Scans tab. */
   function scanRestore(scanId: number): RestoreDetailFocus {
     scanGeneration.current += 1;
-    const generation = scanGeneration.current;
+    const gen = scanGeneration.current;
     const activeAtRequest = document.activeElement;
     return () => {
-      if (generation !== scanGeneration.current || !scanMounted.current || scanModalOpen()) return false;
+      if (gen !== scanGeneration.current || !scanMounted.current || scanModalOpen()) return false;
       const known = scanIdsRef.current.includes(`scan:${scanId}`);
       const resolved = known
         ? null
@@ -291,7 +279,7 @@ export default function HistoryView({
       const current = document.activeElement;
       if (current !== activeAtRequest && current !== document.body) return true;
       queueMicrotask(() => {
-        if (generation !== scanGeneration.current || !scanMounted.current || scanModalOpen()) return;
+        if (gen !== scanGeneration.current || !scanMounted.current || scanModalOpen()) return;
         if (document.activeElement !== activeAtRequest && document.activeElement !== document.body) return;
         scanNav.current?.focusKey(key);
       });
@@ -315,7 +303,6 @@ export default function HistoryView({
       shiftKey: event.shiftKey, ctrlKey: event.ctrlKey, altKey: event.altKey, metaKey: event.metaKey,
       completeEventIds: [],
     });
-    // Scan rows expose navigation and inspection only; every other intent is inert.
     if (intent?.type !== "focus" && intent?.type !== "inspect") return;
     const key = Number(intent.id.slice(5));
     if (intent.type === "focus") {
@@ -386,7 +373,6 @@ export default function HistoryView({
     if (selection?.kind === "scan" && !scans.some((scan) => scan.id === selection.scan.id)) details.clear();
   }, [details.clear, filtered, scans, selection]);
 
-  // Runs after stale-inspection clearing so a removed row can still resolve its neighbor.
   useEffect(() => {
     const recovered = recoverFocusedId(previousScanIds.current, scanIds, focusedScan);
     previousScanIds.current = scanIds;
@@ -410,6 +396,45 @@ export default function HistoryView({
       setMarkingRead(false);
     }
   }
+
+  const openDelete = useCallback(async () => {
+    if (clearRequest.current) return;
+    clearRequest.current = true;
+    setDeleteError(null);
+    setDeleteScope(null);
+    setDeleteLoading(true);
+    setConfirmClear(true);
+    try {
+      const scope = await api.snapshotHistoryDeletion(true);
+      setDeleteScope(scope);
+    } catch (err) {
+      setDeleteError(`Could not prepare history deletion: ${String(err)}`);
+    } finally {
+      setDeleteLoading(false);
+      clearRequest.current = false;
+    }
+  }, []);
+
+  const confirmDelete = useCallback(async () => {
+    if (clearRequest.current) return;
+    clearRequest.current = true;
+    setDeleteError(null);
+    try {
+      if (deleteScope) {
+        await api.deleteHistorySnapshot(deleteScope);
+        await onChanged?.();
+      } else {
+        await onClearAll();
+      }
+      setConfirmClear(false);
+      setDeleteScope(null);
+    } catch (err) {
+      setDeleteError(`History could not be deleted: ${String(err)}`);
+      throw err;
+    } finally {
+      clearRequest.current = false;
+    }
+  }, [deleteScope, onChanged, onClearAll]);
 
   const scanColumns: DataColumn<ScanRun>[] = [
     {
@@ -435,8 +460,13 @@ export default function HistoryView({
       title: (s) => formatCompact(s.startedAt),
     },
     {
+      id: "duration",
+      header: "Duration",
+      cell: (s) => <span className="mono">{scanDurationText(s)}</span>,
+    },
+    {
       id: "status",
-      header: "Status",
+      header: "Result",
       cell: (s) => {
         const meta = scanStatusMeta(s.status);
         return (
@@ -447,26 +477,24 @@ export default function HistoryView({
         );
       },
     },
-    { id: "found", header: "Found", numeric: true, cell: (s) => numberCell(s.discoveredCount) },
+    { id: "courses", header: "Courses scanned", numeric: true, cell: (s) => <span className="mono">{Math.max(0, s.coursesScanned - s.coursesFailed)}/{s.coursesScanned}</span> },
     { id: "new", header: "New", numeric: true, cell: (s) => numberCell(s.newCount) },
     { id: "updated", header: "Updated", numeric: true, cell: (s) => numberCell(s.updatedCount) },
-    {
-      id: "unavailable",
-      header: "Unavailable",
-      numeric: true,
-      cell: (s) => numberCell(s.unavailableCount),
-    },
-    { id: "courses", header: "Courses", numeric: true, cell: (s) => `${Math.max(0, s.coursesScanned - s.coursesFailed)}/${s.coursesScanned}` },
-    {
-      id: "errors",
-      header: "Errors",
-      numeric: true,
-      cell: (s) => numberCell(s.errorSummary ? s.errorSummary.split(";").filter((part) => part.trim()).length : 0),
-    },
+    { id: "unavailable", header: "Removed", numeric: true, cell: (s) => numberCell(s.unavailableCount) },
   ];
 
+  const deleteCopy = deleteScope
+    ? frozenDeleteCopy(deleteScope)
+    : { title: "Delete recorded history?", body: "Preparing the exact events and scan records that will be removed…" };
+  const activityEmptyTitle = loading && events.length === 0 ? "Loading History…" : error && events.length === 0 ? "History unavailable" : events.length === 0 ? "No history yet" : "No changes match these filters";
+  const activityEmptyBody = events.length === 0
+    ? (error ? "Retry to load recorded changes." : "History fills in after your first scan.")
+    : "Try changing the type, course, date range, or search.";
+  const scansEmptyTitle = loading ? "Loading scans…" : error ? "Scans unavailable" : "No history yet";
+  const scansEmptyBody = error ? "Retry to load recorded scans." : "History fills in after your first scan.";
+
   return (
-    <div ref={viewRoot}>
+    <div ref={viewRoot} className="history-view">
       <PageHeader
         title="History"
         summary="Every recorded change and scan"
@@ -486,9 +514,9 @@ export default function HistoryView({
               items={[
                 {
                   id: "clear",
-                  label: "Delete recorded history…",
+                  label: "Delete history…",
                   danger: true,
-                  onSelect: () => setConfirmClear(true),
+                  onSelect: () => void openDelete(),
                 },
               ]}
               trigger={
@@ -508,14 +536,14 @@ export default function HistoryView({
             { id: "scans", label: "Scan history" },
           ]}
           value={tab}
-          onChange={(next) => { invalidate(); scanGeneration.current += 1; setTab(next); }}
+          onChange={(next) => { invalidate(); scanGeneration.current += 1; setTab(next as "changes" | "scans"); }}
           ariaLabel="History views"
         />
       </div>
 
-      {loading && (tab === "changes" ? events.length > 0 : scans.length > 0) && <div role="status" className="result-count">Refreshing History…</div>}
+      {loading && (tab === "changes" ? events.length > 0 : scans.length > 0) && <div role="status" className="result-count history-status">Refreshing History…</div>}
       {error && (tab === "changes" ? events.length > 0 : scans.length > 0) && (
-        <div role="alert" className="empty-state">
+        <div role="alert" className="empty-state history-status">
           <span>{error}</span>
           <Button variant="secondary" size="sm" onClick={onRetry}>Retry History</Button>
         </div>
@@ -523,54 +551,39 @@ export default function HistoryView({
 
       {tab === "changes" ? (
         <div
+          className="history-activity"
           onKeyDown={onChangesKey}
           onFocusCapture={(event) => { listOwnedFocus.current = event.target instanceof HTMLElement && event.target.matches('.row-select'); }}
           onBlurCapture={(event) => { if (event.relatedTarget) listOwnedFocus.current = false; }}
         >
-          {capture?.confirmed && !capture.dialog && <div role={actionError ? "alert" : "status"} className="result-count">{actionError ?? "Saving captured changes…"}{actionError && <Button disabled={pending} onClick={() => void execute(capture)}>{capture.written ? "Retry refresh" : "Retry captured action"}</Button>}</div>}
-          <div className="filter-bar">
-            <div className="filter-bar-left">
-              <Select
-                value={typeFilter}
-                onValueChange={(next) => { invalidate(); setTypeFilter(next); }}
-                options={TYPE_FILTERS}
-                ariaLabel="Filter by change type"
-              />
-              <Select
-                value={courseFilter}
-                onValueChange={(next) => { invalidate(); setCourseFilter(next); }}
-                options={courseOptions}
-                ariaLabel="Filter by course"
-              />
+          {capture?.confirmed && !capture.dialog && <div role={actionError ? "alert" : "status"} className="result-count history-capture-status">{actionError ?? "Saving captured changes…"}{actionError && <Button disabled={pending} onClick={() => void execute(capture)}>{capture.written ? "Retry refresh" : "Retry captured action"}</Button>}</div>}
+          <div className="filter-bar history-filter-bar">
+            <div className="filter-bar-left history-filter-left">
+              <Select value={typeFilter} onValueChange={(next) => { invalidate(); setTypeFilter(next as HistoryTypeFilter); }} options={HISTORY_TYPE_OPTIONS.map(o => ({ ...o }))} ariaLabel="Filter by change type" />
+              <Select value={courseFilter} onValueChange={(next) => { invalidate(); setCourseFilter(next); }} options={courseOptions} ariaLabel="Filter by course" />
+              <Select value={range} onValueChange={(next) => { invalidate(); setRange(next as HistoryDateRange); }} options={HISTORY_RANGE_OPTIONS.map(o => ({ ...o }))} ariaLabel="Filter by date range" />
+              {range === "custom" && (
+                <div className="history-date-range" aria-label="Custom date range">
+                  <label className="history-date-field"><span>From</span><input type="date" value={dateFrom} onChange={(e) => { invalidate(); setDateFrom(e.target.value); }} /></label>
+                  <label className="history-date-field"><span>To</span><input type="date" value={dateTo} onChange={(e) => { invalidate(); setDateTo(e.target.value); }} /></label>
+                </div>
+              )}
             </div>
-            <div className="filter-bar-right">
-              <SearchField
-                value={search}
-                onChange={(next) => { invalidate(); setSearch(next); }}
-                inputRef={searchRef}
-                debounceMs={0}
-                placeholder="Search changes…"
-                label="Search changes"
-              />
-              <span className="result-count">
-                {filtered.length} of {events.length}
-              </span>
+            <div className="filter-bar-right history-filter-right">
+              <SearchField value={search} onChange={(next) => { invalidate(); setSearch(next); }} inputRef={searchRef} debounceMs={0} placeholder="Search changes…" label="Search changes" />
+              <span className="result-count">{filtered.length} of {events.length}</span>
             </div>
           </div>
 
           {filtered.length === 0 ? (
             <EmptyState
-              title={loading && events.length === 0 ? "Loading History…" : error && events.length === 0 ? "History unavailable" : events.length === 0 ? "No changes recorded" : "No changes match these filters"}
-              body={
-                events.length === 0
-                  ? error ? "Retry to load recorded changes." : "Changes appear after the first scan finishes. The first scan only sets a baseline."
-                  : "Try changing the filters or search terms."
-              }
-              action={events.length === 0 && error ? { label: "Retry History", onClick: onRetry } : undefined}
+              title={activityEmptyTitle}
+              body={activityEmptyBody}
+              action={events.length === 0 && error ? { label: "Retry History", onClick: onRetry } : events.length === 0 ? { label: "Sync now", onClick: onSyncNow } : undefined}
             />
           ) : (
             groups.map((group) => (
-              <div key={group.key}>
+              <div key={group.key} className="history-day-group">
                 <GroupHeader label={group.label} count={group.items.length} />
                 {group.items.map((e) => {
                   const meta = eventKindMeta(e.changeType);
@@ -596,26 +609,10 @@ export default function HistoryView({
                       unavailable={e.changeType === "unavailable"}
                       status={{ kind: STATUS_KIND[e.changeType] ?? "new", label: meta.label }}
                       timeLabel={formatTimeOfDay(e.detectedAt)}
-                      onCourse={
-                        e.courseId != null && onOpenCourse
-                          ? () => onOpenCourse(e.courseId as number)
-                          : undefined
-                      }
-                      local={
-                        currentResource && !currentResource.isExternal ? mirror?.statusOf(currentResource.id) : undefined
-                      }
+                      onCourse={e.courseId != null && onOpenCourse ? () => onOpenCourse(e.courseId as number) : undefined}
+                      local={currentResource && !currentResource.isExternal ? mirror?.statusOf(currentResource.id) : undefined}
                       onSelect={(origin) => details.selectChange(e, origin, currentResource ?? null, () => restore(`change:${e.id}`))}
-                      menu={[
-                        {
-                          id: "copy",
-                          label: "Copy link",
-                          icon: <Copy aria-hidden="true" />,
-                          onSelect: () =>
-                            void navigator.clipboard?.writeText(
-                              e.sourcePageUrl ?? e.resourceUrl ?? "",
-                            ),
-                        },
-                      ]}
+                      menu={[{ id: "copy", label: "Copy link", icon: <Copy aria-hidden="true" />, onSelect: () => void navigator.clipboard?.writeText(e.sourcePageUrl ?? e.resourceUrl ?? "") }]}
                     />
                   );
                 })}
@@ -625,12 +622,13 @@ export default function HistoryView({
         </div>
       ) : scans.length === 0 ? (
         <EmptyState
-          title={loading ? "Loading scans…" : error ? "Scans unavailable" : "No scans yet"}
-          body={error ? "Retry to load recorded scans." : "Run your first scan to set a baseline"}
+          title={scansEmptyTitle}
+          body={scansEmptyBody}
           action={error ? { label: "Retry History", onClick: onRetry } : { label: "Sync now", onClick: onSyncNow }}
         />
       ) : (
         <div
+          className="history-scans"
           onKeyDown={onScansKey}
           onFocusCapture={(event) => { scanFocusOwned.current = event.target instanceof HTMLElement && event.target.matches('tr[data-row-key]'); }}
           onBlurCapture={(event) => { if (event.relatedTarget) scanFocusOwned.current = false; }}
@@ -672,12 +670,26 @@ export default function HistoryView({
 
       <ConfirmDialog
         open={confirmClear}
-        onOpenChange={setConfirmClear}
-        title="Permanently delete recorded history?"
-        body={<><p>This permanently removes every recorded change and scan from this machine, including dismissed Inbox changes. Resources and saved files remain.</p>{deleteError && <p role="alert">{deleteError}</p>}</>}
-        confirmLabel="Delete changes and scans"
+        onOpenChange={(next) => {
+          if (!next) {
+            if (clearRequest.current) return;
+            setConfirmClear(false);
+            setDeleteError(null);
+          }
+        }}
+        title={deleteCopy.title}
+        body={
+          <>
+            <p>{deleteCopy.body}</p>
+            {deleteLoading && <p>Loading deletion scope…</p>}
+            <p>Saved files and your baseline are not affected.</p>
+            {deleteError && <p role="alert">{deleteError}</p>}
+          </>
+        }
+        confirmLabel={deleteScope ? "Delete history" : "Delete recorded history"}
+        cancelLabel="Cancel"
         destructive
-        onConfirm={async () => { setDeleteError(null); try { await onClearAll(); } catch (err) { setDeleteError(`History could not be deleted: ${String(err)}`); throw err; } }}
+        onConfirm={confirmDelete}
       />
     </div>
   );

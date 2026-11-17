@@ -2,7 +2,7 @@ import { previewMode, PREVIEW_LABELS } from "./preview";
 // Property rows for the peek panel, built from a resource. Values are always
 // real data; a missing date is described, never invented.
 
-import type { ChangeEvent, Resource, ScanRun } from "./types";
+import type { ChangeEvent, Resource, ScanCourseStatus, ScanDetails, ScanRun } from "./types";
 import { describeUpload, formatBytes, formatCompact, relativeLabel } from "./format";
 import type { StatusKind } from "../components/ui/StatusTag";
 import type { ViewId } from "./nav";
@@ -137,6 +137,63 @@ export function scanStatusMeta(status: string): ScanStatusMeta {
   }
 }
 
+/** Duration between scan timestamps for History summaries/details. */
+export function scanDurationText(scan: Pick<ScanRun, "startedAt" | "completedAt" | "status">): string {
+  const start = Date.parse(scan.startedAt);
+  const end = scan.completedAt ? Date.parse(scan.completedAt) : NaN;
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return scan.status === "running" ? "In progress" : "—";
+  const s = Math.round((end - start) / 1000);
+  if (s < 1) return "<1s";
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rs = s % 60;
+  return rs ? `${m}m ${rs}s` : `${m}m`;
+}
+
+/** Mirrors the Rust logger's redaction so copied diagnostics are shareable. */
+const SENSITIVE_MARKERS = [
+  "MoodleSession=", "moodlesession", "wstoken", "sesskey=", "password",
+  "authorization:", "sid=", "api.telegram.org", "telegram_bot_token",
+];
+
+function redact(line: string): string {
+  const lower = line.toLowerCase();
+  return SENSITIVE_MARKERS.some((marker) => lower.includes(marker.toLowerCase()))
+    ? "[redacted: potential credential or session material]"
+    : line;
+}
+
+const SCAN_COURSE_LABELS: Record<ScanCourseStatus, string> = {
+  success: "Scanned",
+  partial: "Partial",
+  failed: "Failed",
+  cancelled: "Cancelled",
+};
+
+/** Per-course rows plus step times for the scan inspector, in recorded order. */
+export function scanCourseProperties(details: ScanDetails): DetailProperty[] {
+  return details.courses.flatMap((course) => [
+    {
+      label: course.courseName || "Unnamed course",
+      value: `${SCAN_COURSE_LABELS[course.status]}${course.error ? ` · ${redact(course.error)}` : ""}`,
+    },
+    ...course.steps.map((step) => ({
+      label: `  ${step.status === "success" ? "✓" : "✗"} ${step.label}`,
+      value: step.completedAt ? formatCompact(step.completedAt) : step.startedAt ? formatCompact(step.startedAt) : "—",
+      mono: true,
+    })),
+  ]);
+}
+
+/** Redacted, plain-text diagnostics for the "Copy diagnostics" action. */
+export function scanDiagnosticsText(details: ScanDetails): string {
+  const lines = [
+    `Scan ${details.scanId}`,
+    ...scanCourseProperties(details).map(({ label, value }) => `${label.trim()}: ${value}`),
+  ];
+  return lines.map(redact).join("\n");
+}
+
 /** Recorded scan properties displayed by the shared details panel. */
 export function scanPresentation(scan: ScanRun): DetailPresentation {
   const { label: status } = scanStatusMeta(scan.status);
@@ -144,6 +201,7 @@ export function scanPresentation(scan: ScanRun): DetailPresentation {
     title: `Scan of ${formatCompact(scan.startedAt)}`,
     properties: [
       { label: "Started", value: formatCompact(scan.startedAt) },
+      { label: "Duration", value: scanDurationText(scan) },
       { label: "Status", value: status },
       { label: "Found", value: String(scan.discoveredCount) },
       { label: "New", value: String(scan.newCount) },

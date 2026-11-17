@@ -646,4 +646,75 @@
     height: 1px;
     background: var(--line);
   }
+
+  /* ---------------------------------------------------------------- History */
+
+  .history-view .history-tabs {
+    margin-bottom: var(--sp-4);
+  }
+
+  .history-status {
+    margin-bottom: var(--sp-3);
+  }
+
+  .history-filter-bar {
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+  }
+
+  .history-filter-left,
+  .history-filter-right {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    flex-wrap: wrap;
+  }
+
+  .history-filter-right {
+    margin-left: auto;
+  }
+
+  .history-date-range {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-2);
+    flex-wrap: wrap;
+  }
+
+  .history-date-field {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font: 12px/16px var(--type-caption);
+    color: var(--muted);
+  }
+
+  .history-date-field input {
+    height: 28px;
+    padding: 0 8px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--raised);
+    color: var(--ink);
+    font: 12px/16px var(--type-ui);
+  }
+
+  .history-day-group {
+    margin-bottom: var(--sp-2);
+  }
+
+  .history-scans .table-scroll {
+    min-height: 120px;
+  }
+
+  .history-capture-status {
+    margin-bottom: var(--sp-2);
+  }
+
+  .scan-result {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
 }

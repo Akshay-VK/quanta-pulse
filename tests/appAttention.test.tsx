@@ -226,19 +226,22 @@ describe('filter scope and due request authority', () => {
 
 describe('permanent History scope', () => {
   it('names the complete deletion and retains a failed confirmation for retry', async () => {
-    appApi.deleteHistory.mockRejectedValueOnce(new Error('Locked database'));
+    const scope = { eventIds: [1, 2, 3], scanIds: [4] };
+    appApi.snapshotHistoryDeletion.mockResolvedValue(scope);
+    appApi.deleteHistorySnapshot.mockRejectedValueOnce(new Error('Locked database'));
     app = await renderApp();
     await click(button('History'));
     const actions = button('History actions');
     await act(async () => { actions.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })); });
-    await click([...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(node => node.textContent?.includes('Delete recorded history'))!);
-    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain('including dismissed Inbox changes');
-    await click(button('Delete changes and scans'));
-    expect(appApi.deleteHistory).toHaveBeenCalledWith(true);
+    await click([...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(node => node.textContent?.includes('Delete history'))!);
+    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain('3 events and 1 scan record');
+    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain("This can't be undone");
+    await click(button('Delete history'));
+    expect(appApi.deleteHistorySnapshot).toHaveBeenCalledWith(scope);
     expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain('Locked database');
-    await click(button('Delete changes and scans'));
+    await click(button('Delete history'));
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
-    expect(appApi.deleteHistory).toHaveBeenCalledTimes(2);
+    expect(appApi.deleteHistorySnapshot).toHaveBeenCalledTimes(2);
     expect(appApi.clearHistoryActivity).not.toHaveBeenCalled();
   });
 });
