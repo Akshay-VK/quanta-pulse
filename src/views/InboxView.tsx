@@ -182,7 +182,7 @@ export default function InboxView({ inbox, due, courses, resources, storedCount,
       </div>
       <div className="filter-bar-right"><SearchField inputRef={searchRef} value={filter.search ?? ''} onChange={search => setFilter({ ...filter, search: search || undefined })} label="Search Inbox" placeholder="Search changes…" />{filtered && <Button size="sm" variant="ghost" onClick={() => setFilter({})}>Clear filters</Button>}</div>
     </div>
-    {page && <p className="result-count">{page.items.length} shown of {page.total} matching items · {page.unreadTotal} unread</p>}
+    {page && <p className="result-count">{page.items.length} shown of {page.total} matching items · {countError ? '–' : page.unreadTotal} unread</p>}
     {pending && page && <p role="status" className="result-count">Refreshing Inbox…</p>}
     {error && <Banner kind="error" action={{ label: 'Retry Inbox', onClick: () => void inbox.refresh() }}>{page ? 'Showing saved results. Inbox could not refresh.' : 'Could not load Inbox.'} {error}</Banner>}
     {countError && <Banner kind="info" action={{ label: 'Retry counts', onClick: () => void inbox.refresh() }}>{countError}. Sidebar counts may be out of date.</Banner>}
