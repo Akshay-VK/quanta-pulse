@@ -76,10 +76,10 @@ describe('complete attention workflows through App', () => {
     expect(document.querySelector('main')?.textContent).toContain('Sidebar counts may be out of date');
     expect(document.querySelector('main')?.textContent).not.toContain('Showing saved results');
     expect(document.querySelector('main')?.textContent).not.toContain('Inbox could not refresh');
-    expect(button('Inbox').textContent).toContain('80');
+    expect(button('Inbox').querySelector('.nav-badge')?.textContent).toBe('–');
     appApi.queryInbox.mockResolvedValue({ ...fresh, unreadTotal: 12 });
     await click(button('Retry counts'));
-    expect(document.querySelector('main')?.textContent).not.toContain('Unread counts could not refresh');
+    expect(document.querySelector('main')?.textContent).not.toContain('Sidebar counts may be out of date');
     expect(button('Inbox').textContent).toContain('12');
   });
   it('distinguishes a failed Inbox refresh from successfully refreshed badge counts', async () => {
