@@ -73,7 +73,7 @@ describe('complete attention workflows through App', () => {
     });
     await emitAppEvent('sync:done', {});
     expect(button('Show details for Fresh lecture')).toBeTruthy();
-    expect(document.querySelector('main')?.textContent).toContain('Unread counts could not refresh');
+    expect(document.querySelector('main')?.textContent).toContain('Sidebar counts may be out of date');
     expect(document.querySelector('main')?.textContent).not.toContain('Showing saved results');
     expect(document.querySelector('main')?.textContent).not.toContain('Inbox could not refresh');
     expect(button('Inbox').textContent).toContain('80');
