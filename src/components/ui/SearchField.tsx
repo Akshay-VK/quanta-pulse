@@ -12,6 +12,7 @@ interface SearchFieldProps {
   /** Debounce before emitting changes; 0 emits immediately. */
   debounceMs?: number;
   autoFocus?: boolean;
+  disabled?: boolean;
   className?: string;
   inputRef?: RefObject<HTMLInputElement>;
 }
@@ -24,6 +25,7 @@ export function SearchField({
   label = "Search",
   debounceMs = 150,
   autoFocus,
+  disabled,
   className,
   inputRef,
 }: SearchFieldProps) {
@@ -63,8 +65,13 @@ export function SearchField({
         value={text}
         placeholder={placeholder}
         aria-label={label}
+        disabled={disabled}
         autoFocus={autoFocus}
-        onChange={(event) => setText(event.target.value)}
+        onChange={(event) => {
+          const next = event.target.value;
+          setText(next);
+          if (debounceMs === 0) { emitted.current = next; onChange(next); }
+        }}
         onKeyDown={(event) => {
           if (event.key === "Escape" && text) {
             event.stopPropagation();
@@ -78,6 +85,7 @@ export function SearchField({
           size={28}
           tooltip={false}
           className="search-field-clear"
+          disabled={disabled}
           onClick={clear}
         >
           <X aria-hidden="true" />

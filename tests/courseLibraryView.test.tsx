@@ -11,6 +11,7 @@ vi.mock("../src/lib/api", () => ({
   api: {
     listResources: vi.fn(),
     setMonitoring: vi.fn(),
+    setCourseDisplayName: vi.fn(),
     rebuildBaseline: vi.fn(),
     previewResource: vi.fn().mockRejectedValue(new Error("preview unavailable")),
     eventsRange: vi.fn().mockResolvedValue([]),
@@ -44,6 +45,7 @@ function makeCourse(overrides: Partial<Course> = {}): Course {
     externalCourseId: "math-f211",
     name: "MATH F211",
     shortName: "MATH F211",
+    displayName: null,
     url: "https://quanta.bits-pilani.ac.in/course/view.php?id=1",
     firstSeenAt: "2026-09-01T00:00:00Z",
     lastScannedAt: "2026-10-12T00:00:00Z",
@@ -137,6 +139,9 @@ async function render(
       <TooltipProvider>
         <CoursePage
           course={options.course ?? makeCourse()}
+          inventory={resources ?? undefined}
+          inventoryPending={resources === null}
+          inventoryError={options.failWith}
           onOpen={options.onOpen ?? (() => {})}
           onPreview={options.onPreview ?? (() => {})}
           onChanged={options.onChanged ?? (() => {})}
@@ -183,6 +188,33 @@ async function collapseAll() {
 
 async function click(button: HTMLButtonElement) {
   await act(async () => button.click());
+}
+
+async function openCourseMenu() {
+  const trigger = [...container.querySelectorAll("button")].find(
+    (item) => item.getAttribute("aria-label") === "Course actions",
+  );
+  if (!trigger) throw new Error("Missing Course actions button");
+  await act(async () => {
+    trigger.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0, ctrlKey: false }));
+  });
+}
+
+function menuItem(label: string): HTMLElement {
+  const item = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+    (node) => node.textContent?.includes(label),
+  );
+  if (!item) throw new Error(`Missing menu item: ${label}`);
+  return item;
+}
+
+function dialogButton(label: string): HTMLButtonElement {
+  const dialog = document.querySelector<HTMLElement>('[role="alertdialog"]');
+  const button = [...(dialog?.querySelectorAll("button") ?? [])].find(
+    (node) => node.textContent === label,
+  );
+  if (!button) throw new Error(`Missing dialog button: ${label}`);
+  return button as HTMLButtonElement;
 }
 
 async function typeSearch(text: string) {
@@ -270,11 +302,25 @@ describe("CoursePage tree", () => {
     expect(byLabel("Open Quanta page for Week 1")).toBeTruthy();
   });
 
+  it("opens the selected folder in the materials pane while keeping its siblings navigable", async () => {
+    await render();
+    await collapseAll();
+    await click(byText("Worksheets Folder"));
+
+    const folders = container.querySelector('[aria-label="Folders"]')!;
+    const materials = container.querySelector('[aria-label="Materials"]')!;
+    expect(folders.querySelector('[aria-current="true"]')?.textContent).toContain("Worksheets Folder");
+    expect(folders.textContent).toContain("Notices");
+    expect(materials.textContent).toContain("Lecture One");
+    expect(materials.textContent).toContain("Lecture Two");
+    expect(materials.textContent).not.toContain("Consultation material");
+  });
+
   it("moves a roving selection with arrow keys and expands with ArrowRight", async () => {
     await render();
     await collapseAll();
     await key("ArrowDown", 0);
-    expect(treeRows()[1].getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement).toBe(treeRows()[1]);
 
     await key("ArrowRight", 0);
     expect(treeRows()[0].getAttribute("aria-expanded")).toBe("true");
@@ -294,7 +340,7 @@ describe("CoursePage tree", () => {
       el.dispatchEvent(new KeyboardEvent("keydown", { key: "c", bubbles: true }));
     });
     const selected = treeRows().findIndex(
-      (el) => el.getAttribute("aria-selected") === "true",
+      (el) => el === document.activeElement,
     );
     expect(treeRows()[selected].textContent).toContain("Consultation material");
   });
@@ -305,7 +351,7 @@ describe("CoursePage tree", () => {
     await typeSearch("Lecture Two");
     expect(container.querySelector(".result-count")?.textContent).toBe("1 of 4");
     expect(container.querySelector(".tree-match-path")?.textContent).toBe(
-      "Worksheets Folder → Tutorial Set → Week 1",
+      "Worksheets Folder / Tutorial Set / Week 1",
     );
     expect(container.querySelector("mark.match-hl")?.textContent).toBe("Lecture Two");
 
@@ -338,8 +384,8 @@ describe("CoursePage tree", () => {
     ]);
     await collapseAll();
     await click(byLabel("Expand Week 1"));
-    expect(byLabel("Preview Lecture One")).toBeTruthy();
-    expect(container.querySelector('button[aria-label="Preview Old archive"]')).toBeNull();
+    expect(byLabel("Preview")).toBeTruthy();
+    expect([...container.querySelectorAll('[role="treeitem"]')].find((row) => row.textContent?.includes("Old archive"))?.querySelector('button[aria-label="Preview"]')).toBeNull();
     expect(container.textContent).toContain("Restored");
   });
 
@@ -347,20 +393,54 @@ describe("CoursePage tree", () => {
     await render(null, { course: makeCourse({ id: 11 }) });
     expect(container.querySelector(".skeleton-stack")).toBeTruthy();
 
-    await render([], { course: makeCourse({ id: 12 }), failWith: "Course resources unavailable" });
+    const onChanged = vi.fn();
+    await render([], { course: makeCourse({ id: 12 }), failWith: "Course resources unavailable", onChanged });
     expect(container.textContent).toContain("Course resources unavailable");
     await click(byText("Retry"));
-    expect(api.listResources).toHaveBeenCalledTimes(3);
+    expect(onChanged).toHaveBeenCalledTimes(1);
+    expect(api.listResources).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("Course resources unavailable");
 
     await render([], { course: makeCourse({ id: 13 }) });
-    expect(container.textContent).toContain("This course has not been scanned yet");
-    expect(byText("Sync now")).toBeTruthy();
+    expect(container.textContent).toContain("Nothing here yet");
+    expect(container.textContent).toContain("This course has no materials on Quanta.");
+    expect(byText("Open in Quanta")).toBeTruthy();
   });
 
-  it("pauses and resumes monitoring from the title row", async () => {
+  it("pauses monitoring from the course actions menu", async () => {
     await render(initialResources);
     await collapseAll();
-    await click(byText("Pause"));
+    await openCourseMenu();
+    await click(menuItem("Pause monitoring") as HTMLButtonElement);
     expect(api.setMonitoring).toHaveBeenCalledWith(1, "paused");
+  });
+
+  it("updates a course display name through the durable rename command", async () => {
+    const onChanged = vi.fn();
+    await render(initialResources, { course: makeCourse({ displayName: "Discrete Maths" }), onChanged });
+    await openCourseMenu();
+    await click(menuItem("Rename course") as HTMLButtonElement);
+    const dialog = document.querySelector<HTMLElement>('[role="alertdialog"]')!;
+    expect(dialog.textContent).toContain("Only changes how this course appears in Pulse.");
+    const input = dialog.querySelector<HTMLInputElement>("#course-alias-input")!;
+    expect(input.value).toBe("Discrete Maths");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "MATH F211 · Discrete Math");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click(dialogButton("Save"));
+    expect(api.setCourseDisplayName).toHaveBeenCalledWith(1, "MATH F211 · Discrete Math");
+    expect(onChanged).toHaveBeenCalled();
+  });
+
+  it("uses the exact reset-baseline confirmation copy", async () => {
+    await render(initialResources, { course: makeCourse({ shortName: "CS F111" }) });
+    await openCourseMenu();
+    await click(menuItem("Reset baseline…") as HTMLButtonElement);
+    const dialog = document.querySelector<HTMLElement>('[role="alertdialog"]')!;
+    expect(dialog.textContent).toContain("Reset the baseline for CS F111?");
+    expect(dialog.textContent).toContain("The next scan records everything currently on Quanta as your starting point.");
+    expect(dialog.textContent).toContain("History and saved files are kept.");
+    expect(dialogButton("Reset baseline")).toBeTruthy();
   });
 });

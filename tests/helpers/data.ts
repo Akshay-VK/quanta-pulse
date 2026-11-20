@@ -21,13 +21,14 @@ export function change(overrides: Partial<ChangeEvent> = {}): ChangeEvent {
 }
 export const course: Course = {
   id: 1, externalCourseId: "1124", name: "1124_MATH_INSTR_MATH F111", shortName: "MATH F111",
+  displayName: null,
   url: "https://quanta.bits-pilani.ac.in/course/view.php?id=1", firstSeenAt: "2026-09-01T00:00:00Z",
   lastScannedAt: null, lastScanStatus: null, monitoringStatus: "monitored", resourceCount: 2,
 };
 export const settings: Settings = {
   syncIntervalMinutes: 30, launchAtLogin: false, runInBackground: true, updateAutoCheck: true,
   notificationsEnabled: true, notifyNew: true, notifyUpdated: true, notifyAnnouncements: true,
-  notifyDeadlines: true, notifyAvailability: true, notifyAuth: true, quietHoursStart: null,
+  notifyDeadlines: true, notifyAvailability: true, notifyAuth: true, notifyScanFailures: true, quietHoursStart: null,
   quietHoursEnd: null, deadlineReminderHours: 48, timezone: "Asia/Kolkata", cacheLimitBytes: 2147483648,
   mirrorEnabled: true, mirrorRoot: null, mirrorMaxBytes: 0, mirrorMinFreeBytes: 0, mirrorKeepVersions: 2,
   telegramEnabled: false, telegramBotToken: null, telegramChatId: null, maxCourses: 100,

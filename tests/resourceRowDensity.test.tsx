@@ -3,7 +3,7 @@
 // the two-line compact layout. jsdom does not lay out CSS, so the structural
 // contract is asserted against the stylesheet source as well as the DOM.
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import ResourceRow from "../src/components/ResourceRow";
@@ -61,6 +61,7 @@ async function render(density?: "comfortable" | "compact") {
           courseId={1}
           courseCode="DES F211"
           courseName="Digital Design"
+          sectionLabel="Week 04"
           unread
           selected={false}
           unavailable={false}
@@ -77,6 +78,27 @@ async function render(density?: "comfortable" | "compact") {
 }
 
 describe("ResourceRow layout", () => {
+  it("keeps native keyboard access when a caller does not opt into roving focus", async () => {
+    await render();
+    expect(container.querySelector<HTMLButtonElement>(".row-select")?.tabIndex).toBe(0);
+  });
+
+  it("switches at the approved 800px container threshold after resize", async () => {
+    let resize!: ResizeObserverCallback;
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(callback: ResizeObserverCallback) { resize = callback; }
+      observe() {} disconnect() {}
+    });
+    try {
+      await render();
+      const row = container.querySelector(".resource-row")!;
+      const measure = (width: number) => act(() => resize([{ contentRect: { width } } as ResizeObserverEntry], {} as ResizeObserver));
+      measure(799);
+      expect(row.className).toContain("row-compact");
+      measure(800);
+      expect(row.className).not.toContain("row-compact");
+    } finally { vi.unstubAllGlobals(); }
+  });
   it("is one line by default and two lines when compact", async () => {
     await render();
     expect(container.querySelector(".resource-row")?.className).not.toContain("row-compact");
@@ -91,8 +113,13 @@ describe("ResourceRow layout", () => {
     // The pill must stay outside the select button: a button inside a button is
     // invalid and fails the a11y check.
     expect(row.querySelector(".row-select .course-pill")).toBeNull();
-    expect(row.querySelector(".row-meta .course-pill")).toBeTruthy();
     expect(row.querySelector(".row-meta .tag")).toBeTruthy();
+    expect(row.querySelector(".row-meta .course-pill")).toBeTruthy();
+    expect(row.querySelector(".row-meta .tag")!.compareDocumentPosition(row.querySelector(".row-meta .course-pill")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(row.querySelector(".row-section")?.textContent).toBe("Week 04");
+    expect(row.querySelector(".row-meta")!.compareDocumentPosition(row.querySelector(".row-section")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(row.querySelector(".row-section")!.compareDocumentPosition(row.querySelector(".row-time")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(row.querySelector(".row-time")?.getAttribute("title")).toBe("09:05");
     expect(row.querySelector(".row-time")).toBeTruthy();
     expect(row.querySelector(".row-actions")).toBeTruthy();
   });
@@ -109,7 +136,10 @@ describe("ResourceRow stylesheet contract", () => {
   it("lays the row out as a grid with a shrinkable main column and fixed tracks", () => {
     const row = rule(contentCss, ".resource-row");
     expect(row).toContain("display: grid");
-    expect(row).toContain("grid-template-columns: minmax(0, 1fr) 240px 24px 104px 80px");
+    expect(row).toContain("grid-template-columns: minmax(0, 1fr) 240px 24px 104px 92px");
+    expect(rule(contentCss, ".row-material")).toContain("grid-template-columns: minmax(0, 1fr) 240px 52px 24px 40px 92px");
+    expect(rule(contentCss, ".row-material .row-section")).toContain("width: 52px");
+    expect(rule(contentCss, ".row-material .row-time")).toContain("white-space: nowrap");
   });
 
   it("repeats the dot, icon and title tracks inside the select button", () => {
@@ -135,6 +165,14 @@ describe("ResourceRow stylesheet contract", () => {
     expect(fixedWidth + (tracks.length - 1) * 12 + 16).toBeLessThanOrEqual(279);
     expect(rule(contentCss, ".row-compact .row-meta")).toContain("grid-row: 2");
     expect(rule(contentCss, ".row-compact .row-time")).toContain("grid-row: 2");
+  });
+
+  it("keeps compact material rows at the 30px slot height", () => {
+    expect(rule(contentCss, ".row-material")).toContain("min-height: 36px");
+    const compactMaterial = rule(contentCss, ".row-material.row-compact");
+    expect(compactMaterial).toContain("height: 30px");
+    expect(compactMaterial).toContain("min-height: 30px");
+    expect(compactMaterial).not.toContain("grid-template-rows: auto auto");
   });
 
   it("caps the course pill at 16ch and ellipsises its label", () => {

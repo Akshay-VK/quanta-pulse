@@ -21,6 +21,7 @@ const dateFmt = new Intl.DateTimeFormat("en-GB", {
   month: "short",
   year: "numeric",
 });
+const shortDateFmt = new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short" });
 
 export function isDateOnly(value: string): boolean {
   return DATE_ONLY.test(value.trim());
@@ -67,6 +68,19 @@ const timeOfDayFmt = new Intl.DateTimeFormat("en-GB", {
 export function formatTimeOfDay(value?: string | null): string {
   const d = parseTimestamp(value);
   return d ? timeOfDayFmt.format(d) : "\u2014";
+}
+
+/** Short date for Library lists, with a time for detections made today. */
+export function formatListDate(value: string | null | undefined, now = new Date()): string {
+  const date = parseTimestamp(value);
+  if (!date) return "—";
+  if (date.toDateString() === now.toDateString()) {
+    return value && !isDateOnly(value) ? `Today ${timeOfDayFmt.format(date)}` : "Today";
+  }
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
+  return date.getFullYear() === now.getFullYear() ? shortDateFmt.format(date) : dateFmt.format(date);
 }
 
 /** "2 hours ago", "in 3 days", "just now". */

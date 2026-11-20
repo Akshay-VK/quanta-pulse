@@ -17,7 +17,7 @@ vi.mock("../src/lib/api", () => ({
 }));
 
 import { api } from "../src/lib/api";
-import CalendarView from "../src/views/CalendarView";
+import CalendarView from "../src/views/ActivityCalendar";
 import { TooltipProvider } from "../src/components/ui/Tooltip";
 
 declare global {
@@ -58,6 +58,7 @@ function buildCourse(): Course {
     externalCourseId: "math-f211",
     name: "Discrete Mathematics",
     shortName: "MATH F211",
+    displayName: null,
     url: "https://quanta.bits-pilani.ac.in/course/view.php?id=1",
     firstSeenAt: "2026-09-01T06:00:00Z",
     lastScannedAt: "2026-10-12T06:00:00Z",
@@ -119,11 +120,10 @@ function emptyDigest(date: string): Digest {
   return { date, newCount: 0, updatedCount: 0, announcementCount: 0, deadlineCount: 0, unavailableCount: 0, coursesFailed: 0, lastSuccessAt: null, items: [] };
 }
 
-function statValue(label: string): string | undefined {
-  const block = [...container.querySelectorAll(".stat-block")].find(
-    (el) => el.querySelector(".stat-label")?.textContent === label,
-  );
-  return block?.querySelector(".stat-value")?.textContent?.trim();
+async function openToday() {
+  const day = container.querySelector<HTMLButtonElement>('.cal-day[aria-current="date"]')!;
+  await act(async () => day.click());
+  await flush();
 }
 
 describe("CalendarView", () => {
@@ -160,12 +160,14 @@ describe("CalendarView", () => {
     const selectedBtn = container.querySelector(".cal-day.selected") as HTMLButtonElement | null;
     expect(selectedBtn).toBeTruthy();
     expect(selectedBtn!.querySelector(".cal-num")?.textContent).toBe(String(day));
-    // A semantic dot on the day with activity.
-    expect(selectedBtn!.querySelector(".cal-dot.ev-new")).toBeTruthy();
+    // A neutral changes pill on the day with activity.
+    expect(selectedBtn!.querySelector(".cal-pill")).toBeTruthy();
+    expect(selectedBtn!.querySelector(".cal-pill")?.textContent).toContain("1 changes");
 
-    // The day digest shows the new-upload and failed-course figures.
-    expect(statValue("New")).toBe("1");
-    expect(statValue("Courses failed")).toBe("1");
+    expect(container.querySelector(".cal-panel")).toBeNull();
+    await openToday();
+    expect(container.querySelector(".cal-panel")?.textContent).toContain("1 new · 0 updated");
+    expect(container.querySelector(".cal-panel")?.textContent).toContain("1 course failed");
 
     expect(container.textContent).toContain("Worksheet-9.pdf");
     expect(container.textContent).toContain("MATH F211");
@@ -189,6 +191,7 @@ describe("CalendarView", () => {
 
     await renderCalendar();
 
+    await openToday();
     expect(container.textContent).toContain("No activity on this day");
     expect(container.textContent).toContain("No scans ran on this day");
   });
@@ -237,7 +240,7 @@ describe("CalendarView", () => {
     expect(api.eventsRange).toHaveBeenCalledTimes(2);
     expect(api.dailyDigest).toHaveBeenCalledTimes(1);
     expect(container.textContent).not.toContain("Could not load activity for this month");
-    expect(container.querySelector(".cal-day.selected .cal-dot.ev-new")).toBeTruthy();
+    expect(container.querySelector(".cal-day.selected .cal-pill")).toBeTruthy();
   });
 
   it("reports a failed day request and retries it independently", async () => {
@@ -246,6 +249,7 @@ describe("CalendarView", () => {
     vi.mocked(api.dailyDigest).mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(emptyDigest(selected));
     await renderCalendar();
 
+    await openToday();
     expect(container.textContent).toContain("Could not load activity for this day");
     expect(container.textContent).not.toContain("No activity on this day");
     await clickButton("Retry day");

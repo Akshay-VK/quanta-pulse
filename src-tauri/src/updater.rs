@@ -12,6 +12,8 @@ use tauri_plugin_updater::UpdaterExt;
 
 use crate::state::{AppState, SyncControl};
 
+const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Whether a scan or in-flight preview is in progress, given the sync state
 /// alone. Exposed so the gating can be exercised without a live Tauri app.
 pub fn sync_busy(control: &SyncControl) -> bool {
@@ -46,7 +48,13 @@ async fn run_check(app: &tauri::AppHandle) {
         return;
     }
 
-    let updater = match app.updater_builder().build() {
+    let updater = match app
+        .updater_builder()
+        // Keep an update check from hanging the scheduler forever on a slow or
+        // stalled network; a failed check is retried on the next cadence.
+        .timeout(CHECK_TIMEOUT)
+        .build()
+    {
         Ok(u) => u,
         Err(e) => {
             tracing::debug!("could not build updater: {e}");
@@ -96,5 +104,10 @@ mod tests {
     fn scheduler_does_not_skip_when_idle() {
         let control = SyncControl::default();
         assert!(!sync_busy(&control));
+    }
+
+    #[test]
+    fn scheduled_update_checks_have_a_finite_timeout() {
+        assert_eq!(CHECK_TIMEOUT, Duration::from_secs(30));
     }
 }

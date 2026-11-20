@@ -163,6 +163,12 @@ impl QuantaClient {
             .timeout(Duration::from_secs(5))
             .build()
             .unwrap();
+        client.download_http = Client::builder()
+            .no_proxy()
+            .resolve("quanta.bits-pilani.ac.in", address)
+            .connect_timeout(Duration::from_secs(5))
+            .build()
+            .unwrap();
         client
     }
 

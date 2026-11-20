@@ -13,7 +13,6 @@ import type {
   ScanRun,
   Settings,
 } from "../src/lib/types";
-import type { ThemeMode } from "../src/lib/types";
 import type { DetailsAdapter } from "../src/lib/details";
 
 vi.mock("../src/lib/api", () => ({
@@ -74,7 +73,7 @@ vi.mock("../src/lib/api", () => ({
   },
 }));
 import TodayView from "../src/views/TodayView";
-import CalendarView from "../src/views/CalendarView";
+import CalendarView from "../src/views/ActivityCalendar";
 import LibraryView from "../src/views/LibraryView";
 import HistoryView from "../src/views/HistoryView";
 import SettingsView from "../src/views/SettingsView";
@@ -91,6 +90,7 @@ function course(overrides: Partial<Course> = {}): Course {
     externalCourseId: "cs-f213",
     name: "Object Oriented Programming",
     shortName: "CS F213",
+    displayName: null,
     url: "https://quanta.bits-pilani.ac.in/course/view.php?id=1",
     firstSeenAt: "2026-09-01T00:00:00Z",
     lastScannedAt: "2026-10-12T00:00:00Z",
@@ -156,6 +156,7 @@ const SETTINGS: Settings = {
   notifyDeadlines: true,
   notifyAvailability: true,
   notifyAuth: true,
+  notifyScanFailures: true,
   quietHoursStart: null,
   quietHoursEnd: null,
   deadlineReminderHours: 48,
@@ -178,6 +179,7 @@ const SETTINGS: Settings = {
 
 const AUTH: AuthStatus = {
   authenticated: true,
+  attemptId: null,
   email: "akshay@pilani.bits-pilani.ac.in",
   fullName: "Akshay V K",
   method: "password",
@@ -316,8 +318,7 @@ const SCENARIOS: Scenario[] = [
 
         onLogout={() => Promise.resolve()}
         onRefresh={noop}
-        themeMode={"light" as ThemeMode}
-        onThemeMode={noop}
+        appearance={<p>Appearance controls</p>}
       />
     ),
   },

@@ -1,22 +1,25 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { AlertCircle, Bell, Database, HardDrive, Info, Link2, Palette, User } from "lucide-react";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { api } from "../lib/api";
 import { cx } from "../lib/cx";
 import { formatBytes, formatCompact } from "../lib/format";
 import type { DetailProperty } from "../lib/details";
-import type { AuthStatus, CacheStats, DbInfo, Settings, ThemeMode, MirrorStats, TelegramStatus } from "../lib/types";
-import PageHeader from "../components/PageHeader";
+import type { AuthStatus, CacheStats, DbInfo, Settings, MirrorStats, MirrorDeleteScope, MirrorDeleteResult, MirrorDownloadProgress, Resource, TelegramStatus } from "../lib/types";
+import { useMirror } from "../hooks/useMirror";
 import SettingRow from "../components/SettingRow";
-import { ToggleGroup } from "../components/ui/ToggleGroup";
 import { Switch } from "../components/ui/Switch";
 import { Select } from "../components/ui/Select";
 import { TextField } from "../components/ui/TextField";
 import { TimeField } from "../components/ui/TimeField";
+import { PasswordField } from "../components/ui/PasswordField";
 import { Button } from "../components/ui/Button";
 import { Banner } from "../components/ui/Banner";
 import ConfirmDialog from "../components/ConfirmDialog";
+import { Dialog } from "../components/ui/Dialog";
 import PropertyList from "../components/PropertyList";
 import { hasValidationErrors, isSettingsDirty, validateSettingsDraft } from "../lib/settingsDraft";
+import { installAvailableUpdate, UpdateRelaunchError } from "../lib/updateLifecycle";
 
 interface Props {
   settings: Settings;
@@ -25,8 +28,9 @@ interface Props {
   onSave: (settings: Settings) => Promise<void>;
   onLogout: () => Promise<void> | void;
   onRefresh: () => void | Promise<void>;
-  themeMode: ThemeMode;
-  onThemeMode: (mode: ThemeMode) => void;
+  appearance: ReactNode;
+  headerActions?: ReactNode;
+  resources?: Resource[];
   onController?: (controller: SettingsNavigationController | null) => void;
 }
 
@@ -39,21 +43,22 @@ export interface SettingsNavigationController {
   discard: () => void;
 }
 
-const THEME_OPTIONS = [
-  { value: "system", label: "System" },
-  { value: "light", label: "Light" },
-  { value: "dark", label: "Dark" },
-];
+const SECTION_ICONS = {
+  appearance: Palette,
+  account: User,
+  notifications: Bell,
+  files: HardDrive,
+  integrations: Link2,
+  data: Database,
+  about: Info,
+} as const;
 
 const SYNC_INTERVALS = [
+  { value: "5", label: "5 min" },
+  { value: "10", label: "10 min" },
   { value: "15", label: "15 min" },
   { value: "30", label: "30 min" },
   { value: "60", label: "60 min" },
-  { value: "120", label: "2 h" },
-  { value: "240", label: "4 h" },
-  { value: "360", label: "6 h" },
-  { value: "720", label: "12 h" },
-  { value: "1440", label: "24 h" },
 ];
 
 const DEADLINE_OPTIONS = [
@@ -70,14 +75,13 @@ const DEADLINE_OPTIONS = [
 
 const NAV_ITEMS = [
   { id: "appearance", label: "Appearance" },
-  { id: "account", label: "Account" },
+  { id: "account", label: "Account & connection" },
   { id: "notifications", label: "Notifications" },
-  { id: "telegram", label: "Telegram" },
-  { id: "monitoring", label: "Monitoring" },
-  { id: "files", label: "Files" },
-  { id: "data", label: "Data" },
+  { id: "files", label: "Files & storage" },
+  { id: "integrations", label: "Integrations" },
+  { id: "data", label: "Data & recovery" },
   { id: "about", label: "About" },
-];
+] as const;
 
 const GIB = 1024 * 1024 * 1024;
 
@@ -101,6 +105,11 @@ function telegramLabel(status: TelegramStatus | null, enabled: boolean): string 
   return status.botUsername ? `Connected as ${status.botUsername}` : "Connected";
 }
 
+/** The account handle: display name when the session carries one, else the email. */
+function accountName(auth: AuthStatus | null): string {
+  return auth?.fullName?.trim() || auth?.email || "—";
+}
+
 export default function SettingsView({
   settings,
   auth,
@@ -108,8 +117,9 @@ export default function SettingsView({
   onSave,
   onLogout,
   onRefresh,
-  themeMode,
-  onThemeMode,
+  appearance,
+  headerActions,
+  resources = [],
   onController,
 }: Props) {
   const [draft, setDraft] = useState<Settings>(settings);
@@ -126,6 +136,9 @@ export default function SettingsView({
   const [cacheStats, setCacheStats] = useState<CacheStats | null>(null);
   const [clearingCache, setClearingCache] = useState(false);
   const [active, setActive] = useState<string>("appearance");
+  const layoutRef = useRef<HTMLDivElement>(null);
+  const contentScrollRef = useRef<HTMLDivElement>(null);
+  const navRef = useRef<HTMLElement>(null);
   const [mirrorStats, setMirrorStats] = useState<MirrorStats | null>(null);
   const [changingMirrorRoot, setChangingMirrorRoot] = useState(false);
   const [movingFiles, setMovingFiles] = useState(false);
@@ -133,17 +146,27 @@ export default function SettingsView({
   const [testingTelegram, setTestingTelegram] = useState(false);
   const [telegramTest, setTelegramTest] = useState<string | null>(null);
   const [operationFeedback, setOperationFeedback] = useState<{ label: string; phase: "pending" | "success" | "error"; detail?: string } | null>(null);
+  const mirror = useMirror();
+  const [deleteScope, setDeleteScope] = useState<MirrorDeleteScope | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteText, setDeleteText] = useState("");
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteResult, setDeleteResult] = useState<MirrorDeleteResult | null>(null);
+  const [deletingFiles, setDeletingFiles] = useState(false);
+  const cancelDeleteRef = useRef<HTMLButtonElement>(null);
 
   // About / updates
   const [aboutVersion, setAboutVersion] = useState<string>("");
-  const [updateStatus, setUpdateStatus] = useState<"idle" | "checking" | "upToDate" | "available" | "installing" | "error">("idle");
+  const [updateStatus, setUpdateStatus] = useState<"idle" | "checking" | "upToDate" | "available" | "downloading" | "installing" | "failed" | "restartRequired" | "checkError">("idle");
   const [updateVersion, setUpdateVersion] = useState<string | null>(null);
-  const [updateNotes, setUpdateNotes] = useState<string | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
+  const [updateProgress, setUpdateProgress] = useState<{ downloaded: number; total: number | null } | null>(null);
   const [savingAutoUpdate, setSavingAutoUpdate] = useState(false);
   const [lastUpdateCheck, setLastUpdateCheck] = useState<string | null>(() => {
     try { return localStorage.getItem("quanta-pulse-update-last-checked"); } catch { return null; }
   });
+  const updateCheckRef = useRef(false);
+  const updateInstallRef = useRef(false);
 
   useEffect(() => {
     if (!dirtyRef.current) setDraft(settings);
@@ -181,7 +204,8 @@ export default function SettingsView({
   useEffect(() => {
     void (async () => {
       try {
-        setPermission((await isPermissionGranted()) ? "granted" : "default");
+        const granted = await isPermissionGranted();
+        setPermission(granted ? "granted" : "default");
       } catch {
         setPermission("unavailable");
       }
@@ -189,28 +213,35 @@ export default function SettingsView({
   }, []);
 
   useEffect(() => {
-    // The page scrolls inside .app-main; scroll does not bubble, so listen in
-    // the capture phase to track which section is in view.
-    function onScroll() {
-      let best = NAV_ITEMS[0].id;
-      let topBest = Infinity;
+    const layout = layoutRef.current;
+    if (!layout) return;
+    function onScroll(event: Event) {
+      const scroller = event.target;
+      if (!(scroller instanceof HTMLElement) || (scroller !== layout && scroller !== contentScrollRef.current)) return;
+      const stickyHeight = scroller === layout ? navRef.current?.offsetHeight ?? 0 : 0;
+      const threshold = (layout?.getBoundingClientRect().top ?? 0) + stickyHeight + 56;
+      let best: string = NAV_ITEMS[0].id;
       for (const item of NAV_ITEMS) {
-        const el = document.getElementById(item.id);
-        if (!el) continue;
-        const top = el.getBoundingClientRect().top;
-        if (top < 120 && Math.abs(top) < topBest) {
-          topBest = Math.abs(top);
-          best = item.id;
-        }
+        const section = document.getElementById(item.id);
+        if (section && section.getBoundingClientRect().top <= threshold) best = item.id;
       }
+      // Short final sections cannot always reach the scroll threshold.
+      if (scroller.scrollTop > 0 && scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 1) best = "about";
       setActive(best);
     }
-    document.addEventListener("scroll", onScroll, true);
-    return () => document.removeEventListener("scroll", onScroll, true);
+    layout.addEventListener("scroll", onScroll, true);
+    return () => layout.removeEventListener("scroll", onScroll, true);
   }, []);
 
   const errors = useMemo(() => validateSettingsDraft(draft), [draft]);
   const dirty = useMemo(() => isSettingsDirty(draft, settings), [draft, settings]);
+
+  /** Approved intervals plus any persisted legacy value, so nothing is clamped. */
+  const syncOptions = useMemo(() => {
+    const values = new Set<string>(SYNC_INTERVALS.map((option) => option.value));
+    values.add(String(draft.syncIntervalMinutes));
+    return [...values].map((value) => ({ value, label: `${Number(value)} min` }));
+  }, [draft.syncIntervalMinutes]);
 
   dirtyRef.current = dirty;
 
@@ -250,6 +281,8 @@ export default function SettingsView({
   }
 
   async function checkForUpdate() {
+    if (updateCheckRef.current) return;
+    updateCheckRef.current = true;
     setUpdateStatus("checking");
     setUpdateError(null);
     try {
@@ -257,35 +290,67 @@ export default function SettingsView({
       const now = new Date().toISOString();
       setLastUpdateCheck(now);
       try { localStorage.setItem("quanta-pulse-update-last-checked", now); } catch {}
-      if (u && u.version && u.version !== aboutVersion) {
-        setUpdateVersion(u.version);
-        setUpdateNotes(u.body ?? null);
-        setUpdateStatus("available");
-      } else {
-        setUpdateStatus("upToDate");
+      try {
+        if (u && u.version && u.version !== aboutVersion) {
+          setUpdateVersion(u.version);
+          setUpdateStatus("available");
+        } else {
+          setUpdateStatus("upToDate");
+        }
+      } finally {
+        if (u) await u.close?.().catch(() => {});
       }
     } catch (err) {
-      setUpdateStatus("error");
+      setUpdateStatus("checkError");
       setUpdateError(String(err));
+    } finally {
+      updateCheckRef.current = false;
     }
   }
 
   async function installUpdate() {
-    setUpdateStatus("installing");
+    if (updateInstallRef.current) return;
+    updateInstallRef.current = true;
+    setUpdateStatus("downloading");
+    setUpdateProgress({ downloaded: 0, total: null });
     setUpdateError(null);
     try {
-      const u = await api.checkUpdate();
-      if (!u) { setUpdateStatus("idle"); return; }
-      await api.prepareForUpdate();
-      await api.downloadAndInstallUpdate(u, (event) => {
-        // Plugin reports progress through here; status stays "installing"
-        void event;
+      const installed = await installAvailableUpdate((event) => {
+        if (event.event === "Started") {
+          setUpdateStatus("downloading");
+          setUpdateProgress({ downloaded: 0, total: event.data.contentLength ?? null });
+        } else if (event.event === "Progress") {
+          setUpdateProgress((previous) => ({
+            downloaded: (previous?.downloaded ?? 0) + event.data.chunkLength,
+            total: previous?.total ?? null,
+          }));
+        } else if (event.event === "Finished") {
+          setUpdateStatus("installing");
+        }
       });
-      // Reaches here only if the installer did not exit immediately.
-      setUpdateStatus("upToDate");
+      if (installed) {
+        setUpdateStatus("restartRequired");
+      } else {
+        setUpdateStatus("upToDate");
+      }
     } catch (err) {
-      setUpdateStatus("error");
-      setUpdateError(String(err));
+      if (err instanceof UpdateRelaunchError) {
+        setUpdateStatus("restartRequired");
+        setUpdateError(err.message);
+      } else {
+        setUpdateStatus("failed");
+        setUpdateError(err instanceof Error ? err.message : String(err));
+      }
+    } finally {
+      updateInstallRef.current = false;
+    }
+  }
+
+  async function restartNow() {
+    try {
+      await api.relaunchApp();
+    } catch (err) {
+      setUpdateError(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -341,18 +406,18 @@ export default function SettingsView({
   }
 
   const notificationsDisabled = !draft.notificationsEnabled;
+  const activeDownloads: MirrorDownloadProgress[] = mirror
+    ? [...mirror.downloads.values()].filter((item) => item.state === "queued" || item.state === "downloading")
+    : [];
+  const failedDownloads: MirrorDownloadProgress[] = mirror
+    ? [...mirror.downloads.values()].filter((item) => item.state === "failed")
+    : [];
 
   const dbProps: DetailProperty[] = [
     { label: "Database path", value: dbInfo?.path ?? "—", copy: dbInfo?.path },
     { label: "Size", value: dbInfo ? formatBytes(dbInfo.sizeBytes) || "0 B" : "—" },
     { label: "Counts", value: `${dbInfo?.courseCount ?? 0} courses · ${dbInfo?.resourceCount ?? 0} resources · ${dbInfo?.eventCount ?? 0} events` },
     { label: "Logs folder", value: dbInfo?.logDir ?? "—", copy: dbInfo?.logDir },
-    {
-      label: "File cache",
-      value: cacheStats
-        ? `${formatBytes(cacheStats.totalBytes) || "0 B"} in ${cacheStats.fileCount} ${cacheStats.fileCount === 1 ? "file" : "files"}`
-        : "—",
-    },
   ];
 
   async function clearCache() {
@@ -366,21 +431,22 @@ export default function SettingsView({
 
   async function pickMirrorRoot() {
     setChangingMirrorRoot(true);
-    const succeeded = await runOperation("Change mirror folder", async () => {
-      await api.pickMirrorRoot();
-      await api.mirrorStats().then(setMirrorStats);
+    const succeeded = await runOperation("Change saved files folder", async () => {
+      const stats = await api.pickMirrorRoot();
+      setMirrorStats(stats);
+      if (stats?.root) set("mirrorRoot", stats.root);
     });
     if (!succeeded) setChangingMirrorRoot(false);
   }
 
   async function openMirrorFolder() {
-    await runOperation("Open mirror folder", () => api.openAppFolder("mirror", false));
+    await runOperation("Open saved files folder", () => api.openAppFolder("mirror", false));
   }
 
   async function moveFilesToNewRoot() {
     setMovingFiles(true);
     try {
-      await runOperation("Move mirrored files", async () => {
+      await runOperation("Move saved course files", async () => {
         await api.mirrorMoveFiles();
         setChangingMirrorRoot(false);
         await api.mirrorStats().then(setMirrorStats);
@@ -406,8 +472,58 @@ export default function SettingsView({
     await runOperation("Retry failed downloads", async () => { await api.mirrorRetryFailed(); await api.mirrorStats().then(setMirrorStats); });
   }
 
+  async function retryDownloadItem(resourceId: number) {
+    if (!mirror) return;
+    try {
+      await mirror.retryDownload(resourceId);
+      try { setMirrorStats(await api.mirrorStats()); } catch {}
+    } catch (error) {
+      setOperationFeedback({ label: "Retry download", phase: "error", detail: String(error) });
+    }
+  }
+
   async function verifyFiles() {
     await runOperation("Verify mirrored files", async () => { await api.mirrorVerifyFiles(); await api.mirrorStats().then(setMirrorStats); });
+  }
+
+  async function openDeleteAll() {
+    setShowDeleteAll(true);
+    setDeleteScope(null);
+    setDeleteError(null);
+    setDeleteText("");
+    setDeleteResult(null);
+    setDeleteLoading(true);
+    try {
+      setDeleteScope(await api.snapshotMirrorDeleteScope());
+    } catch (error) {
+      setDeleteError(String(error));
+    } finally {
+      setDeleteLoading(false);
+    }
+  }
+
+  async function confirmDeleteAll() {
+    if (deleteText !== "DELETE" || !deleteScope || deletingFiles) return;
+    setDeletingFiles(true);
+    setDeleteError(null);
+    try {
+      const result = (await api.mirrorDeleteAll(deleteScope.scopeId)) as MirrorDeleteResult | undefined;
+      const normalized: MirrorDeleteResult = result ?? { removed: 0, failed: [] };
+      setDeleteResult(normalized);
+      try { setMirrorStats(await api.mirrorStats()); } catch {}
+      if (normalized.failed.length === 0) {
+        setShowDeleteAll(false);
+        setDeleteScope(null);
+        setDeleteText("");
+        setDeleteResult(null);
+      } else {
+        setDeleteError(`${normalized.removed} removed, ${normalized.failed.length} failed. Retry by typing DELETE again.`);
+      }
+    } catch (error) {
+      setDeleteError(String(error));
+    } finally {
+      setDeletingFiles(false);
+    }
   }
 
   /** Send one message so a wrong token or chat id is caught here, not at the
@@ -428,11 +544,29 @@ export default function SettingsView({
 
   return (
     <div className="settings-page">
-      <PageHeader title="Settings" summary="Appearance, account, notifications, Telegram, monitoring, files and data." />
-      <div className="settings-layout">
-      <aside className="settings-sticky">
+      <header className="workspace-view-header">
+        <strong>Settings</strong>
+        {headerActions && <div className="workspace-view-header-actions">{headerActions}</div>}
+      </header>
+      <div className="settings-layout" ref={layoutRef}>
+      <aside className="settings-sticky" ref={navRef}>
+        <select
+          className="settings-section-select select-trigger"
+          aria-label="Settings section"
+          value={active}
+          onChange={(event) => {
+            const id = event.currentTarget.value;
+            setActive(id);
+            const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+            document.getElementById(id)?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
+          }}
+        >
+          {NAV_ITEMS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+        </select>
         <nav aria-label="Settings sections">
-          {NAV_ITEMS.map((item) => (
+          {NAV_ITEMS.map((item) => {
+            const Icon = SECTION_ICONS[item.id];
+            return (
             <a
               key={item.id}
               href={`#${item.id}`}
@@ -440,6 +574,7 @@ export default function SettingsView({
               aria-current={active === item.id ? "true" : undefined}
               onClick={(e) => {
                 e.preventDefault();
+                setActive(item.id);
                 // Instant under reduced motion, smooth otherwise.
                 const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
                 document
@@ -447,49 +582,123 @@ export default function SettingsView({
                   ?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
               }}
             >
+              <Icon aria-hidden="true" />
               {item.label}
             </a>
-          ))}
+            );
+          })}
         </nav>
       </aside>
+      <div className="settings-scroll" ref={contentScrollRef}>
       <div className="settings-content">
+        <h1 className="settings-title">Settings</h1>
+        <p className="settings-section-description">Make Pulse feel like your workspace.</p>
         <section id="appearance" className="settings-section">
           <h2 className="settings-group-title">Appearance</h2>
-          <SettingRow title="Theme" description="Choose a theme or follow your system appearance.">
-            <ToggleGroup
-              value={themeMode}
-              onValueChange={(v) => {
-                if (v === "system" || v === "light" || v === "dark") onThemeMode(v);
-              }}
-              options={THEME_OPTIONS as Array<{ value: string; label: string }>}
-              ariaLabel="Color theme"
-            />
-          </SettingRow>
+          <p className="settings-section-description">How Pulse looks and feels.</p>
+          {appearance}
         </section>
 
         <section id="account" className="settings-section">
-          <h2 className="settings-group-title">Account</h2>
-          <SettingRow title="Status">
-            <span className="settings-inline">
-              <span
-                aria-hidden="true"
-                className={cx(
-                  "settings-dot",
-                  auth?.authenticated && !auth.sessionExpired && "ok",
-                )}
-              />
-              {auth?.sessionExpired ? "Session expired" : auth?.authenticated ? "Signed in" : "Signed out"}
+          <h2 className="settings-group-title">Account &amp; connection</h2>
+          <p className="settings-section-description">Your Quanta session and how Pulse monitors it.</p>
+          <SettingRow title="Account" description={
+            auth?.sessionExpired
+              ? "Your saved files remain available. Use Reconnect in the session notice."
+              : auth?.authenticated
+                ? `${accountName(auth)} · ${auth.method === "sso" ? "BITS SSO" : "Password"}`
+                : "Sign in to monitor Quanta."
+          }>
+            <span className={cx("tag", auth?.authenticated && !auth.sessionExpired ? "tag-restored" : "tag-deadline")}>
+              {auth?.sessionExpired ? "Session expired" : auth?.authenticated ? "Connected" : "Signed out"}
             </span>
           </SettingRow>
-          <SettingRow title="Sign-in method">
-            <span>{auth?.method === "sso" ? "BITS SSO" : auth?.method === "password" ? "Password" : "—"}</span>
+          <SettingRow title="Session" description="Ends your Quanta session on this computer.">
+            <Button variant="danger-ghost" size="sm" onClick={() => setShowSignOut(true)}>
+              Sign out
+            </Button>
           </SettingRow>
-          <SettingRow title="Session acquired">
-            <span className="mono">{auth?.acquiredAt ? formatCompact(auth.acquiredAt) : "—"}</span>
+          <SettingRow title="Monitoring interval" description="How often Pulse checks Quanta.">
+            <Select
+              value={String(draft.syncIntervalMinutes)}
+              onValueChange={(v) => set("syncIntervalMinutes", Number(v))}
+              options={syncOptions}
+              ariaLabel="Sync interval"
+            />
+          </SettingRow>
+          {errors.syncIntervalMinutes && <Banner kind="error">{errors.syncIntervalMinutes}</Banner>}
+          <SettingRow title="Keep running in the tray" description="Continue monitoring when the window is closed.">
+            <Switch checked={draft.runInBackground} onCheckedChange={(v) => set("runInBackground", v)} ariaLabel="Run in background" />
+          </SettingRow>
+          <SettingRow title="Start at login" description="Open Pulse when you sign in to your computer.">
+            <Switch checked={draft.launchAtLogin} onCheckedChange={(v) => set("launchAtLogin", v)} ariaLabel="Launch at login" />
+          </SettingRow>
+          <SettingRow title="Timezone" description="Dates are grouped by your local calendar days.">
+            <span className="muted">{Intl.DateTimeFormat().resolvedOptions().timeZone}</span>
+          </SettingRow>
+
+        </section>
+
+        <section id="notifications" className="settings-section">
+          <h2 className="settings-group-title">Notifications</h2>
+          <p className="settings-section-description">Quiet by default. Choose what is worth interrupting you for.</p>
+          <SettingRow
+            title="New material"
+            controlClassName={notificationsDisabled ? "dimmed" : undefined}
+            description={
+              notificationsDisabled
+                ? "Turn on notifications to change these"
+                : "New files posted on Quanta."
+            }
+          >
+            <Switch
+              checked={draft.notifyNew}
+              onCheckedChange={(v) => set("notifyNew", v)}
+              disabled={notificationsDisabled}
+              ariaLabel="New files"
+            />
+          </SettingRow>
+          <SettingRow
+            title="Updated material"
+            controlClassName={notificationsDisabled ? "dimmed" : undefined}
+            description={notificationsDisabled ? undefined : "Files that changed after you saw them."}
+          >
+            <Switch
+              checked={draft.notifyUpdated}
+              onCheckedChange={(v) => set("notifyUpdated", v)}
+              disabled={notificationsDisabled}
+              ariaLabel="Updated files"
+            />
+          </SettingRow>
+          <SettingRow
+            title="Deadline reminders"
+            controlClassName={notificationsDisabled ? "dimmed" : undefined}
+            description={notificationsDisabled ? undefined : "Desktop notifications for upcoming deadlines."}
+          >
+            <Switch
+              checked={draft.notifyDeadlines}
+              onCheckedChange={(v) => set("notifyDeadlines", v)}
+              disabled={notificationsDisabled}
+              ariaLabel="Deadlines"
+            />
+          </SettingRow>
+          <SettingRow
+            title="Scan failures and incomplete scans"
+            controlClassName={notificationsDisabled ? "dimmed" : undefined}
+            description={notificationsDisabled
+              ? "Turn on notifications to change this"
+              : "Show a generic system alert when a scan finishes with incomplete results."}
+          >
+            <Switch
+              checked={draft.notifyScanFailures}
+              onCheckedChange={(v) => set("notifyScanFailures", v)}
+              disabled={notificationsDisabled}
+              ariaLabel="Scan failures and incomplete scans"
+            />
           </SettingRow>
           <SettingRow title="Notification permission">
             <div className="settings-inline">
-              <span className="muted">{permissionLabel(permission)}</span>
+              <span className={cx("tag", permission === "granted" ? "tag-restored" : "tag-note")}>{permissionLabel(permission)}</span>
               {permission === "denied" ? (
                 <Button variant="secondary" size="sm" onClick={() => void api.openNotificationSettings()}>
                   Open system settings
@@ -508,50 +717,27 @@ export default function SettingsView({
               )}
             </div>
           </SettingRow>
-          {auth?.sessionExpired && (
-            <SettingRow title="Session expired" description="Sign in again to resume scanning.">
-              <Button variant="secondary" size="sm" onClick={onRefresh}>Restart session</Button>
-            </SettingRow>
-          )}
-          <SettingRow title="Sign out" description="Ends your Quanta session on this computer.">
-            <Button variant="danger-ghost" size="sm" onClick={() => setShowSignOut(true)}>
-              Sign out…
-            </Button>
+          <SettingRow title="Reminder window" description="Notify about deadlines within this many hours.">
+            <Select
+              value={String(draft.deadlineReminderHours)}
+              onValueChange={(v) => set("deadlineReminderHours", Number(v))}
+              options={DEADLINE_OPTIONS as Array<{ value: string; label: string }>}
+              ariaLabel="Deadline reminder window"
+            />
           </SettingRow>
-        </section>
-
-        <section id="notifications" className="settings-section">
-          <h2 className="settings-group-title">Notifications</h2>
+          {errors.deadlineReminderHours && <Banner kind="error">{errors.deadlineReminderHours}</Banner>}
+          <SettingRow title="Quiet hours" description="Notifications pause between these local times.">
+            <div className="settings-inline">
+              <TimeField value={draft.quietHoursStart ?? ""} onChange={(e) => set("quietHoursStart", e.target.value || null)} aria-label="Quiet hours start" />
+              <span className="muted">to</span>
+              <TimeField value={draft.quietHoursEnd ?? ""} onChange={(e) => set("quietHoursEnd", e.target.value || null)} aria-label="Quiet hours end" />
+            </div>
+          </SettingRow>
+          {errors.quietHours && <Banner kind="error">{errors.quietHours}</Banner>}
+          {errors.quietHoursStart && <Banner kind="error">{errors.quietHoursStart}</Banner>}
+          {errors.quietHoursEnd && <Banner kind="error">{errors.quietHoursEnd}</Banner>}
           <SettingRow title="Enable notifications" description="Requires permission from your system.">
             <Switch checked={draft.notificationsEnabled} onCheckedChange={(v) => set("notificationsEnabled", v)} ariaLabel="Enable notifications" />
-          </SettingRow>
-          <SettingRow
-            title="New files"
-            controlClassName={notificationsDisabled ? "dimmed" : undefined}
-            description={
-              notificationsDisabled
-                ? "Turn on notifications to change these"
-                : "Notify when new resources appear."
-            }
-          >
-            <Switch
-              checked={draft.notifyNew}
-              onCheckedChange={(v) => set("notifyNew", v)}
-              disabled={notificationsDisabled}
-              ariaLabel="New files"
-            />
-          </SettingRow>
-          <SettingRow
-            title="Updated files"
-            controlClassName={notificationsDisabled ? "dimmed" : undefined}
-            description={notificationsDisabled ? undefined : "Notify when resources change."}
-          >
-            <Switch
-              checked={draft.notifyUpdated}
-              onCheckedChange={(v) => set("notifyUpdated", v)}
-              disabled={notificationsDisabled}
-              ariaLabel="Updated files"
-            />
           </SettingRow>
           <SettingRow
             title="Announcements"
@@ -563,18 +749,6 @@ export default function SettingsView({
               onCheckedChange={(v) => set("notifyAnnouncements", v)}
               disabled={notificationsDisabled}
               ariaLabel="Announcements"
-            />
-          </SettingRow>
-          <SettingRow
-            title="Deadlines"
-            controlClassName={notificationsDisabled ? "dimmed" : undefined}
-            description={notificationsDisabled ? undefined : "Notify about upcoming deadlines."}
-          >
-            <Switch
-              checked={draft.notifyDeadlines}
-              onCheckedChange={(v) => set("notifyDeadlines", v)}
-              disabled={notificationsDisabled}
-              ariaLabel="Deadlines"
             />
           </SettingRow>
           <SettingRow
@@ -601,108 +775,14 @@ export default function SettingsView({
               ariaLabel="Authentication reminders"
             />
           </SettingRow>
-          <SettingRow title="Deadline reminder window" description="Notify about deadlines within this many hours.">
-            <Select
-              value={String(draft.deadlineReminderHours)}
-              onValueChange={(v) => set("deadlineReminderHours", Number(v))}
-              options={DEADLINE_OPTIONS as Array<{ value: string; label: string }>}
-              ariaLabel="Deadline reminder window"
-            />
-          </SettingRow>
-          {errors.deadlineReminderHours && <Banner kind="error">{errors.deadlineReminderHours}</Banner>}
-          <SettingRow title="Quiet hours" description="Notifications pause between these local times.">
-            <div className="settings-inline">
-              <TimeField value={draft.quietHoursStart ?? ""} onChange={(e) => set("quietHoursStart", e.target.value || null)} aria-label="Quiet hours start" />
-              <span className="muted">to</span>
-              <TimeField value={draft.quietHoursEnd ?? ""} onChange={(e) => set("quietHoursEnd", e.target.value || null)} aria-label="Quiet hours end" />
-            </div>
-          </SettingRow>
-          {errors.quietHours && <Banner kind="error">{errors.quietHours}</Banner>}
-          {errors.quietHoursStart && <Banner kind="error">{errors.quietHoursStart}</Banner>}
-          {errors.quietHoursEnd && <Banner kind="error">{errors.quietHoursEnd}</Banner>}
-        </section>
-
-        <section id="telegram" className="settings-section">
-          <h2 className="settings-group-title">Telegram</h2>
-          <SettingRow
-            title="Forward to Telegram"
-            description="Send new material to your own bot chat as the file itself, not a link. The six categories under Notifications decide which events go out."
-          >
-            <Switch
-              checked={draft.telegramEnabled}
-              onCheckedChange={(v) => set("telegramEnabled", v)}
-              ariaLabel="Forward to Telegram"
-            />
-          </SettingRow>
-          <SettingRow
-            title="Bot token"
-            description="From @BotFather. Stored on this computer and sent to no host but Telegram."
-          >
-            <TextField
-              type="password"
-              value={draft.telegramBotToken ?? ""}
-              onChange={(e) => set("telegramBotToken", e.target.value || null)}
-              placeholder="123456789:AA…"
-              aria-label="Bot token"
-              autoComplete="off"
-            />
-          </SettingRow>
-          {errors.telegramBotToken && <Banner kind="error">{errors.telegramBotToken}</Banner>}
-          <SettingRow title="Chat id" description="Your numeric chat id, or an @channel the bot can post to.">
-            <TextField
-              value={draft.telegramChatId ?? ""}
-              onChange={(e) => set("telegramChatId", e.target.value || null)}
-              placeholder="123456789 or @my_channel"
-              aria-label="Chat id"
-              autoComplete="off"
-            />
-          </SettingRow>
-          {errors.telegramChatId && <Banner kind="error">{errors.telegramChatId}</Banner>}
-          <SettingRow title="Connection" description="Save your changes first, then send a test message.">
-            <div className="settings-inline">
-              <span className="muted">{telegramLabel(telegram, draft.telegramEnabled)}</span>
-              <Button
-                variant="secondary"
-                size="sm"
-                loading={testingTelegram}
-                disabled={!telegram?.configured}
-                onClick={testTelegram}
-              >
-                Send test message
-              </Button>
-            </div>
-          </SettingRow>
-          {telegramTest && (
-            <Banner kind={telegramTest.startsWith("Sent") ? "info" : "error"}>{telegramTest}</Banner>
-          )}
-        </section>
-
-        <section id="monitoring" className="settings-section">
-          <h2 className="settings-group-title">Monitoring</h2>          <SettingRow title="Sync interval" description="How often Quanta is checked while the app is running (15–1440 min).">
-            <Select
-              value={String(draft.syncIntervalMinutes)}
-              onValueChange={(v) => set("syncIntervalMinutes", Number(v))}
-              options={SYNC_INTERVALS as Array<{ value: string; label: string }>}
-              ariaLabel="Sync interval"
-            />
-          </SettingRow>
-          {errors.syncIntervalMinutes && <Banner kind="error">{errors.syncIntervalMinutes}</Banner>}
-          <SettingRow title="Run in background" description="Monitoring continues when the window is closed.">
-            <Switch checked={draft.runInBackground} onCheckedChange={(v) => set("runInBackground", v)} ariaLabel="Run in background" />
-          </SettingRow>
-          <SettingRow title="Launch at login">
-            <Switch checked={draft.launchAtLogin} onCheckedChange={(v) => set("launchAtLogin", v)} ariaLabel="Launch at login" />
-          </SettingRow>
-          <SettingRow title="Timezone" description="Dates are grouped by your local calendar days.">
-            <span className="muted">{Intl.DateTimeFormat().resolvedOptions().timeZone}</span>
-          </SettingRow>
         </section>
 
         <section id="files" className="settings-section">
-          <h2 className="settings-group-title">Files</h2>
+          <h2 className="settings-group-title">Files &amp; storage</h2>
+          <p className="settings-section-description">Manage the copies Pulse saves on this device.</p>
           <SettingRow
-            title="Mirror folder"
-            description="Where the permanent local copies are stored. Changing this does not move existing files unless you choose to move them."
+            title="Saved files folder"
+            description="Where your saved course files are stored. Changing this does not move existing files unless you choose to move them."
           >
             <div className="settings-inline">
               <span className="mono" style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -721,7 +801,7 @@ export default function SettingsView({
             <div className="settings-move-banner" role="alert">
               <p>
                 <strong>Move existing files?</strong> The new folder is empty. Do you want to copy
-                everything from the current mirror and verify it, or start fresh?
+                everything from the current Saved files folder and verify it, or start fresh?
               </p>
               <div className="settings-inline">
                 <Button
@@ -818,20 +898,19 @@ export default function SettingsView({
 
           <SettingRow
             title="Previous versions to keep"
-            description="Older versions of changed files are moved to .history. Only the newest N are kept per resource."
+            description="Keep this many older copies of each changed file in .history. The current saved copy is kept separately. Saved files are not removed by age."
           >
             <Select
               value={String(draft.mirrorKeepVersions)}
               onValueChange={(v) => set("mirrorKeepVersions", Number(v))}
-              options={[
-                { value: "0", label: "None" },
-                { value: "1", label: "1" },
-                { value: "3", label: "3" },
-                { value: "5", label: "5" },
-              ]}
+              options={[...new Set([0, 1, 3, 5, settings.mirrorKeepVersions])]
+                .filter((count) => Number.isInteger(count) && count >= 0 && count <= 10)
+                .sort((a, b) => a - b)
+                .map((count) => ({ value: String(count), label: count === 0 ? "None" : String(count) }))}
               ariaLabel="Number of previous versions to keep"
             />
           </SettingRow>
+          {errors.mirrorKeepVersions && <Banner kind="error">{errors.mirrorKeepVersions}</Banner>}
 
           {mirrorStats && mirrorStats.failed > 0 && (
             <SettingRow
@@ -844,9 +923,35 @@ export default function SettingsView({
             </SettingRow>
           )}
 
+          {(activeDownloads.length > 0 || failedDownloads.length > 0) && (
+            <div className="settings-download-list">
+              <h3 className="settings-subgroup-title">Downloads</h3>
+              {[...activeDownloads, ...failedDownloads].map((item) => {
+                const file = resources.find(resource => resource.id === item.resourceId);
+                const percent = item.bytesTotal ? Math.min(100, Math.floor(item.bytesDone / item.bytesTotal * 100)) : null;
+                return (
+                  <div key={item.resourceId} className="settings-download-row">
+                    <span className="settings-download-name" title={file?.title}>{file?.title ?? `Resource ${item.resourceId}`}</span>
+                    {item.state === "failed" ? (
+                      <>
+                        <span className="tag tag-removed" title={item.error ?? undefined}>Failed</span>
+                        <Button variant="secondary" size="sm" onClick={() => void retryDownloadItem(item.resourceId)}>Retry</Button>
+                      </>
+                    ) : (
+                      <>
+                        <progress aria-label={file?.title ?? "Download progress"} value={percent ?? undefined} max={100} />
+                        <span className="mono muted">{percent != null ? `${percent}%` : formatBytes(item.bytesDone) || "Queued"}</span>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           <SettingRow
             title="Verify files"
-            description="Re-hash every local copy and re-download any that are missing or corrupt."
+            description="Re-hash saved course files and re-download any that are missing or corrupt."
           >
             <Button variant="secondary" size="sm" onClick={verifyFiles}>
               Verify now
@@ -854,77 +959,69 @@ export default function SettingsView({
           </SettingRow>
         </section>
 
-        <section id="about" className="settings-section">
-          <h2 className="settings-group-title">About</h2>
-          <SettingRow title="Version">
-            <span className="mono">{aboutVersion || "—"}</span>
-          </SettingRow>
+        <section id="integrations" className="settings-section">
+          <h2 className="settings-group-title">Integrations</h2>
+          <p className="settings-section-description">Send Pulse updates to other places.</p>
           <SettingRow
-            title="Check for updates"
-            description={lastUpdateCheck ? `Last checked ${formatCompact(lastUpdateCheck)}` : "Never checked."}
-          >
-            <Button
-              variant="secondary"
-              size="sm"
-              loading={updateStatus === "checking"}
-              onClick={() => void checkForUpdate()}
-            >
-              {updateStatus === "checking" ? "Checking..." : "Check now"}
-            </Button>
-          </SettingRow>
-          <SettingRow
-            title="Status"
-            description={updateError ?? undefined}
-          >
-            <span className={cx("settings-inline", updateStatus === "error" && "danger")}>
-              {updateStatus === "idle" && "Idle"}
-              {updateStatus === "checking" && "Looking..."}
-              {updateStatus === "upToDate" && "Up to date"}
-              {updateStatus === "available" && `Update ${updateVersion} available`}
-              {updateStatus === "installing" && "Installing..."}
-              {updateStatus === "error" && "Check failed"}
-            </span>
-          </SettingRow>
-          {updateStatus === "available" && updateVersion && (
-            <div className="settings-banner">
-              <span>Quanta Pulse {updateVersion} is available.</span>
-              <div className="settings-inline">
-                <Button variant="primary" size="sm" onClick={() => void installUpdate()}>
-                  Restart to update
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => window.open(updateNotes ?? "https://github.com/Akshay-VK/quanta-pulse/releases", "_blank")}>
-                  Release notes
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => { setUpdateStatus("idle"); }}>
-                  Later
-                </Button>
-              </div>
-            </div>
-          )}
-          <SettingRow
-            title="Check for updates automatically"
-            description="Checks about 30 seconds after launch, then every 6 hours."
+            title="Forward to Telegram"
+            description="Send new material to your own bot chat as the file itself, not a link. The six categories under Notifications decide which events go out."
           >
             <Switch
-              checked={draft.updateAutoCheck ?? settings.updateAutoCheck ?? true}
-              onCheckedChange={(v) => void changeAutoUpdate(v)}
-              disabled={savingAutoUpdate}
-              ariaLabel="Check for updates automatically"
+              checked={draft.telegramEnabled}
+              onCheckedChange={(v) => set("telegramEnabled", v)}
+              ariaLabel="Forward to Telegram"
             />
           </SettingRow>
-          <SettingRow title="Open backups folder">
-            <Button variant="ghost" size="sm" onClick={() => void api.openAppFolder("backups")}>
-              Open folder
-            </Button>
+          <SettingRow
+            title="Bot token"
+            description="From @BotFather. Stored on this computer and sent to no host but Telegram."
+          >
+            <PasswordField
+              value={draft.telegramBotToken ?? ""}
+              onChange={(e) => set("telegramBotToken", e.target.value || null)}
+              placeholder="123456789:AA…"
+              aria-label="Bot token"
+              autoComplete="off"
+              error={errors.telegramBotToken}
+            />
           </SettingRow>
+          {errors.telegramBotToken && <Banner kind="error">{errors.telegramBotToken}</Banner>}
+          <SettingRow title="Chat id" description="Your numeric chat id, or an @channel the bot can post to.">
+            <TextField
+              value={draft.telegramChatId ?? ""}
+              onChange={(e) => set("telegramChatId", e.target.value || null)}
+              placeholder="123456789 or @my_channel"
+              aria-label="Chat id"
+              autoComplete="off"
+              error={errors.telegramChatId}
+            />
+          </SettingRow>
+          {errors.telegramChatId && <Banner kind="error">{errors.telegramChatId}</Banner>}
+          <SettingRow title="Connection" description="Save your changes first, then send a test message.">
+            <div className="settings-inline">
+              <span className="muted">{telegramLabel(telegram, draft.telegramEnabled)}</span>
+              <Button
+                variant="secondary"
+                size="sm"
+                loading={testingTelegram}
+                disabled={!telegram?.configured}
+                onClick={testTelegram}
+              >
+                Send test message
+              </Button>
+            </div>
+          </SettingRow>
+          {telegramTest && (
+            <Banner kind={telegramTest.startsWith("Sent") ? "info" : "error"}>{telegramTest}</Banner>
+          )}
         </section>
 
         <section id="data" className="settings-section">
-          <h2 className="settings-group-title">Data</h2>
-          <PropertyList properties={dbProps} />
+          <h2 className="settings-group-title">Data &amp; recovery</h2>
+          <p className="settings-section-description">Manage what Pulse keeps on this device.</p>
           <SettingRow
-            title="Cached files"
-            description="Downloaded files are kept so previews and search are fast. Oldest are removed first when the limit is reached."
+            title="Preview cache"
+            description={cacheStats ? `${formatBytes(cacheStats.totalBytes) || "0 B"} of generated previews.` : "Temporary copies used for in-app previews."}
           >
             <div className="settings-inline">
               <Select
@@ -939,26 +1036,121 @@ export default function SettingsView({
                 loading={clearingCache}
                 onClick={() => void clearCache()}
               >
-                Clear cached files
+                Clear cache
               </Button>
             </div>
           </SettingRow>
-          <SettingRow title="Re-baseline" description="Record everything as known. Nothing is reported as new until the next scan.">
-            <Button variant="secondary" size="sm" onClick={() => setShowRebaseline(true)}>Re-baseline all courses</Button>
+          <SettingRow title="Reset all baselines" description="The next scan records existing material silently. History is kept.">
+            <Button variant="secondary" size="sm" onClick={() => setShowRebaseline(true)}>Reset baselines…</Button>
           </SettingRow>
           <div className="settings-danger-group">
             <SettingRow
-              title="Delete all local copies"
-              description="Permanently remove every file from the mirror folder. This cannot be undone."
+              title="Delete saved files"
+              description="Remove local copies from this device. Files on Quanta stay available."
             >
-              <Button variant="danger" size="sm" onClick={() => setShowDeleteAll(true)}>
-                Delete all local copies
+              <Button variant="danger" size="sm" onClick={() => void openDeleteAll()}>
+                Delete saved files…
               </Button>
             </SettingRow>
           </div>
+          <PropertyList properties={dbProps} />
           <p className="settings-note">
             Session cookies stay in memory and are not saved. Times are shown in your local timezone.
           </p>
+        </section>
+
+        <section id="about" className="settings-section">
+          <h2 className="settings-group-title">About</h2>
+          <p className="settings-section-description">Quanta Pulse</p>
+          {updateStatus === "available" && updateVersion && (
+            <div className="settings-banner is-info" role="status">
+              <Info aria-hidden="true" />
+              <span>Version {updateVersion} is available.</span>
+              <div className="settings-inline">
+                <Button variant="primary" size="sm" onClick={() => void installUpdate()} disabled={updateInstallRef.current}>
+                  Download
+                </Button>
+              </div>
+            </div>
+          )}
+          {updateStatus === "downloading" && (
+            <div className="settings-banner" role="status">
+              <span>Downloading {updateVersion ?? ""}…</span>
+              <progress aria-label="Update download progress" value={updateProgress?.total ? updateProgress.downloaded : undefined} max={updateProgress?.total ?? 1} />
+              <span className="mono muted">
+                {updateProgress?.total
+                  ? `${Math.min(100, Math.floor(updateProgress.downloaded / updateProgress.total * 100))}%`
+                  : formatBytes(updateProgress?.downloaded ?? 0)}
+              </span>
+            </div>
+          )}
+          {updateStatus === "installing" && (
+            <div className="settings-banner" role="status">
+              <span className="spinner" aria-hidden="true" />
+              <span>Installing…</span>
+            </div>
+          )}
+          {updateStatus === "failed" && (
+            <div className="settings-banner is-error" role="alert">
+              <AlertCircle aria-hidden="true" />
+              <strong>Update failed.</strong>
+              {aboutVersion && <span>Pulse kept version {aboutVersion}.</span>}
+              {updateError && <span>{updateError}</span>}
+              <div className="settings-inline">
+                <Button variant="primary" size="sm" onClick={() => void installUpdate()}>
+                  Retry
+                </Button>
+              </div>
+            </div>
+          )}
+          {updateStatus === "restartRequired" && (
+            <div className="settings-banner is-success" role="status">
+              <strong>Update ready.</strong>
+              <span>Restart Pulse to finish installing {updateVersion ?? ""}.</span>
+              {updateError && <span>{updateError}</span>}
+              <Button variant="primary" size="sm" onClick={() => void restartNow()}>
+                Restart now
+              </Button>
+            </div>
+          )}
+          {(updateStatus === "upToDate" || updateStatus === "checkError") && (
+            <div className={cx("settings-banner", updateStatus === "checkError" && "is-error")} role={updateStatus === "checkError" ? "alert" : "status"}>
+              <span>{updateStatus === "upToDate" ? "Up to date" : `Check failed${updateError ? `: ${updateError}` : ""}`}</span>
+            </div>
+          )}
+          <SettingRow title="Version">
+            <span className="mono">{aboutVersion || "—"}</span>
+          </SettingRow>
+          <SettingRow
+            title="Automatic update checks"
+            description="Check for new versions in the background."
+          >
+            <Switch
+              checked={draft.updateAutoCheck ?? settings.updateAutoCheck ?? true}
+              onCheckedChange={(v) => void changeAutoUpdate(v)}
+              disabled={savingAutoUpdate}
+              ariaLabel="Check for updates automatically"
+            />
+          </SettingRow>
+          <SettingRow
+            title="Check for updates"
+            description={lastUpdateCheck ? `Last checked ${formatCompact(lastUpdateCheck)}` : "Never checked."}
+          >
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={updateStatus === "checking"}
+              disabled={updateStatus === "checking" || updateStatus === "downloading" || updateStatus === "installing"}
+              onClick={() => void checkForUpdate()}
+            >
+              {updateStatus === "checking" ? "Checking…" : "Check for updates"}
+            </Button>
+          </SettingRow>
+          <SettingRow title="Open backups folder">
+            <Button variant="ghost" size="sm" onClick={() => void api.openAppFolder("backups")}>
+              Open folder
+            </Button>
+          </SettingRow>
         </section>
 
         {operationFeedback && (
@@ -966,24 +1158,35 @@ export default function SettingsView({
             {operationFeedback.phase === "pending" ? `${operationFeedback.label}…` : operationFeedback.phase === "success" ? `${operationFeedback.label} completed.` : `${operationFeedback.label} failed: ${operationFeedback.detail}`}
           </p>
         )}
-        {saveError && <Banner kind="error" role="alert">{saveError}</Banner>}
-        {dirty && (
-          <div className="save-bar" role="status" aria-live="polite">
-            <div className="save-copy">You have unsaved changes</div>
+      </div>
+      </div>
+      </div>
+      {(dirty || saved) && (
+        <div className={cx("save-bar", saveError && "is-error")}>
+          <div className="save-copy" role={saveError ? "alert" : "status"} title={saveError ?? undefined}>
+            {saveError ? (
+              <>
+                <AlertCircle aria-hidden="true" />
+                <span><strong>Couldn’t save.</strong> Your changes are kept.</span>
+                <span className="sr-only">{saveError}</span>
+              </>
+            ) : (
+              <>
+                <span className={cx("settings-dot", saved && !dirty && "ok")} aria-hidden="true" />
+                <strong>{dirty ? "Unsaved changes" : "Settings saved"}</strong>
+              </>
+            )}
+          </div>
+          {dirty && (
             <div className="settings-inline">
-              <Button variant="ghost" size="sm" onClick={() => setShowDiscard(true)}>Discard</Button>
-              <Button variant="primary" size="sm" loading={saving} onClick={() => void save()} disabled={hasValidationErrors(errors) || saving}>
-                Save settings
+              <Button variant="secondary" size="sm" onClick={() => setShowDiscard(true)} disabled={saving}>Discard</Button>
+              <Button variant="primary" size="sm" loading={saving} onClick={() => void save()} disabled={hasValidationErrors(errors)}>
+                {saving ? "Saving…" : saveError ? "Retry" : "Save changes"}
               </Button>
             </div>
-          </div>
-        )}
-        {saved && !dirty && (
-          <div className="save-bar" role="status" aria-live="polite">
-            <div className="save-copy">Settings saved</div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
       <ConfirmDialog
         open={showDiscard}
@@ -1020,20 +1223,81 @@ export default function SettingsView({
           await onRefresh();
         }}
       />
-      <ConfirmDialog
+      <Dialog
         open={showDeleteAll}
-        onOpenChange={setShowDeleteAll}
-        title="Delete all local copies?"
-        body="This permanently removes every file from the mirror folder. The preview cache is not affected. This cannot be undone."
-        confirmLabel="Delete all"
-        cancelLabel="Cancel"
-        destructive
-        onConfirm={async () => {
-          await api.mirrorDeleteAll();
-          await api.mirrorStats().then(setMirrorStats);
+        onOpenChange={(next) => {
+          if (!next && !deletingFiles) {
+            setShowDeleteAll(false);
+            setDeleteScope(null);
+            setDeleteError(null);
+            setDeleteText("");
+            setDeleteResult(null);
+          }
         }}
-      />
-      </div>
+        role="alertdialog"
+        label="Delete all saved files?"
+        className="dialog-confirm dialog-confirm-scope"
+        initialFocusRef={cancelDeleteRef}
+      >
+        <h2 className="dialog-title">Delete all saved files?</h2>
+        <div className="dialog-body">
+          <p>Files on Quanta, History and your baseline stay available. Deletion is permanent.</p>
+          {deleteLoading && <p>Loading deletion scope…</p>}
+          {deleteScope && (
+            <p>
+              This removes {deleteScope.count} local {deleteScope.count === 1 ? "copy" : "copies"}{mirrorStats?.root && <> from <span className="mono">{mirrorStats.root}</span></>}.
+            </p>
+          )}
+          {deleteResult && deleteResult.failed.length > 0 && (
+            <ul>
+              {deleteResult.failed.map((failure) => (
+                <li key={`${failure.resourceId}-${failure.path}`}>
+                  {failure.path}: {failure.error}
+                </li>
+              ))}
+            </ul>
+          )}
+          {deleteError && <p role="alert">{deleteError}</p>}
+          <label className="settings-inline" style={{ flexDirection: "column", alignItems: "stretch" }}>
+            <span>Type DELETE to confirm</span>
+            <input
+              className="text-field"
+              aria-label="DELETE"
+              placeholder="DELETE"
+              value={deleteText}
+              onChange={(event) => setDeleteText(event.target.value)}
+              disabled={deletingFiles}
+            />
+          </label>
+        </div>
+        <div className="dialog-footer">
+          <button
+            ref={cancelDeleteRef}
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => {
+              if (deletingFiles) return;
+              setShowDeleteAll(false);
+              setDeleteScope(null);
+              setDeleteError(null);
+              setDeleteText("");
+              setDeleteResult(null);
+            }}
+            disabled={deletingFiles}
+          >
+            <span className="btn-label">Cancel</span>
+          </button>
+          <Button
+            variant="danger"
+            className="dialog-primary"
+            loading={deletingFiles}
+            disabled={deletingFiles || deleteLoading || deleteText !== "DELETE" || !deleteScope}
+            onClick={() => void confirmDeleteAll()}
+          >
+            Delete saved files
+          </Button>
+        </div>
+      </Dialog>
     </div>
   );
 }

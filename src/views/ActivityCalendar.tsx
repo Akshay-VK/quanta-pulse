@@ -1,0 +1,460 @@
+// Calendar: activity by day plus a digest of the selected day.
+//
+// The visible month is fetched with `events_range` (dots on each local-calendar
+// day) and the selected day's summary with `daily_digest`, which scopes its sync
+// metadata to the chosen local date. Both group by local calendar days, never
+// UTC strings.
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight, Copy, X } from "lucide-react";
+import { localDateKey, resolveTimezone } from "../lib/agenda";
+import { api } from "../lib/api";
+import {
+  addMonths,
+  buildMonthGrid,
+  clampDayToMonth,
+  dayKeyOf,
+  dayKeyToDate,
+  eventKindMeta,
+  groupEventsByDay,
+  isSameMonth,
+  localDayKey,
+  longDayLabel,
+  monthLabel,
+  summarizeEvents,
+  type EventCounts,
+  type YearMonth,
+} from "../lib/events";
+import { formatTimeOfDay } from "../lib/format";
+import { courseTitle } from "../lib/courseName";
+import type { ChangeEvent, Course, Digest, Resource } from "../lib/types";
+import type { DetailsAdapter } from "../lib/details";
+import { ACTIVITY_HINTS, WorkspaceViewStatus } from "../components/WorkspaceViewChrome";
+import ResourceRow from "../components/ResourceRow";
+import type { MaterialRowHandlers } from "../lib/materialHandlers";
+import { Banner } from "../components/ui/Banner";
+import { Button } from "../components/ui/Button";
+import { EmptyState } from "../components/ui/EmptyState";
+import { IconButton } from "../components/ui/IconButton";
+import { Skeleton } from "../components/ui/Skeleton";
+import type { StatusKind } from "../components/ui/StatusTag";
+
+export interface CalendarViewProps extends MaterialRowHandlers {
+  now?: Date;
+  timeZone?: string;
+  courses: Course[];
+  resources?: Resource[];
+  onOpen: (url: string) => void;
+  onOpenLocal?: (resourceId: number) => void;
+  onOpenScan: () => void;
+  /** Opens a course page from a row's course pill. */
+  onOpenCourse?: (courseId: number) => void;
+  details: DetailsAdapter;
+}
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+const STATUS_KIND: Record<string, StatusKind> = {
+  new: "new",
+  updated: "updated",
+  deadline: "deadline",
+  announcement: "note",
+  unavailable: "unavailable",
+  restored: "restored",
+};
+
+function monthBounds({ year, month }: YearMonth): { from: string; to: string } {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const last = new Date(year, month + 1, 0).getDate();
+  return { from: `${year}-${pad(month + 1)}-01`, to: `${year}-${pad(month + 1)}-${pad(last)}` };
+}
+
+interface ViewState {
+  cursor: YearMonth;
+  selected: string;
+}
+
+function initialView(now: Date, timeZone: string): ViewState {
+  const selected = localDateKey(now, timeZone);
+  const date = dayKeyToDate(selected);
+  return { cursor: { year: date.getFullYear(), month: date.getMonth() }, selected };
+}
+
+/** "13 October, 4 new, 1 deadline" for a day cell's aria-label. */
+function dayAriaLabel(key: string, events: ChangeEvent[]): string {
+  const counts = summarizeEvents(events);
+  const order: [keyof EventCounts, string][] = [
+    ["new", "new"],
+    ["updated", "updated"],
+    ["announcement", "announcement"],
+    ["deadline", "deadline"],
+    ["unavailable", "unavailable"],
+    ["restored", "restored"],
+  ];
+  const parts: string[] = [];
+  for (const [kind, word] of order) {
+    const n = counts[kind] as number;
+    if (n > 0) parts.push(`${n} ${word}${n === 1 ? "" : "s"}`);
+  }
+  return `${longDayLabel(key)}, ${parts.length > 0 ? parts.join(", ") : "no activity"}`;
+}
+
+export default function CalendarView({
+  now = new Date(),
+  timeZone = resolveTimezone(),
+  courses,
+  resources = [],
+  onOpenScan,
+  onOpenCourse,
+  details,
+}: CalendarViewProps) {
+  const [{ cursor, selected }, setView] = useState<ViewState>(() => initialView(now, timeZone));
+  const [dayOpen, setDayOpen] = useState(false);
+  const [monthEvents, setMonthEvents] = useState<ChangeEvent[] | null>(null);
+  const [digest, setDigest] = useState<Digest | null>(null);
+  const [monthError, setMonthError] = useState(false);
+  const [dayError, setDayError] = useState(false);
+  const [monthPending, setMonthPending] = useState(false);
+  const [dayPending, setDayPending] = useState(false);
+  const [monthReload, setMonthReload] = useState(0);
+  const [dayReload, setDayReload] = useState(0);
+
+  const dayButtons = useRef(new Map<string, HTMLButtonElement>());
+  const panelRef = useRef<HTMLHeadingElement>(null);
+  const focusSelected = useRef(false);
+  const focusDayPanel = useRef(false);
+  const context = useRef({ selected, cursor });
+
+  const courseById = useMemo(() => new Map(courses.map((c) => [c.id, c])), [courses]);
+  const resourceById = useMemo(() => new Map(resources.map((resource) => [resource.id, resource])), [resources]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setMonthPending(true);
+    setMonthError(false);
+    const { from, to } = monthBounds(cursor);
+    void api
+      .eventsRange(from, to)
+      .then((events) => {
+        if (!cancelled) {
+          setMonthEvents(events);
+          setMonthPending(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setMonthError(true);
+          setMonthPending(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cursor, monthReload]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDayPending(true);
+    setDayError(false);
+    void api
+      .dailyDigest(selected)
+      .then((next) => {
+        if (!cancelled) {
+          setDigest(next);
+          setDayPending(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDayError(true);
+          setDayPending(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected, dayReload]);
+
+  useEffect(() => {
+    if (context.current.selected !== selected || cursor.year !== context.current.cursor.year || cursor.month !== context.current.cursor.month) {
+      context.current = { selected, cursor };
+      details.clear();
+    }
+  }, [cursor, selected, details]);
+
+  useEffect(() => {
+    const selection = details.selected;
+    if (!dayPending && !dayError && digest?.date === selected &&
+        selection?.kind === "change" &&
+        !digest.items.some((event) => event.id === selection.change.id)) {
+      details.clear();
+    }
+  }, [dayPending, dayError, digest, selected, details]);
+
+  const byDay = useMemo(() => groupEventsByDay(monthEvents ?? [], timeZone), [monthEvents, timeZone]);
+  const weeks = useMemo(() => buildMonthGrid(cursor, 0).filter(week => week.some(date => isSameMonth(date, cursor))), [cursor]);
+  const today = localDateKey(now, timeZone);
+
+  useEffect(() => {
+    if (!focusSelected.current) return;
+    focusSelected.current = false;
+    dayButtons.current.get(selected)?.focus();
+  }, [selected]);
+
+  useEffect(() => {
+    if (dayOpen && !details.selected && focusDayPanel.current) {
+      focusDayPanel.current = false;
+      panelRef.current?.focus();
+    }
+  }, [dayOpen, details.selected]);
+
+  /** Select a day, moving the visible month to it when it lies outside. */
+  function select(key: string) {
+    setDayOpen(true);
+    // The grid remounts when the month switches, so focus must follow the
+    // selection for the clicked cell not to lose it.
+    focusSelected.current = true;
+    setView((prev) => {
+      const d = dayKeyToDate(key);
+      return {
+        cursor: isSameMonth(d, prev.cursor)
+          ? prev.cursor
+          : { year: d.getFullYear(), month: d.getMonth() },
+        selected: key,
+      };
+    });
+  }
+
+  /** Previous/next month, preserving the day-of-month when possible. */
+  function shiftMonth(delta: number) {
+    setView((prev) => {
+      const next = addMonths(prev.cursor, delta);
+      const day = dayKeyToDate(prev.selected).getDate();
+      return { cursor: next, selected: clampDayToMonth(next.year, next.month, day) };
+    });
+  }
+
+  function goToday() {
+    const key = localDateKey(now, timeZone);
+    setView(() => {
+      const d = dayKeyToDate(key);
+      return { cursor: { year: d.getFullYear(), month: d.getMonth() }, selected: key };
+    });
+  }
+
+  /** Move the selection by whole days, following it across month edges. */
+  function moveBy(deltaDays: number) {
+    focusSelected.current = true;
+    setView((prev) => {
+      const d = dayKeyToDate(prev.selected);
+      d.setDate(d.getDate() + deltaDays);
+      return {
+        cursor: isSameMonth(d, prev.cursor)
+          ? prev.cursor
+          : { year: d.getFullYear(), month: d.getMonth() },
+        selected: dayKeyOf(d),
+      };
+    });
+  }
+
+  const lastSync = digest?.lastSuccessAt ?? null;
+  const scannedToday = lastSync != null && localDayKey(lastSync, timeZone) === selected;
+
+  return (
+    <div className="activity-calendar workspace-view-body" onKeyDown={event => {
+      if (event.key.toLowerCase() === "t" && !event.altKey && !event.metaKey && !event.ctrlKey && !(event.target instanceof HTMLElement && event.target.closest('input, textarea, [role="dialog"], [role="menu"]'))) {
+        event.preventDefault();
+        goToday();
+      }
+    }}>
+      <div className="cal-header workspace-view-toolbar">
+        <IconButton label="Previous month" size={28} onClick={() => shiftMonth(-1)}><ChevronLeft aria-hidden="true" /></IconButton>
+        <IconButton label="Next month" size={28} onClick={() => shiftMonth(1)}><ChevronRight aria-hidden="true" /></IconButton>
+        <h2 className="cal-month-title">{monthLabel(cursor)}</h2>
+        <Button variant="secondary" size="sm" onClick={goToday}>Today <kbd>T</kbd></Button>
+        <span className="cal-detection-note">Days show when changes were detected. Due dates are in Agenda.</span>
+      </div>
+      {monthError && <Banner kind="error" action={{ label: "Retry month", onClick: () => setMonthReload((n) => n + 1) }}>Could not load activity for this month</Banner>}
+      {dayOpen && dayError && <Banner kind="error" action={{ label: "Retry day", onClick: () => setDayReload((n) => n + 1) }}>Could not load activity for this day</Banner>}
+      <div className="cal-layout workspace-view-list">
+        <section className="cal-main" aria-label="Month calendar">
+          <div className="cal-weekdays">
+            {WEEKDAYS.map((d) => (
+              <div key={d} className="cal-weekday">
+                {d}
+              </div>
+            ))}
+          </div>
+
+          {monthEvents === null && !monthError ? (
+            <div role="status" aria-label="Loading month activity"><Skeleton rows={2} /></div>
+          ) : monthPending ? (
+            <p className="cal-sync-line" role="status">Refreshing month activity…</p>
+          ) : null}
+
+          {/* Remount per month so the grid cross-fades (dot-in keyframes) on
+            * change, never sliding. Reduced motion zeroes the duration. */}
+          <div
+            key={`${cursor.year}-${cursor.month}`}
+            className="cal-grid"
+            style={{ animation: "dot-in var(--dur-base) var(--ease-inout)" }}
+            role="grid"
+            aria-label={`${monthLabel(cursor)} calendar`}
+          >
+            {weeks.map((week, index) => (
+              <div className="cal-row" role="row" key={`week-${index}`}>
+                {week.map((date) => {
+                  const inMonth = isSameMonth(date, cursor);
+                  const key = dayKeyOf(date);
+                  const isToday = key === today;
+                  const isSelected = key === selected;
+                  const events = inMonth ? byDay.get(key) ?? [] : [];
+                  const count = events.length;
+                  return (
+                    <button
+                      key={key}
+                      ref={(el) => {
+                        if (el) dayButtons.current.set(key, el);
+                        else dayButtons.current.delete(key);
+                      }}
+                      type="button"
+                      role="gridcell"
+                      className={`cal-day${inMonth ? "" : " outside"}${isToday ? " cal-day-today" : ""}${
+                        isSelected ? " selected" : ""
+                      }`}
+                      aria-label={dayAriaLabel(key, events) + (isToday ? ", today" : "")}
+                      aria-selected={isSelected}
+                      aria-current={isToday ? "date" : undefined}
+                      tabIndex={isSelected ? 0 : -1}
+                      onClick={() => select(key)}
+                      onKeyDown={(e) => {
+                        if (e.key === "ArrowLeft") {
+                          e.preventDefault();
+                          moveBy(-1);
+                        } else if (e.key === "ArrowRight") {
+                          e.preventDefault();
+                          moveBy(1);
+                        } else if (e.key === "ArrowUp") {
+                          e.preventDefault();
+                          moveBy(-7);
+                        } else if (e.key === "ArrowDown") {
+                          e.preventDefault();
+                          moveBy(7);
+                        } else if (e.key === "PageUp") {
+                          e.preventDefault();
+                          focusSelected.current = true;
+                          shiftMonth(-1);
+                        } else if (e.key === "PageDown") {
+                          e.preventDefault();
+                          focusSelected.current = true;
+                          shiftMonth(1);
+                        } else if (e.key === "Home") {
+                          e.preventDefault();
+                          focusSelected.current = true;
+                          goToday();
+                        } else if (e.key === "Enter") {
+                          e.preventDefault();
+                          if (dayOpen) panelRef.current?.focus();
+                          else {
+                            focusDayPanel.current = true;
+                            setDayOpen(true);
+                          }
+                        }
+                      }}
+                    >
+                      <span className="cal-num">{date.getDate()}</span>
+                      {count > 0 && (
+                        <span className="cal-pill" aria-hidden="true">
+                          {count} changes
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+
+        </section>
+
+        {dayOpen && <section className="cal-panel" aria-label="Selected day activity" aria-live="polite" hidden={details.selected?.kind === "change"}>
+          <div className="cal-panel-header">
+            <h2 className="cal-panel-title" tabIndex={-1} ref={panelRef}>{longDayLabel(selected)}</h2>
+            {digest?.date === selected && <span>{digest.items.length} changes</span>}
+            <IconButton label="Close day activity" size={28} onClick={() => {
+              setDayOpen(false);
+              dayButtons.current.get(selected)?.focus();
+            }}><X aria-hidden="true" /></IconButton>
+          </div>
+          {digest?.date !== selected && !dayError ? (
+            <Skeleton rows={4} />
+          ) : digest?.date === selected ? (
+            <>
+              {dayPending && <span className="sr-only" role="status">Refreshing day activity…</span>}
+              <p className="cal-summary">{digest.newCount} new · {digest.updatedCount} updated · detected by scans</p>
+              {digest.coursesFailed > 0 && (
+                <Banner kind="error" action={{ label: "View scan", onClick: onOpenScan }}>
+                  {digest.coursesFailed} course{digest.coursesFailed === 1 ? "" : "s"} failed in the last
+                  scan
+                </Banner>
+              )}
+
+              {digest.items.length === 0 ? (
+                <EmptyState
+                  title="No activity on this day"
+                  body={scannedToday ? undefined : "No scans ran on this day"}
+                />
+              ) : (
+                digest.items.map((e) => {
+                  const meta = eventKindMeta(e.changeType);
+                  const course = e.courseId != null ? courseById.get(e.courseId) : undefined;
+                  const resource = e.resourceId == null ? null : resourceById.get(e.resourceId) ?? null;
+                  return (
+                    <ResourceRow
+                      key={e.id}
+                      title={e.resourceTitle ?? e.title}
+                      type={e.resourceType}
+                      courseId={e.courseId}
+                      courseCode={courseTitle(e.courseId, course?.shortName ?? e.courseName ?? course?.name)}
+                      courseName={e.courseName}
+                      unread={false} workspaceVariant="history"
+                      selected={details.selected?.identity === `change:${e.id}`}
+                      unavailable={e.changeType === "unavailable"}
+                      status={{ kind: STATUS_KIND[e.changeType] ?? "new", label: meta.label }}
+                      timeLabel={new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", minute: "2-digit", }).format(new Date(e.detectedAt))}
+                      onCourse={
+                        e.courseId != null && onOpenCourse
+                          ? () => onOpenCourse(e.courseId as number)
+                          : undefined
+                      }
+                      resource={resource} recorded={e}
+                      density="compact"
+                      
+                      onSelect={(origin) =>
+                        details.selectChange(e, origin, e.resourceId == null ? null : resourceById.get(e.resourceId) ?? null, () => {
+                          if (context.current.selected === selected) focusDayPanel.current = true;
+                          return panelRef.current !== null;
+                        })
+                      }
+                      
+                      menu={[
+                        {
+                          id: "copy",
+                          label: "Copy link",
+                          icon: <Copy aria-hidden="true" />,
+                          onSelect: () =>
+                            void navigator.clipboard?.writeText(e.sourcePageUrl ?? e.resourceUrl ?? ""),
+                        },
+                      ]}
+                    />
+                  );
+                })
+              )}
+            </>
+          ) : null}
+        </section>}
+      </div>
+      <WorkspaceViewStatus hints={ACTIVITY_HINTS}>{dayOpen && digest?.date === selected ? `${longDayLabel(selected)} · ${digest.items.length} changes` : `Detected changes${lastSync ? ` · scanned ${formatTimeOfDay(lastSync)}` : ""}`}</WorkspaceViewStatus>
+    </div>
+  );
+}

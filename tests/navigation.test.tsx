@@ -38,6 +38,7 @@ function course(overrides: Partial<Course> = {}): Course {
     externalCourseId: "1166",
     name: "1166_ECE_INSTR_EEE_ECOM F215",
     shortName: "ECOM F215",
+    displayName: null,
     url: "https://quanta.bits-pilani.ac.in/course/view.php?id=7",
     firstSeenAt: "2026-09-01T00:00:00Z",
     lastScannedAt: "2026-10-12T00:00:00Z",
@@ -157,9 +158,8 @@ describe("navigation to a course", () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    expect(container.querySelector(".course-title-text")?.textContent).toBe("ECOM F215");
-    // The raw Moodle name stays as the caption; no second 'Library' button and
-    // no leftover breadcrumb strip in the page body.
+    expect(container.querySelector("h1 .course-full-title")?.textContent).toBe("ECOM F215");
+    expect(container.querySelector("h1 [title]")?.getAttribute("title")).toBe("1166_ECE_INSTR_EEE_ECOM F215");
     const buttons = [...container.querySelectorAll("button")].map((el) => el.textContent);
     expect(buttons).not.toContain("Library");
     expect(container.querySelector(".course-page-topper")).toBeNull();
@@ -167,17 +167,15 @@ describe("navigation to a course", () => {
 });
 
 describe("Library course rows", () => {
-  it("is one button with a trailing chevron and a separate menu", async () => {
+  it("opens the listed course and keeps its actions in a separate menu", async () => {
     await renderLibrary(() => {}, null);
     const row = container.querySelector(".course-row") as HTMLElement;
     expect(row.querySelectorAll("button")).toHaveLength(2);
     expect(row.querySelector(".course-row-main")).toBeTruthy();
-    expect(row.querySelector(".course-row-chevron")).toBeTruthy();
-    // No leading chevron implying an inline expansion that never happens: the
-    // row starts with the colour dot and ends with the chevron.
+    expect(row.querySelector('button[aria-haspopup="menu"]')).toBeTruthy();
     const main = row.querySelector(".course-row-main") as HTMLElement;
     expect(main.firstElementChild?.classList.contains("course-dot")).toBe(true);
-    expect(main.lastElementChild?.classList.contains("course-row-chevron")).toBe(true);
+    expect(main.lastElementChild?.textContent).toBe("Active");
   });
 });
 
@@ -223,6 +221,43 @@ describe("sidebar collapse", () => {
   it("marks the drawer as an overlay at narrow widths", async () => {
     await renderSidebar(null, () => {}, { collapsed: true, overlay: true });
     expect(container.querySelector(".sidebar")?.classList.contains("overlay")).toBe(true);
+  });
+
+  it("traps keyboard focus in the narrow navigation drawer and exposes it as modal navigation", async () => {
+    await renderSidebar(null, () => {}, { collapsed: true, overlay: true });
+    const drawer = container.querySelector<HTMLElement>('.sidebar[role="dialog"]');
+    expect(drawer?.getAttribute("aria-modal")).toBe("true");
+    expect(drawer?.querySelector(".course-nav-section")).toBeTruthy();
+    const focusable = [...(drawer?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]):not([tabindex="-1"])',
+    ) ?? [])];
+    expect(focusable.length).toBeGreaterThan(1);
+    focusable[0].focus();
+    await act(async () => focusable[0].dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, shiftKey: true })));
+    expect(document.activeElement).toBe(focusable.at(-1));
+  });
+
+  it("returns focus to the drawer opener after the drawer closes", async () => {
+    const opener = document.createElement("button");
+    document.body.appendChild(opener);
+    opener.focus();
+    await renderSidebar(null, () => {}, { collapsed: true, overlay: true });
+    await renderSidebar(null, () => {}, { collapsed: true, overlay: false });
+    expect(document.activeElement).toBe(opener);
+    opener.remove();
+  });
+
+  it("keeps focus in a newly opened modal when the drawer closes", async () => {
+    const modal = document.createElement("div");
+    modal.setAttribute("role", "dialog");
+    const modalButton = document.createElement("button");
+    modal.appendChild(modalButton);
+    document.body.appendChild(modal);
+    await renderSidebar(null, () => {}, { collapsed: true, overlay: true });
+    modalButton.focus();
+    await renderSidebar(null, () => {}, { collapsed: true, overlay: false });
+    expect(document.activeElement).toBe(modalButton);
+    modal.remove();
   });
 
   it("remembers the rail preference across a restart", () => {

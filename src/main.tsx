@@ -1,35 +1,26 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { appearanceStorage, applyAppearance, readAppearance, systemPrefersDark } from "./lib/appearance";
 
 import "@fontsource-variable/geist";
 import "@fontsource-variable/geist-mono";
 import "./styles/tokens.css";
 import "./styles/base.css";
+import "./styles/components/appearance.css";
 import "./styles/layout.css";
 import "./styles/components/ui.css";
 import "./styles/components/shell.css";
 import "./styles/components/content.css";
+import "./styles/components/inspector.css";
 import "./styles/components/overlays.css";
 import "./styles/components/screens.css";
+import "./styles/components/workspace-parity.css";
+import "./styles/components/library-parity.css";
+import "./styles/components/overlay-parity.css";
 
-// Set the first-paint theme before React mounts to avoid a flash on launch.
-try {
-  const savedTheme = localStorage.getItem("quanta-pulse-theme");
-  const theme =
-    savedTheme === "light" || savedTheme === "dark"
-      ? savedTheme
-      : window.matchMedia("(prefers-color-scheme: dark)").matches
-        ? "dark"
-        : "light";
-  document.documentElement.dataset.theme = theme;
-} catch {
-  document.documentElement.dataset.theme = window.matchMedia(
-    "(prefers-color-scheme: dark)",
-  ).matches
-    ? "dark"
-    : "light";
-}
+// The same resolution path as the React owner, before the first app frame.
+applyAppearance(document.documentElement, readAppearance(appearanceStorage()).preference, systemPrefersDark());
 
 // macOS-specific inset for the traffic lights in the sidebar header.
 try {

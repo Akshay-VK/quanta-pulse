@@ -5,6 +5,7 @@ import {
   groupByCategory,
   resourceCategory,
   sortResources,
+  splitCourseAttention,
   typeOptions,
 } from "../src/lib/courseLibrary";
 import type { Resource } from "../src/lib/types";
@@ -125,6 +126,25 @@ describe("groupByCategory", () => {
     ]);
     expect(groups.map((g) => g.id)).toEqual(["pdf", "presentations"]);
     expect(groups[0].items.length).toBe(2);
+  });
+});
+
+describe("attention group", () => {
+  it("partitions paused or failing courses first, preserving relative order", () => {
+    const ok = (id: number, overrides: Partial<import("../src/lib/types").Course> = {}) => ({
+      id, externalCourseId: String(id), name: `C${id}`, shortName: `C${id}`, displayName: null,
+      url: "", firstSeenAt: "", lastScannedAt: null, lastScanStatus: "ok",
+      monitoringStatus: "monitored", resourceCount: 0, ...overrides,
+    }) as import("../src/lib/types").Course;
+    const courses = [
+      ok(1),
+      ok(2, { monitoringStatus: "paused" }),
+      ok(3),
+      ok(4, { lastScanStatus: "error" }),
+    ];
+    const { attention, rest } = splitCourseAttention(courses);
+    expect(attention.map((c) => c.id)).toEqual([2, 4]);
+    expect(rest.map((c) => c.id)).toEqual([1, 3]);
   });
 });
 

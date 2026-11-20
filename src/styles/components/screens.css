@@ -75,8 +75,10 @@
     flex-direction: column;
     justify-content: space-between;
     align-items: flex-start;
-    height: 84px;
+    height: 96px;
     padding: var(--sp-1) var(--sp-2);
+    border-right: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
     border-radius: var(--radius-sm);
     font: 400 14px/20px var(--type-ui);
     text-align: left;
@@ -89,6 +91,16 @@
 
   .cal-day.outside {
     color: var(--muted);
+    opacity: 0.4;
+  }
+
+  .cal-pill {
+    font: 500 11px/18px var(--type-mono);
+    color: var(--muted);
+    background: var(--selected);
+    border-radius: var(--radius-sm);
+    padding: 0 6px;
+    width: fit-content;
   }
 
   .cal-day.selected {
@@ -238,13 +250,17 @@
     flex-wrap: wrap;
   }
 
+  .course-attention-group {
+    margin-bottom: var(--sp-3);
+  }
+
   /* Course row: the whole row is one button, with the overflow menu beside it. */
   .course-row {
     display: flex;
     align-items: center;
     gap: var(--sp-3);
     width: 100%;
-    min-height: calc(var(--row-h) + var(--sp-4));
+    min-height: 48px;
     padding: var(--sp-2) 0;
     text-align: left;
     transition: background-color var(--dur-fast) var(--ease-inout);
@@ -256,12 +272,18 @@
     gap: var(--sp-4);
     flex: 1 1 auto;
     min-width: 0;
+    min-height: 48px;
     padding: var(--sp-2) var(--sp-3);
     border-radius: var(--radius-sm);
   }
 
   .course-row-main:hover {
     background: var(--hover);
+  }
+
+  .course-row-main:focus-visible {
+    outline-offset: 2px;
+    box-shadow: inset 2px 0 0 var(--focus), inset 0 0 0 2px var(--focus);
   }
 
   .course-row-copy {
@@ -290,6 +312,7 @@
   }
 
   .course-row-stat,
+  .course-row-unread,
   .course-row-last,
   .course-row-new {
     flex: 0 0 auto;
@@ -399,39 +422,55 @@
 
   /* --------------------------------------------------------------- Settings */
 
-  /* 7.6: a 720px content column beside a 160px sticky section list. */
   .settings-page {
-    max-width: 880px;
-    width: 100%;
-    margin-inline: auto;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
   }
 
   .settings-layout {
     display: grid;
-    grid-template-columns: 160px minmax(0, 1fr);
-    gap: var(--sp-6);
-    align-items: start;
+    grid-template-columns: 216px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .settings-sticky {
     position: sticky;
-    top: var(--sp-6);
+    top: 0;
+    align-self: start;
+    height: 100%;
+    padding: var(--sp-3) var(--sp-2);
+    border-right: 1px solid var(--line);
+  }
+
+  .settings-sticky nav {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 1px;
+  }
+
+  .settings-section-select {
+    display: none;
   }
 
   .settings-link {
     display: flex;
     align-items: center;
-    width: 100%;
-    height: 32px;
+    gap: var(--sp-2);
+    height: 28px;
     padding: 0 var(--sp-2);
     border-radius: var(--radius-sm);
-    text-align: left;
-    text-decoration: none;
-    font: 14px/20px var(--type-ui);
     color: var(--muted);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .settings-link svg {
+    color: var(--faint);
   }
 
   .settings-link:hover {
@@ -442,30 +481,75 @@
   .settings-link[aria-current="true"] {
     background: var(--selected);
     color: var(--ink);
-    font-weight: 600;
+    font-weight: var(--weight-label);
   }
 
-  .settings-content {
-    /* The 720px column: the section list sits beside it, never on it. */
-    min-width: 0;
-  }
-
-  .settings-group-title {
-    padding: var(--sp-10) 0 var(--sp-2);
-    font: 600 16px/24px var(--type-dialog);
+  .settings-link[aria-current="true"] svg {
     color: var(--ink);
   }
 
-  /* Only the first section loses the 40px lead-in. The old rule matched every
-     heading, because each <h2> is the first child of its own <section>. */
-  .settings-section:first-child .settings-group-title {
-    padding-top: 0;
+  .settings-scroll {
+    min-height: 0;
+    min-width: 0;
+    overflow: auto;
   }
 
-  /* Separators come from the rows alone, so no line is ever doubled and the
-     last row in a section ends without one. */
-  .settings-section .setting-row:last-child {
-    border-bottom: 0;
+  .settings-content {
+    box-sizing: content-box;
+    width: auto;
+    max-width: 640px;
+    min-width: 0;
+    padding: var(--sp-8) var(--sp-12) var(--sp-10);
+  }
+
+  .settings-section + .settings-section {
+    margin-top: var(--sp-8);
+  }
+
+  .settings-section {
+    scroll-margin-top: var(--sp-8);
+  }
+
+  .settings-title {
+    font-size: var(--fs-title);
+    font-weight: var(--weight-heading);
+  }
+
+  .settings-group-title {
+    font-size: var(--fs-section);
+    font-weight: var(--weight-heading);
+  }
+
+  .settings-content > .settings-section-description {
+    margin-bottom: var(--sp-6);
+  }
+
+  .settings-section-description {
+    margin: var(--sp-1) 0 var(--sp-5);
+    color: var(--muted);
+  }
+
+  .settings-subgroup-title {
+    padding: var(--sp-5) 0 var(--sp-1);
+    color: var(--muted);
+    font-size: var(--fs-ui);
+  }
+
+  .settings-section .setting-row {
+    gap: var(--sp-4);
+    padding: 14px 0;
+    border-top: 1px solid var(--line);
+    border-bottom: none;
+  }
+
+  .settings-section .setting-desc {
+    color: var(--faint);
+  }
+
+  .settings-section .select-trigger {
+    min-height: 28px;
+    height: 28px;
+    border-color: var(--control-line);
   }
 
   /* Small inline arrangements inside a settings control: status dot plus its
@@ -495,61 +579,132 @@
     color: var(--muted);
   }
 
-  .save-bar {
-    position: sticky;
-    bottom: var(--sp-3);
-    margin-top: var(--sp-6);
+  .settings-download-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-2);
+    margin-bottom: var(--sp-3);
+  }
+
+  .settings-download-row {
     display: flex;
     align-items: center;
-    gap: var(--sp-3);
-    justify-content: flex-end;
-    background: var(--raised);
-    box-shadow: var(--shadow-pop);
+    gap: var(--sp-2);
+    min-height: 34px;
+    padding: 0 var(--sp-2);
+    border-radius: var(--radius-chip);
+    background: var(--hover);
+    font-size: var(--fs-label);
+  }
+
+  .settings-download-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .settings-download-row progress,
+  .settings-banner progress {
+    width: min(128px, 25%);
+    height: 4px;
+    accent-color: var(--accent);
+  }
+
+  .settings-banner {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+    min-height: 40px;
+    padding: var(--sp-2) var(--sp-3);
+    margin-bottom: var(--sp-3);
+    border: 1px solid var(--control-line);
     border-radius: var(--radius-md);
-    padding: var(--sp-3);
-    animation: savebar-in var(--dur-base) var(--ease-out);
+    background: var(--floating);
+  }
+
+  .settings-banner.is-info { background: var(--t-upd-bg); }
+  .settings-banner.is-error { background: var(--t-red-bg); }
+  .settings-banner.is-success { background: var(--t-ok-bg); }
+
+  .settings-banner .settings-inline,
+  .settings-banner > .btn {
+    margin-inline-start: auto;
+  }
+
+  .save-bar {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-3);
+    min-height: 52px;
+    padding: var(--sp-2) var(--sp-4);
+    border-top: 1px solid var(--control-line);
+    background: var(--floating);
   }
 
   .save-bar .save-copy {
-    margin-right: auto;
-    font: 13px/18px var(--type-small);
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
     color: var(--muted);
   }
 
-  @keyframes savebar-in {
-    from {
-      opacity: 0;
-      transform: translateY(12px);
-    }
-    to {
-      opacity: 1;
-      transform: none;
-    }
+  .save-copy strong {
+    color: var(--ink);
+    font-weight: var(--weight-label);
+  }
+
+  .save-copy .settings-dot {
+    background: var(--dot-warn);
+  }
+
+  .save-copy .settings-dot.ok {
+    background: var(--dot-ok);
+  }
+
+  .save-bar.is-error .save-copy svg {
+    flex: none;
+    color: var(--danger);
   }
 
   @media (max-width: 959px) {
-    .settings-page {
-      max-width: none;
-    }
-
     .settings-layout {
-      grid-template-columns: minmax(0, 1fr);
-      gap: var(--sp-3);
+      display: block;
+      overflow: auto;
     }
 
-    /* The section list becomes a horizontally scrolling Tabs row above the
-       content. */
     .settings-sticky {
-      position: static;
-      flex-direction: row;
-      overflow-x: auto;
-      gap: var(--sp-1);
-      width: 100%;
+      z-index: var(--z-sticky);
+      height: auto;
+      padding: var(--sp-3) var(--sp-3) var(--sp-2);
+      border: none;
+      background: var(--raised);
     }
 
-    .settings-link {
-      flex: 0 0 auto;
-      width: auto;
+    .settings-section-select {
+      display: inline-flex;
+      min-height: 28px;
+      height: 28px;
+    }
+
+    .settings-sticky nav {
+      display: none;
+    }
+
+    .settings-scroll {
+      overflow: visible;
+    }
+
+    .settings-content {
+      padding: var(--sp-2) var(--sp-3) var(--sp-6);
+    }
+
+    .settings-section {
+      scroll-margin-top: 56px;
     }
   }
 
@@ -599,4 +754,75 @@
     height: 1px;
     background: var(--line);
   }
+
+  /* ---------------------------------------------------------------- History */
+
+  .history-view .history-tabs {
+    margin-bottom: var(--sp-4);
+  }
+
+  .history-status {
+    margin-bottom: var(--sp-3);
+  }
+
+  .history-filter-bar {
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+  }
+
+  .history-filter-left,
+  .history-filter-right {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    flex-wrap: wrap;
+  }
+
+  .history-filter-right {
+    margin-left: auto;
+  }
+
+  .history-date-range {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-2);
+    flex-wrap: wrap;
+  }
+
+  .history-date-field {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font: 12px/16px var(--type-caption);
+    color: var(--muted);
+  }
+
+  .history-date-field input {
+    height: 28px;
+    padding: 0 8px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--raised);
+    color: var(--ink);
+    font: 12px/16px var(--type-ui);
+  }
+
+  .history-day-group {
+    margin-bottom: var(--sp-2);
+  }
+
+  .history-scans .table-scroll {
+    min-height: 120px;
+  }
+
+  .history-capture-status {
+    margin-bottom: var(--sp-2);
+  }
+
+  .scan-result {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
 }

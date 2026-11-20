@@ -39,6 +39,9 @@ impl Default for CrawlLimits {
 pub struct Discovery {
     pub courses: Vec<DiscoveredCourse>,
     pub resources: Vec<DiscoveredResource>,
+    /// External course IDs whose page traversal and all required details ended
+    /// successfully during this discovery run.
+    pub successful_courses: HashSet<String>,
     pub courses_scanned: usize,
     pub courses_failed: usize,
     pub errors: Vec<String>,
@@ -55,6 +58,46 @@ pub struct Progress {
 }
 
 pub type ProgressFn = Arc<dyn Fn(Progress) + Send + Sync>;
+
+/// Actual per-course work boundaries emitted by discovery. Times are captured
+/// where the request task starts or returns, never reconstructed from progress.
+#[derive(Debug, Clone)]
+pub struct Observation {
+    pub course_external_id: String,
+    pub course_name: String,
+    pub at: String,
+    pub boundary: ObservationBoundary,
+}
+
+#[derive(Debug, Clone)]
+pub enum ObservationBoundary {
+    CourseStarted,
+    CoursePagesTerminal {
+        status: crate::models::ScanCourseStatus,
+        error: Option<String>,
+    },
+    DetailStarted,
+    DetailTerminal {
+        status: crate::models::ScanCourseStatus,
+        error: Option<String>,
+    },
+}
+
+pub type ObserverFn = Arc<dyn Fn(Observation) + Send + Sync>;
+
+fn observe(
+    observer: &ObserverFn,
+    course_external_id: &str,
+    course_name: &str,
+    boundary: ObservationBoundary,
+) {
+    observer(Observation {
+        course_external_id: course_external_id.to_owned(),
+        course_name: course_name.to_owned(),
+        at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        boundary,
+    });
+}
 
 fn noop_progress() -> ProgressFn {
     Arc::new(|_| {})
@@ -132,6 +175,7 @@ pub async fn discover_all(
     limits: CrawlLimits,
     cancel: Arc<AtomicBool>,
     progress: ProgressFn,
+    observer: ObserverFn,
 ) -> Discovery {
     let mut result = Discovery::default();
     let origin = client.origin().clone();
@@ -176,27 +220,54 @@ pub async fn discover_all(
         let sem = sem.clone();
         let origin = origin.clone();
         let max_res = limits.max_resources_per_course;
+        let observer = observer.clone();
         set.spawn(async move {
             let _permit = sem.acquire().await;
+            observe(
+                &observer,
+                &course.external_id,
+                &course.name,
+                ObservationBoundary::CourseStarted,
+            );
             let url = match Url::parse(&course.url) {
                 Ok(u) => u,
-                Err(e) => return Err((
-                    course.external_id,
-                    QuantaError::Client(format!("bad course url: {e}")),
-                )),
+                Err(e) => {
+                    let error = format!("bad course url: {e}");
+                    observe(
+                        &observer,
+                        &course.external_id,
+                        &course.name,
+                        ObservationBoundary::CoursePagesTerminal {
+                            status: crate::models::ScanCourseStatus::Failed,
+                            error: Some(error.clone()),
+                        },
+                    );
+                    return Err((course.external_id, QuantaError::Client(error)));
+                }
             };
             let mut pending = vec![(url, Vec::<String>::new())];
             let mut visited = HashSet::new();
             let mut found = BTreeMap::new();
             let mut page_errors = Vec::new();
             while let Some((page_url, parent_path)) = pending.pop() {
-                if !visited.insert(page_url.to_string()) { continue; }
+                if !visited.insert(page_url.to_string()) {
+                    continue;
+                }
                 if visited.len() > 100 || found.len() >= max_res {
                     break;
                 }
                 let fetched = match client.fetch(&page_url).await {
                     Ok(fetched) => fetched,
                     Err(e) if matches!(e, QuantaError::AuthExpired) => {
+                        observe(
+                            &observer,
+                            &course.external_id,
+                            &course.name,
+                            ObservationBoundary::CoursePagesTerminal {
+                                status: crate::models::ScanCourseStatus::Failed,
+                                error: Some(e.to_string()),
+                            },
+                        );
                         return Err((course.external_id, e));
                     }
                     Err(e) => {
@@ -204,15 +275,14 @@ pub async fn discover_all(
                         continue;
                     }
                 };
-                let mut page_resources = parse::parse_course_page(&fetched.body, &course.external_id, &origin);
+                let mut page_resources =
+                    parse::parse_course_page(&fetched.body, &course.external_id, &origin);
                 // Moodle pages/books can contain more organizational pages.
                 // Folder modules are expanded once in the detail pass below,
                 // so their files cannot be discovered with competing paths.
-                for (title, next, sections) in parse::parse_nested_page_links(
-                    &fetched.body,
-                    &page_url,
-                    &course.external_id,
-                ) {
+                for (title, next, sections) in
+                    parse::parse_nested_page_links(&fetched.body, &page_url, &course.external_id)
+                {
                     let mut path = parent_path.clone();
                     // Course section links are alternate entry points into the
                     // same course tree, not child folders named by their link
@@ -253,26 +323,53 @@ pub async fn discover_all(
                     if resource.source_page_url.is_none() {
                         resource.source_page_url = Some(page_url.to_string());
                     }
-                    found.entry(resource.external_id.clone()).or_insert(resource);
-                    if found.len() >= max_res { break; }
+                    found
+                        .entry(resource.external_id.clone())
+                        .or_insert(resource);
+                    if found.len() >= max_res {
+                        break;
+                    }
                 }
                 for next in parse::parse_pagination_links(&fetched.body, &page_url) {
                     enqueue_page(&mut pending, &visited, next, parent_path.clone());
                 }
-                for next in parse::parse_section_links(&fetched.body, &page_url, &course.external_id) {
+                for next in
+                    parse::parse_section_links(&fetched.body, &page_url, &course.external_id)
+                {
                     if let Ok(next) = Url::parse(&next) {
                         enqueue_page(&mut pending, &visited, next, parent_path.clone());
                     }
                 }
             }
             if !pending.is_empty() && (visited.len() >= 100 || found.len() >= max_res) {
-                page_errors.push("course traversal limit reached; some nested pages were not scanned".into());
+                page_errors.push(
+                    "course traversal limit reached; some nested pages were not scanned".into(),
+                );
             }
-            Ok((course.external_id, found.into_values().collect(), page_errors))
+            let status = if page_errors.is_empty() {
+                crate::models::ScanCourseStatus::Success
+            } else {
+                crate::models::ScanCourseStatus::Partial
+            };
+            observe(
+                &observer,
+                &course.external_id,
+                &course.name,
+                ObservationBoundary::CoursePagesTerminal {
+                    status,
+                    error: (!page_errors.is_empty()).then(|| page_errors.join("; ")),
+                },
+            );
+            Ok((
+                course.external_id,
+                found.into_values().collect(),
+                page_errors,
+            ))
         });
     }
 
     let mut discovered: Vec<DiscoveredResource> = Vec::new();
+    let mut successful_pages = HashSet::new();
     let mut done = 0usize;
     while let Some(joined) = set.join_next().await {
         done += 1;
@@ -284,9 +381,16 @@ pub async fn discover_all(
         match joined {
             Ok(Ok((id, mut resources, errors))) => {
                 result.courses_scanned += 1;
+                if errors.is_empty() {
+                    successful_pages.insert(id.clone());
+                }
                 if !errors.is_empty() {
                     result.courses_failed += 1;
-                    result.errors.extend(errors.into_iter().map(|error| format!("course {id} page: {error}")));
+                    result.errors.extend(
+                        errors
+                            .into_iter()
+                            .map(|error| format!("course {id} page: {error}")),
+                    );
                 }
                 discovered.append(&mut resources);
             }
@@ -319,6 +423,14 @@ pub async fn discover_all(
         .into_iter()
         .partition(|r| r.resource_type == "announcement" || is_material(&r.resource_type));
 
+    let mut required_detail_counts = BTreeMap::<String, usize>::new();
+    for item in &detail_targets {
+        *required_detail_counts
+            .entry(item.course_external_id.clone())
+            .or_default() += 1;
+    }
+    let mut successful_detail_counts = BTreeMap::<String, usize>::new();
+
     let mut keep = keep;
     let mut replaced: HashSet<String> = HashSet::new();
     let mut extras: Vec<DiscoveredResource> = Vec::new();
@@ -350,13 +462,39 @@ pub async fn discover_all(
             let sem = sem.clone();
             let origin = origin.clone();
             let id = item.external_id.clone();
+            let observer = observer.clone();
+            let course_external_id = item.course_external_id.clone();
+            let course_name = result
+                .courses
+                .iter()
+                .find(|course| course.external_id == course_external_id)
+                .map(|c| c.name.clone())
+                .unwrap_or_else(|| format!("Course {course_external_id}"));
             detail_set.spawn(async move {
                 let _permit = sem.acquire().await;
+                observe(
+                    &observer,
+                    &course_external_id,
+                    &course_name,
+                    ObservationBoundary::DetailStarted,
+                );
                 let url = match Url::parse(&item.url) {
                     Ok(u) => u,
-                    Err(_) => return (id, Detail::Keep(Box::new(item))),
+                    Err(_) => {
+                        let terminal_status = crate::models::ScanCourseStatus::Partial;
+                        observe(
+                            &observer,
+                            &course_external_id,
+                            &course_name,
+                            ObservationBoundary::DetailTerminal {
+                                status: terminal_status,
+                                error: Some("invalid material URL".into()),
+                            },
+                        );
+                        return (id, course_external_id, Detail::Keep(Box::new(item)), false);
+                    }
                 };
-                match client.fetch(&url).await {
+                let response = match client.fetch(&url).await {
                     Ok(f) => {
                         let detail = if item.resource_type == "announcement" {
                             let mut discussions = parse::parse_forum_page(
@@ -424,10 +562,38 @@ pub async fn discover_all(
                                 }
                             }
                         };
-                        (id, detail)
+                        (detail, None)
                     }
-                    Err(e) => (id, Detail::Failed(Box::new(item), e.to_string(), matches!(e, QuantaError::AuthExpired))),
-                }
+                    Err(e) => (
+                        Detail::Failed(
+                            Box::new(item),
+                            e.to_string(),
+                            matches!(e, QuantaError::AuthExpired),
+                        ),
+                        Some(e.to_string()),
+                    ),
+                };
+                let (detail, error) = response;
+                let terminal_status = if error.is_some() {
+                    crate::models::ScanCourseStatus::Partial
+                } else {
+                    crate::models::ScanCourseStatus::Success
+                };
+                observe(
+                    &observer,
+                    &course_external_id,
+                    &course_name,
+                    ObservationBoundary::DetailTerminal {
+                        status: terminal_status,
+                        error,
+                    },
+                );
+                (
+                    id,
+                    course_external_id,
+                    detail,
+                    terminal_status == crate::models::ScanCourseStatus::Success,
+                )
             });
         }
 
@@ -439,11 +605,18 @@ pub async fn discover_all(
                 done: detail_done,
                 total: detail_total,
             });
-            if let Ok((id, detail)) = joined {
+            if let Ok((id, course_external_id, detail, succeeded)) = joined {
+                if succeeded {
+                    *successful_detail_counts
+                        .entry(course_external_id)
+                        .or_default() += 1;
+                }
                 match detail {
                     Detail::Keep(r) | Detail::Single(r) => keep.push(*r),
                     Detail::Failed(r, error, auth_expired) => {
-                        if auth_expired { result.auth_expired = true; }
+                        if auth_expired {
+                            result.auth_expired = true;
+                        }
                         result.errors.push(format!("resource {id}: {error}"));
                         keep.push(*r);
                     }
@@ -463,6 +636,24 @@ pub async fn discover_all(
         }
     }
 
+    if cancel.load(Ordering::Relaxed) {
+        result.cancelled = true;
+    }
+
+    if !result.cancelled {
+        result.successful_courses = successful_pages
+            .into_iter()
+            .filter(|course_id| {
+                let required = required_detail_counts.get(course_id).copied().unwrap_or(0);
+                let succeeded = successful_detail_counts
+                    .get(course_id)
+                    .copied()
+                    .unwrap_or(0);
+                required == succeeded
+            })
+            .collect();
+    }
+
     // Containers that were replaced (forums, folders) must not survive.
     keep.retain(|r| !replaced.contains(&r.external_id));
 
@@ -480,7 +671,9 @@ async fn fetch_courses(
     client: &QuantaClient,
     origin: &Url,
 ) -> Result<Vec<DiscoveredCourse>, QuantaError> {
-    let dashboard = origin.join("/my/").map_err(|e| QuantaError::Client(e.to_string()))?;
+    let dashboard = origin
+        .join("/my/")
+        .map_err(|e| QuantaError::Client(e.to_string()))?;
     let page = client.fetch(&dashboard).await?;
     let mut courses = parse::parse_courses(&page.body, origin);
 
@@ -503,7 +696,7 @@ pub async fn discover(
     limits: CrawlLimits,
     cancel: Arc<AtomicBool>,
 ) -> Discovery {
-    discover_all(client, limits, cancel, noop_progress()).await
+    discover_all(client, limits, cancel, noop_progress(), Arc::new(|_| {})).await
 }
 
 #[cfg(test)]
@@ -512,9 +705,18 @@ mod expiry_tests;
 
 #[cfg(test)]
 mod tests {
-    use super::{append_section_context, container_resource_path, enqueue_page};
+    use super::{
+        append_section_context, container_resource_path, discover_all, enqueue_page, CrawlLimits,
+        ObservationBoundary,
+    };
     use crate::quanta::DiscoveredResource;
-    use std::collections::HashSet;
+    use std::{
+        collections::HashSet,
+        io::{Read, Write},
+        net::TcpListener,
+        sync::{atomic::AtomicBool, mpsc, Arc},
+        thread,
+    };
     use url::Url;
 
     #[test]
@@ -524,7 +726,12 @@ mod tests {
         let mut pending = vec![(root.clone(), vec!["Lecture Notes".into()])];
         let mut visited = HashSet::new();
         assert!(!enqueue_page(&mut pending, &visited, root.clone(), vec![]));
-        assert!(enqueue_page(&mut pending, &visited, child.clone(), vec!["Lecture Notes".into()]));
+        assert!(enqueue_page(
+            &mut pending,
+            &visited,
+            child.clone(),
+            vec!["Lecture Notes".into()]
+        ));
         assert!(!enqueue_page(&mut pending, &visited, child.clone(), vec![]));
         visited.insert(root.to_string());
         assert!(!enqueue_page(&mut pending, &visited, root, vec![]));
@@ -550,7 +757,10 @@ mod tests {
             is_external: false,
             available: true,
         };
-        assert_eq!(container_resource_path(&folder), vec!["Section-1", "Section-1 Slides"]);
+        assert_eq!(
+            container_resource_path(&folder),
+            vec!["Section-1", "Section-1 Slides"]
+        );
     }
 
     #[test]
@@ -559,7 +769,197 @@ mod tests {
         append_section_context(&mut path, &["Section-4".into()]);
         assert_eq!(path, vec!["Section-4", "Attendance Notes"]);
 
-        append_section_context(&mut path, &["Section-4".into(), "Lecture Attendance".into()]);
-        assert_eq!(path, vec!["Section-4", "Attendance Notes", "Lecture Attendance"]);
+        append_section_context(
+            &mut path,
+            &["Section-4".into(), "Lecture Attendance".into()],
+        );
+        assert_eq!(
+            path,
+            vec!["Section-4", "Attendance Notes", "Lecture Attendance"]
+        );
+    }
+
+    #[tokio::test]
+    async fn observer_reports_real_course_and_detail_http_boundaries() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            for _ in 0..3 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0u8; 2048];
+                let size = stream.read(&mut request).unwrap();
+                let request = String::from_utf8_lossy(&request[..size]);
+                let path = request
+                    .lines()
+                    .next()
+                    .unwrap()
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap();
+                let body = if path == "/my/" {
+                    r#"<a href="/course/view.php?id=10">Course Ten</a>"#
+                } else if path.starts_with("/course/view.php") {
+                    r#"<li class="section main"><h3 class="sectionname">Week 1</h3><div class="activity"><a href="/mod/resource/view.php?id=42">Slides</a></div></li>"#
+                } else {
+                    "<html><body>Material details</body></html>"
+                };
+                write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+            }
+        });
+        let client = Arc::new(crate::quanta::client::QuantaClient::fixture_client(address));
+        let (tx, rx) = mpsc::channel();
+        let observer = Arc::new(move |event| tx.send(event).unwrap());
+        let found = discover_all(
+            client,
+            CrawlLimits {
+                concurrency: 1,
+                ..CrawlLimits::default()
+            },
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(|_| {}),
+            observer,
+        )
+        .await;
+        server.join().unwrap();
+        assert_eq!(found.courses_scanned, 1);
+        let events: Vec<_> = rx.try_iter().collect();
+        assert_eq!(events.len(), 4);
+        assert!(events
+            .iter()
+            .all(|event| event.course_external_id == "10" && event.course_name == "Course Ten"));
+        assert!(matches!(
+            events[0].boundary,
+            ObservationBoundary::CourseStarted
+        ));
+        assert!(matches!(
+            events[1].boundary,
+            ObservationBoundary::CoursePagesTerminal { .. }
+        ));
+        assert!(matches!(
+            events[2].boundary,
+            ObservationBoundary::DetailStarted
+        ));
+        assert!(matches!(
+            events[3].boundary,
+            ObservationBoundary::DetailTerminal { .. }
+        ));
+        assert!(events
+            .iter()
+            .all(|event| chrono::DateTime::parse_from_rfc3339(&event.at).is_ok()));
+        assert_eq!(found.successful_courses, HashSet::from(["10".to_string()]));
+    }
+
+    #[tokio::test]
+    async fn successful_courses_require_every_detail_terminal_to_succeed() {
+        async fn scan(fail_ten_detail: bool) -> super::Discovery {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = thread::spawn(move || {
+                for _ in 0..5 {
+                    let (mut stream, _) = listener.accept().unwrap();
+                    let mut request = [0u8; 2048];
+                    let size = stream.read(&mut request).unwrap();
+                    let request = String::from_utf8_lossy(&request[..size]);
+                    let path = request
+                        .lines()
+                        .next()
+                        .unwrap()
+                        .split_whitespace()
+                        .nth(1)
+                        .unwrap();
+                    let body = if path == "/my/" {
+                        r#"<a href="/course/view.php?id=10">Course Ten</a><a href="/course/view.php?id=20">Course Twenty</a>"#
+                    } else if path.starts_with("/course/view.php?id=10") {
+                        r#"<li class="section main"><h3 class="sectionname">Week 1</h3><div class="activity"><a href="/mod/resource/view.php?id=42">Slides Ten</a></div></li>"#
+                    } else if path.starts_with("/course/view.php?id=20") {
+                        r#"<li class="section main"><h3 class="sectionname">Week 1</h3><div class="activity"><a href="/mod/resource/view.php?id=43">Slides Twenty</a></div></li>"#
+                    } else {
+                        "<html><body>Material details</body></html>"
+                    };
+                    let status = if fail_ten_detail && path.ends_with("id=42") {
+                        "500 Internal Server Error"
+                    } else {
+                        "200 OK"
+                    };
+                    write!(stream, "HTTP/1.1 {status}\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+                }
+            });
+            let client = Arc::new(crate::quanta::client::QuantaClient::fixture_client(address));
+            let discovery = discover_all(
+                client,
+                CrawlLimits {
+                    concurrency: 1,
+                    ..CrawlLimits::default()
+                },
+                Arc::new(AtomicBool::new(false)),
+                Arc::new(|_| {}),
+                Arc::new(|_| {}),
+            )
+            .await;
+            server.join().unwrap();
+            discovery
+        }
+
+        let partial = scan(true).await;
+        assert_eq!(
+            partial.successful_courses,
+            HashSet::from(["20".to_string()])
+        );
+        assert!(partial
+            .errors
+            .iter()
+            .any(|error| error.contains("resource mod:resource:42")));
+
+        let retried = scan(false).await;
+        assert_eq!(
+            retried.successful_courses,
+            HashSet::from(["10".to_string(), "20".to_string()])
+        );
+    }
+
+    #[tokio::test]
+    async fn detail_limit_does_not_report_skipped_course_as_successful() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            for _ in 2..4 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0u8; 2048];
+                let size = stream.read(&mut request).unwrap();
+                let request = String::from_utf8_lossy(&request[..size]);
+                let path = request
+                    .lines()
+                    .next()
+                    .unwrap()
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap();
+                let body = if path == "/my/" {
+                    r#"<a href="/course/view.php?id=10">Course Ten</a>"#
+                } else {
+                    r#"<li class="section main"><h3 class="sectionname">Week 1</h3><div class="activity"><a href="/mod/resource/view.php?id=42">Slides</a></div></li>"#
+                };
+                write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+            }
+        });
+        let client = Arc::new(crate::quanta::client::QuantaClient::fixture_client(address));
+        let found = discover_all(
+            client,
+            CrawlLimits {
+                max_detail_fetches: 0,
+                concurrency: 1,
+                ..CrawlLimits::default()
+            },
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(|_| {}),
+            Arc::new(|_| {}),
+        )
+        .await;
+        server.join().unwrap();
+        assert!(found.successful_courses.is_empty());
+        assert!(found
+            .errors
+            .iter()
+            .any(|error| error.contains("detail limit")));
     }
 }

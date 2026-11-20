@@ -1,0 +1,9 @@
+# 04C resource attention scope gap — coordinator note, 2026-11-16
+
+Source state at `Akshay-VK/quanta-pulse@1a58941`: `api.snapshotResourceUnreadEventIds(resourceId)` captures every eligible unread event independently from History watermarks/Inbox dismissal. `setEventReadState(ids, desiredRead)` mutates captured event IDs. Complete History queries deliberately hide cleared/suppressed rows. Existing event-list/range wrappers remain capped.
+
+For later Agenda/Library resource keyboard surfaces, E can consume the existing unread snapshot. U and captured dismissal need eligible read as well as unread resource event IDs; using only the unread snapshot makes U a no-op for already-read material. Scanning paged History cannot substitute because clear watermarks hide otherwise eligible attention records. Do not invent an uncapped resource snapshot from visible rows or broaden a mutation to later arrivals.
+
+Before dispatching those surfaces, freeze a small complete batch resource-event snapshot seam (suggestion: `snapshotResourceEventIds(resourceIds: number[]): Promise<number[]>`, excluding baseline and calendar-suppressed rows, independent of read/dismissal/History clear). Snapshot exact membership at backend activation, validate IDs, handle empty scope without widening, and test beyond caps/SQLite bind limits. The existing singular unread seam stays compatible for I01. Name and exact implementation belong to a separately approved narrow backend/API child under 04C, serialized after B07B’s shared wrapper lease. Do not reopen or falsely extend already accepted B05 scope.
+
+This note is a discovered integration requirement, not an implemented API or an approved dispatch. Resource list focus/preview can reuse the accepted 04B/04C1 contracts; complete attention mapping must exist before declaring resource E/U/Delete integration accepted. Original 04C and task04 umbrellas remain incomplete.

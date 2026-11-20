@@ -14,6 +14,7 @@ const base: Settings = {
   notifyDeadlines: true,
   notifyAvailability: true,
   notifyAuth: true,
+  notifyScanFailures: true,
   quietHoursStart: null,
   quietHoursEnd: null,
   deadlineReminderHours: 48,
@@ -50,12 +51,56 @@ describe("settingsDraft", () => {
     expect(isSettingsDirty(changed, base)).toBe(true);
   });
 
-  it("validates ranges", () => {
+  it("compares scan-failure preference edits and preserves a persisted false value", () => {
+    const current = { ...base, notifyScanFailures: false };
+    expect(isSettingsDirty(current, current)).toBe(false);
+    expect(isSettingsDirty({ ...current, notifyScanFailures: true }, current)).toBe(true);
+    expect(current.notifyScanFailures).toBe(false);
+  });
+
+  it("accepts offered and persisted monitoring intervals", () => {
+    for (const interval of [5, 10, 15, 30, 60, 61, 120, 1440]) {
+      expect(validateSettingsDraft({ ...base, syncIntervalMinutes: interval }).syncIntervalMinutes).toBeUndefined();
+    }
+  });
+
+  it("accepts the approved monitoring intervals offered by the settings UI", () => {
+    for (const interval of [5, 10, 15, 30, 60]) {
+      expect(validateSettingsDraft({ ...base, syncIntervalMinutes: interval }).syncIntervalMinutes).toBeUndefined();
+    }
+  });
+
+  it("rejects a quiet-hours range whose end is not after its start", () => {
+    expect(validateSettingsDraft({ ...base, quietHoursStart: "22:00", quietHoursEnd: "06:00" }).quietHours).toBeDefined();
+    expect(validateSettingsDraft({ ...base, quietHoursStart: "22:00", quietHoursEnd: "22:00" }).quietHours).toBeDefined();
+    expect(validateSettingsDraft({ ...base, quietHoursStart: "08:00", quietHoursEnd: "09:00" }).quietHours).toBeUndefined();
+  });
+
+  it("rejects invalid monitoring intervals and other out-of-range settings", () => {
+    for (const interval of [Number.NaN, Number.POSITIVE_INFINITY, 0, -1, 4, 1441, 5.5]) {
+      expect(validateSettingsDraft({ ...base, syncIntervalMinutes: interval }).syncIntervalMinutes).toBeDefined();
+    }
+
     const bad = { ...base, syncIntervalMinutes: 10, deadlineReminderHours: 0 };
     const errs = validateSettingsDraft(bad);
     expect(hasValidationErrors(errs)).toBe(true);
-    expect(errs.syncIntervalMinutes).toBeDefined();
+    expect(errs.syncIntervalMinutes).toBeUndefined();
     expect(errs.deadlineReminderHours).toBeDefined();
+  });
+
+  it("accepts every previous-version count from 0 through 10, including the default 3", () => {
+    for (let count = 0; count <= 10; count++) {
+      expect(validateSettingsDraft({ ...base, mirrorKeepVersions: count })).toEqual({});
+    }
+    expect(base.mirrorKeepVersions).toBe(3);
+  });
+
+  it("rejects invalid previous-version counts with a field error", () => {
+    for (const count of [-1, 0.5, 3.5, 11, Number.NaN, Infinity, -Infinity]) {
+      const errors = validateSettingsDraft({ ...base, mirrorKeepVersions: count });
+      expect(errors).toEqual({ mirrorKeepVersions: expect.stringContaining("0 and 10") });
+      expect(hasValidationErrors(errors)).toBe(true);
+    }
   });
 
   it("validates the Telegram bot token and chat id", () => {

@@ -1,0 +1,795 @@
+/* Common workspace regions from the Inbox, Calendar and History references. */
+@layer components {
+  .workspace-view,
+  .workspace-view-body {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .workspace-view {
+    height: 100%;
+  }
+
+  .workspace-view-header,
+  .workspace-view-toolbar,
+  .workspace-view-status {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--sp-2);
+    padding-inline: var(--sp-4);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .workspace-view-header {
+    height: 44px;
+    gap: 14px;
+  }
+
+  .workspace-view-header h1 {
+    margin: 0;
+    font: 600 13px/18px var(--type-ui);
+  }
+
+  .workspace-view-header-actions {
+    display: flex;
+    align-items: center;
+    margin-inline-start: auto;
+    min-width: 0;
+  }
+
+  .workspace-view-header .filter-tabs {
+    min-width: 0;
+    gap: 2px;
+  }
+
+  .workspace-view-header .filter-tab {
+    min-height: 24px;
+    height: 24px;
+    padding: 0 var(--sp-2);
+    border: 0;
+    border-radius: 5px;
+    white-space: nowrap;
+  }
+
+  .workspace-view-header .filter-tab-count {
+    margin-inline-start: 6px;
+    color: var(--faint);
+    font-size: 11px;
+  }
+
+  .workspace-view-toolbar {
+    min-height: 40px;
+    margin: 0;
+    flex-wrap: nowrap;
+    justify-content: space-between;
+  }
+
+  .workspace-view-toolbar .filter-bar-left,
+  .workspace-view-toolbar .filter-bar-right {
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+  }
+
+  .workspace-view-toolbar .filter-bar-left {
+    min-width: 0;
+  }
+
+  .workspace-view-toolbar .filter-bar-right {
+    flex: 0 0 auto;
+  }
+
+  .workspace-filter-chip,
+  .workspace-filter-selector {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-1);
+    height: 24px;
+    padding: 0 var(--sp-2);
+    border: 1px solid var(--control-line);
+    border-radius: 5px;
+    font: 500 12px/16px var(--type-ui);
+    white-space: nowrap;
+  }
+
+  .workspace-filter-chip > span:first-child,
+  .workspace-filter-selector > span {
+    color: var(--faint);
+    font-weight: 400;
+  }
+
+  .workspace-filter-chip button {
+    display: grid;
+    place-items: center;
+    color: var(--faint);
+  }
+
+  .workspace-filter-chip button .lucide {
+    width: 12px;
+    height: 12px;
+  }
+
+  .workspace-filter-query {
+    max-width: 14ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .workspace-filter-selector > .field {
+    min-width: 0;
+    display: inline-flex;
+    flex: 0 1 auto;
+  }
+
+  .workspace-filter-selector .select-trigger {
+    align-items: center;
+    height: 22px;
+    min-height: 22px;
+    max-width: 18ch;
+    padding: 0;
+    gap: 3px;
+    background: transparent;
+    border: 0;
+  }
+
+  .workspace-filter-selector .select-trigger > span:first-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .workspace-filter-selector svg.lucide {
+    width: 12px;
+    height: 12px;
+  }
+
+  .workspace-view-selector {
+    border-color: transparent;
+  }
+
+  .workspace-toolbar-menu {
+    display: grid;
+    justify-items: start;
+  }
+
+  .workspace-view-toolbar .workspace-local-search {
+    width: min(22vw, 156px);
+    min-width: 90px;
+    height: 26px;
+  }
+
+  .workspace-view-status {
+    height: 30px;
+    border-top: 1px solid var(--line);
+    border-bottom: 0;
+    gap: var(--sp-4);
+    color: var(--faint);
+    font: 400 11px/16px var(--type-mono);
+  }
+
+  .workspace-view-status-text {
+    overflow: hidden;
+    min-width: 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .workspace-view-shortcuts {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-4);
+    margin-inline-start: auto;
+    white-space: nowrap;
+    font: 400 11px/16px var(--type-ui);
+  }
+
+  .workspace-view-shortcuts > span {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .workspace-view kbd {
+    display: inline-flex;
+    align-items: center;
+    height: 18px;
+    padding-inline: 5px;
+    border: 1px solid var(--control-line);
+    border-radius: 4px;
+    background: var(--raised);
+    color: var(--muted);
+    font: 500 10px/14px var(--type-mono);
+  }
+
+  .workspace-view-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+    overflow: auto;
+  }
+
+  .workspace-view > .banner,
+  .workspace-view-body > .banner {
+    flex-shrink: 0;
+    min-height: 40px;
+    margin: 0;
+    padding-inline: var(--sp-4);
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    border-radius: 0;
+  }
+
+  .banner-warning {
+    background: var(--t-warn-bg);
+    color: var(--t-warn-fg);
+  }
+
+  .workspace-view .group-header,
+  .workspace-view .agenda-collapse {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    min-height: 28px;
+    margin: 0;
+    padding: 0 var(--sp-4);
+    background: var(--hover);
+    color: var(--muted);
+    font: 500 12px/16px var(--type-ui);
+    border-radius: 0;
+  }
+
+  .workspace-view .history-day-group {
+    margin: 0;
+  }
+
+  .workspace-view .group-count,
+  .workspace-view .agenda-collapse span {
+    font: 400 11px/16px var(--type-mono);
+    color: var(--faint);
+  }
+
+  .workspace-view .group-hairline {
+    display: none;
+  }
+
+  .workspace-view .agenda-collapse {
+    width: 100%;
+  }
+
+  .workspace-view .agenda-collapse .lucide {
+    width: 12px;
+    height: 12px;
+  }
+
+  .workspace-view-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100%;
+    padding: var(--sp-4);
+  }
+
+  .workspace-view-empty .empty-state {
+    margin: 0;
+    padding: var(--sp-3) 0 0;
+  }
+
+  .workspace-view-empty .empty-title {
+    font: 600 15px/21px var(--type-ui);
+  }
+
+  .workspace-view-empty .empty-body {
+    max-width: 360px;
+  }
+
+  .workspace-empty-icon {
+    display: grid;
+    place-items: center;
+    height: 44px;
+    width: 44px;
+    border: 1px solid var(--control-line);
+    border-radius: 12px;
+    color: var(--faint);
+  }
+
+  .workspace-empty-icon svg.lucide {
+    width: 20px;
+    height: 20px;
+  }
+
+  .empty-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--sp-2);
+  }
+
+  .workspace-load-more {
+    margin: var(--sp-2) var(--sp-4);
+  }
+
+  .inbox-view .attention-item {
+    position: relative;
+    display: block;
+    padding: 0;
+    margin: 0;
+  }
+
+  .inbox-view .inbox-row-selection {
+    position: absolute;
+    z-index: 2;
+    top: 50%;
+    inset-inline-start: var(--sp-2);
+    transform: translateY(-50%);
+    background: var(--hover);
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .inbox-capture-list {
+    margin: var(--sp-3) 0 0;
+    padding: var(--sp-1) var(--sp-2);
+    border: 1px solid var(--control-line);
+    border-radius: var(--radius-sm);
+    list-style: none;
+  }
+
+  .inbox-capture-list li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-2);
+    min-height: 28px;
+  }
+
+  .inbox-view .attention-item:hover .inbox-row-selection,
+  .inbox-view .inbox-row-selection:focus-visible,
+  .inbox-view .inbox-row-selection[aria-pressed="true"] {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .workspace-view .resource-row.row-workspace {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    padding: 0 var(--sp-4);
+    position: relative;
+    min-height: var(--row-h);
+    height: var(--row-h);
+    border-radius: 0;
+  }
+
+  .workspace-view .resource-row.row-workspace.selected {
+    background: var(--selected);
+    box-shadow: inset 2px 0 0 var(--focus);
+  }
+
+  .workspace-view .row-workspace .row-select {
+    flex: 1 1 0;
+    grid-template-columns: 8px 16px minmax(0, 1fr);
+    gap: var(--sp-3);
+  }
+
+  .workspace-view .row-workspace:not(.row-workspace-inbox) .row-select {
+    grid-template-columns: 16px minmax(0, 1fr);
+  }
+
+  .workspace-view .row-workspace:not(.row-workspace-inbox) .row-select > :first-child {
+    display: none;
+  }
+
+  .workspace-view .row-workspace .row-title {
+    font: 400 13px/18px var(--type-ui);
+    color: var(--muted);
+  }
+
+  .workspace-view .row-workspace.row-unread .row-title {
+    color: var(--ink);
+    font-weight: 500;
+  }
+
+  .workspace-view .row-workspace.row-unavailable .row-title {
+    opacity: 0.8;
+    text-decoration: none;
+  }
+
+  .workspace-view .row-workspace .row-meta,
+  .workspace-view .row-workspace .row-section,
+  .workspace-view .row-workspace .row-mirror {
+    flex: 0 0 auto;
+    width: auto;
+  }
+
+  .workspace-view .row-workspace .row-section {
+    width: 52px;
+  }
+
+  .workspace-view .row-workspace .row-time {
+    flex: 0 0 auto;
+    width: auto;
+    min-width: 40px;
+    color: var(--faint);
+    font: 400 11px/16px var(--type-mono);
+    text-align: right;
+    white-space: nowrap;
+    overflow: visible;
+  }
+
+  .workspace-view .row-workspace .row-time-focused {
+    font-size: 0;
+  }
+
+  .workspace-view .row-workspace .row-actions {
+    position: absolute;
+    top: 50%;
+    inset-inline-end: var(--sp-2);
+    transform: translateY(-50%);
+    width: auto;
+    z-index: 1;
+    background: var(--hover);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .workspace-view .row-workspace:hover .row-actions,
+  .workspace-view .row-workspace:focus-within:not(.keyboard-focused) .row-actions,
+  .workspace-view .row-workspace .row-actions:focus-within {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .workspace-view .row-workspace .material-shortcut {
+    display: none;
+  }
+
+  .workspace-view .resource-row.row-workspace-agenda {
+    min-height: 40px;
+    height: 40px;
+  }
+
+  .workspace-view .row-workspace-agenda .row-title {
+    color: var(--ink);
+  }
+
+  .workspace-view .row-workspace-agenda .row-select > svg {
+    color: var(--faint);
+  }
+
+  .workspace-view .row-workspace-agenda .row-select > .agenda-due-soon-icon,
+  .agenda-countdown[data-soon] {
+    color: var(--warn);
+  }
+
+  .agenda-countdown {
+    display: inline-block;
+    min-width: 48px;
+    margin-inline-start: var(--sp-3);
+    text-align: right;
+  }
+
+  .workspace-view .agenda-group {
+    margin: 0;
+  }
+
+  .inbox-due-banner {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    min-height: 36px;
+    padding-inline: var(--sp-4);
+    background: var(--warning-soft);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .inbox-due-banner > .lucide,
+  .inbox-due-countdown {
+    color: var(--dot-warn);
+  }
+
+  .inbox-due-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+  }
+
+  .inbox-due-date {
+    color: var(--muted);
+  }
+
+  .inbox-due-countdown {
+    flex-shrink: 0;
+    font: 400 11px/16px var(--type-mono);
+  }
+
+  .inbox-due-spacer {
+    flex: 1;
+  }
+
+  .workspace-view .row-workspace .file-type-icon {
+    color: var(--faint);
+  }
+
+  .agenda-week {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: var(--sp-2);
+    padding: var(--sp-3) var(--sp-4);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .agenda-week-day {
+    height: 64px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+  }
+
+  .agenda-week-day > span:first-child {
+    color: var(--faint);
+    font: 500 10px/14px var(--type-mono);
+  }
+
+  .agenda-week-day strong {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    color: var(--muted);
+    font: 500 14px/20px var(--type-ui);
+  }
+
+  .agenda-week-day[aria-current="date"] strong {
+    color: var(--bg);
+    background: var(--ink);
+    font-weight: 600;
+  }
+
+  .agenda-week-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+  }
+
+  .agenda-week-dot[data-deadline] {
+    background: var(--warn);
+  }
+
+  .activity-calendar .cal-layout {
+    flex-wrap: nowrap;
+    align-items: stretch;
+    gap: 0;
+  }
+
+  .activity-calendar .cal-main {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: auto;
+  }
+
+  .activity-calendar .cal-header {
+    margin: 0;
+    justify-content: start;
+    gap: var(--sp-2);
+  }
+
+  .activity-calendar .cal-month-title {
+    margin: 0;
+    font: 600 13px/18px var(--type-ui);
+  }
+
+  .cal-detection-note {
+    margin-inline-start: auto;
+    color: var(--faint);
+    font: 400 11px/16px var(--type-ui);
+  }
+
+  .activity-calendar .cal-weekdays,
+  .activity-calendar .cal-grid,
+  .activity-calendar .cal-row {
+    gap: 0;
+    margin: 0;
+  }
+
+  .activity-calendar .cal-grid {
+    grid-template-rows: none;
+  }
+
+  .activity-calendar .cal-weekday {
+    height: 28px;
+    padding: 0 var(--sp-2);
+    display: flex;
+    align-items: center;
+    font: 500 10px/14px var(--type-mono);
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--line);
+    color: var(--faint);
+  }
+
+  .activity-calendar .cal-day {
+    height: 96px;
+    padding: var(--sp-2);
+    gap: var(--sp-1);
+    justify-content: flex-start;
+    border-radius: 0;
+    min-width: 0;
+  }
+
+  .activity-calendar .cal-pill {
+    overflow: hidden;
+    max-width: 100%;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .activity-calendar .cal-panel {
+    flex: 0 0 min(340px, 45%);
+    width: auto;
+    min-width: 0;
+    height: auto;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-left: 1px solid var(--line);
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .activity-calendar .cal-panel[hidden] {
+    display: none;
+  }
+
+  .cal-panel-header {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-2);
+    min-height: 44px;
+    padding: 0 var(--sp-4);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .activity-calendar .cal-panel-title {
+    margin: 0;
+    font: 600 13px/18px var(--type-ui);
+    flex: 1;
+  }
+
+  .cal-panel-header > span,
+  .activity-calendar .cal-summary {
+    color: var(--faint);
+    font: 400 11px/16px var(--type-mono);
+  }
+
+  .activity-calendar .cal-summary {
+    margin: 0;
+    padding: var(--sp-3) var(--sp-4);
+    border-bottom: 1px solid var(--line);
+  }
+
+  @media (pointer: coarse) {
+    .workspace-view .row-workspace .row-actions {
+      position: static;
+      transform: none;
+      background: none;
+      opacity: 1;
+      pointer-events: auto;
+    }
+  }
+
+  @media (max-width: 1099px) {
+    .workspace-view .resource-row.row-workspace {
+      height: 30px;
+      min-height: 30px;
+    }
+
+    .workspace-view .resource-row.row-workspace-agenda {
+      height: 40px;
+      min-height: 40px;
+    }
+
+    .workspace-view .row-workspace .row-section {
+      display: none;
+    }
+
+    .workspace-view-shortcuts {
+      gap: var(--sp-2);
+    }
+  }
+
+  @media (max-width: 820px) {
+    .workspace-view-header {
+      height: 40px;
+    }
+
+    .workspace-view .resource-row.row-workspace-inbox {
+      height: 34px;
+      min-height: 34px;
+    }
+
+    .workspace-view-header,
+    .workspace-view-toolbar,
+    .workspace-view-status,
+    .workspace-view .resource-row.row-workspace {
+      padding-inline: var(--sp-3);
+    }
+
+    .workspace-view-toolbar .filter-bar-left,
+    .workspace-view-toolbar .filter-bar-right {
+      flex: 0 1 auto;
+    }
+
+    .workspace-view-toolbar {
+      flex-wrap: wrap;
+      gap: 2px var(--sp-2);
+      padding-block: 3px;
+    }
+
+    .inbox-due-banner > .course-pill,
+    .workspace-view-shortcuts,
+    .workspace-view .row-workspace .row-meta > .tag,
+    .cal-detection-note {
+      display: none;
+    }
+
+    .activity-calendar .cal-day {
+      padding: var(--sp-1);
+    }
+  }
+
+  @media (max-width: 760px) {
+    .workspace-view-header {
+      flex-wrap: wrap;
+      height: auto;
+      min-height: 40px;
+    }
+
+    .workspace-view .resource-row.row-workspace-inbox {
+      display: grid;
+      grid-template-columns: 8px auto auto minmax(0, 1fr);
+      gap: 4px var(--sp-2);
+      height: auto;
+      min-height: 44px;
+      padding-block: 6px;
+    }
+
+    .workspace-view .row-workspace-inbox .row-select {
+      grid-column: 1 / -1;
+      grid-template-columns: 8px minmax(0, 1fr);
+      gap: var(--sp-2);
+    }
+
+    .workspace-view .row-workspace-inbox .row-select > svg {
+      display: none;
+    }
+
+    .workspace-view .row-workspace-inbox .row-title {
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+
+    .workspace-view .row-workspace-inbox .row-meta {
+      grid-column: 2;
+    }
+
+    .workspace-view .row-workspace-inbox .row-time {
+      grid-column: 3;
+      grid-row: 2;
+      text-align: start;
+    }
+
+    .workspace-view .row-workspace-inbox .row-mirror {
+      grid-column: 4;
+      grid-row: 2;
+    }
+  }
+}

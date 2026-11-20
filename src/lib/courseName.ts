@@ -40,8 +40,10 @@ function qualifier(raw: string): string | null {
   return prefix.length > 0 ? prefix.join("/") : null;
 }
 
-/** A course's own name, with a user alias winning over the derived code. */
+/** A course's own name, with the durable override winning over legacy aliases. */
 export function displayName(course: Course, aliases: CourseAliases = {}): string {
+  const saved = course.displayName?.trim();
+  if (saved) return saved;
   const alias = aliases[String(course.id)]?.trim();
   if (alias) return alias;
   return deriveDisplayName(course.name) || course.shortName || course.name;
@@ -99,7 +101,11 @@ export function assignDotIndices(
   let cursor = 0;
   for (const course of courses) {
     if (index.has(course.id)) continue;
-    while (used.has(cursor % DOT_COUNT)) cursor += 1;
+    let searched = 0;
+    while (used.has(cursor % DOT_COUNT) && searched < DOT_COUNT) {
+      cursor += 1;
+      searched += 1;
+    }
     const value = cursor % DOT_COUNT;
     index.set(course.id, value);
     next[String(course.id)] = value;

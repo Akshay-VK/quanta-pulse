@@ -24,6 +24,8 @@ async fn crawl(responses: Vec<(&'static str, u16, &'static str)>) -> Discovery {
                     Err(error) => panic!("{error}"),
                 }
             };
+            // Keep fixture reads blocking even if accept inherits listener mode.
+            socket.set_nonblocking(false).unwrap();
             socket
                 .set_read_timeout(Some(Duration::from_secs(5)))
                 .unwrap();

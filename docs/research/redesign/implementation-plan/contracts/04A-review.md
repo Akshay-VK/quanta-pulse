@@ -1,0 +1,10 @@
+# 04A independent review
+
+## Findings
+
+- **Medium — view selectors override material slot geometry.** In `src/styles/components/content.css`, the later `.inbox-view .resource-row:not(.row-compact), .agenda-entry .resource-row:not(.row-compact)` rule has greater specificity than `.row-material` and replaces its six declared tracks with five tracks for wide Inbox and Agenda rows. Material children still target columns 1–6, so the actions slot creates an implicit column and the intended material slot order/available width is not guaranteed there. The later Inbox time override restores only the time width, not the grid. Compact rows are excluded from this override. Scope: wide Inbox/Agenda material rows.
+- **Medium — rendered geometry is unproved.** `resourceRowDensity.test.tsx` and `redesignTableGeometry.test.tsx` assert DOM order and raw CSS/source strings; they do not load the cascade or measure layout. In particular, they cannot prove 36/30px material rows, 34px table body rows, 28px headers, title truncation/readability, or action visibility at wide/narrow sizes. The table test also checks the virtual estimate as source text only. No matching `capture20261116T020510Z` artifact/metadata was found in the repository. This is a material evidence gap for visual acceptance.
+
+## Contract and coverage
+
+The diff preserves `.row-select` as a button sibling of course/action controls, leaves the existing selection callback and material action policy unchanged, and adds no keyboard owner or keyboard behavior. `sectionLabel` is optional and inserted between metadata and local/time slots. The inspected-row `selected` class remains the existing detail selection. Title full text remains available through its `title` attribute and ellipsis styling. Existing tests check the course pill is outside the select button and tag-before-course DOM ordering; they do not exercise action callbacks or keyboard ownership. This review did not run tests or a browser; no broad test suite was repeated.

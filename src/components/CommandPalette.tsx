@@ -1,27 +1,80 @@
+import { useMirror } from "../hooks/useMirror";
+import { isLocal } from "../lib/mirrorState";
 import { Command } from "cmdk";
-import { Calendar, History, Library, Search, Settings, Sun } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { Calendar, History, Inbox, Library, Search, Settings } from "lucide-react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { NAV, type ViewId } from "../lib/nav";
 import { courseTitle } from "../lib/courseName";
-import { formatSectionPath } from "../lib/sectionPath";
 import { Kbd } from "./ui/Kbd";
+import { FileTypeIcon } from "./ui/FileTypeIcon";
 import { Dialog } from "./ui/Dialog";
 import type { Course, Resource } from "../lib/types";
+import { rankMaterialMatches } from "../lib/materialActions";
+import { splitLiteralMatches } from "../lib/filter";
+import { parseTimestamp } from "../lib/format";
+import { parsePaletteQuery, type PaletteQuery } from "../lib/paletteQuery";
 
 const VIEW_ICON: Record<ViewId, ReactNode> = {
-  today: <Sun aria-hidden="true" />,
+  today: <Inbox aria-hidden="true" />,
   calendar: <Calendar aria-hidden="true" />,
   library: <Library aria-hidden="true" />,
   history: <History aria-hidden="true" />,
   settings: <Settings aria-hidden="true" />,
 };
 
+const GO_SHORTCUT: Record<ViewId, string> = { today: "G I", calendar: "G C", library: "G L", history: "G H", settings: "Mod+5" };
+
 export interface PaletteAction {
   id: string;
   label: string;
   icon?: ReactNode;
   shortcut?: string;
+  searchableOnly?: boolean;
   onSelect: () => void;
+}
+
+function Highlight({ text, query }: { text: string; query: string }) {
+  const parts = splitLiteralMatches(text, query);
+  if (parts.length === 1 && !parts[0].match) return <>{text}</>;
+  return <>{parts.map((part, i) => part.match ? <mark key={i} className="palette-mark">{part.text}</mark> : <span key={i}>{part.text}</span>)}</>;
+}
+
+function courseMatchesQuery(course: Course, parsed: PaletteQuery) {
+  if (parsed.filters.courseIds && !parsed.filters.courseIds.includes(course.id)) return false;
+  const needle = parsed.freeText.toLowerCase();
+  if (!needle) return true;
+  return `${course.name} ${course.shortName ?? ""} ${courseTitle(course.id, course.name)}`.toLowerCase().includes(needle);
+}
+
+function resourceMatchesQuery(resource: Resource, parsed: PaletteQuery, saved: boolean, unread: boolean) {
+  if (parsed.hasKnownInvalid) return false;
+  if (parsed.filters.courseIds && (resource.courseId === null || !parsed.filters.courseIds.includes(resource.courseId))) return false;
+  if (parsed.filters.types && !parsed.filters.types.includes(resource.resourceType)) return false;
+  if (parsed.filters.is?.includes("read") && unread) return false;
+  if (parsed.filters.is?.includes("unread") && !unread) return false;
+  if (parsed.filters.is?.includes("saved") && !saved) return false;
+  if (parsed.filters.is?.includes("unsaved") && saved) return false;
+  const dueValues = parsed.filters.due ?? [];
+  if (dueValues.length) {
+    const dueAt = resource.dueAt ? parseTimestamp(resource.dueAt) : null;
+    if (dueValues.includes("none")) {
+      if (dueAt) return false;
+    } else if (!dueAt) {
+      return false;
+    } else {
+      const today = new Date();
+      const dayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+      const time = dueAt.getTime();
+      const isToday = time >= dayStart && time < dayStart + 86_400_000;
+      const isWeek = time >= dayStart && time < dayStart + 7 * 86_400_000;
+      const isOverdue = time < dayStart;
+      const matches = (dueValues.includes("today") && isToday)
+        || (dueValues.includes("week") && isWeek)
+        || (dueValues.includes("overdue") && isOverdue);
+      if (!matches) return false;
+    }
+  }
+  return true;
 }
 
 /** The command palette: views, courses, best file matches and app actions. */
@@ -32,7 +85,9 @@ export default function CommandPalette({
   courses,
   onCourse,
   resources,
-  onOpenResource,
+  unreadResources,
+  onInspectResource,
+  onSeeAllFiles,
   actions,
 }: {
   open: boolean;
@@ -41,37 +96,61 @@ export default function CommandPalette({
   courses: Course[];
   onCourse: (id: number) => void;
   resources: Resource[];
-  onOpenResource: (url: string) => void;
+  unreadResources?: ReadonlySet<number>;
+  onInspectResource: (resource: Resource) => void;
+  onSeeAllFiles: (query: string, filters?: { ids: ReadonlySet<number>; label: string }) => void;
   actions: PaletteAction[];
 }) {
-  const [query, setQuery] = useState("");
-  const needle = query.trim().toLowerCase();
+  const mirror = useMirror();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [draft, setDraft] = useState("");
+  const [tokens, setTokens] = useState<string[]>([]);
+  const [recentId, setRecentId] = useState<number>();
+  const query = [...tokens, draft].filter(Boolean).join(" ");
+  const parsed = useMemo(() => parsePaletteQuery(query, { courses, resources }), [query, courses, resources]);
+  const needle = parsed.freeText.toLowerCase();
+  const hasQuery = query.trim().length > 0;
 
-  const matches = (text: string) => !needle || text.toLowerCase().includes(needle);
-  const views = NAV.filter((item) => matches(item.label));
-  const courseMatches = courses.filter((c) =>
-    matches(`${c.name} ${c.shortName ?? ""} ${courseTitle(c.id, c.name)}`),
+  const isSaved = (resource: Resource) => Boolean(
+    !resource.isExternal && mirror && isLocal(mirror.statusOf(resource.id)),
   );
-  const files = needle
-    ? resources
-        .filter((r) =>
-          matches(`${r.title} ${r.courseName ?? ""} ${formatSectionPath(r)}`),
-        )
-        .slice(0, 8)
+  const navItems = NAV.filter((item) => (!hasQuery || needle) && (!needle || item.label.toLowerCase().includes(needle)));
+  const courseMatches = courses.filter((c) => !parsed.hasKnownInvalid && (needle || parsed.filters.courseIds?.length) && courseMatchesQuery(c, parsed));
+  const scopedResources = resources.filter((r) => resourceMatchesQuery(r, parsed, isSaved(r), unreadResources?.has(r.id) ?? false));
+  const files = hasQuery
+    ? (needle ? rankMaterialMatches(scopedResources, needle).slice(0, 8) : scopedResources.slice(0, 8))
     : [];
-  const actionMatches = actions.filter((a) => matches(a.label));
+  const actionMatches = actions.filter((action) => hasQuery
+    ? Boolean(needle && action.label.toLowerCase().includes(needle))
+    : !action.searchableOnly);
+  const anyFileMatch = files.length > 0;
+  const viewAllFiles = () => {
+    const label = parsed.tokens.filter((token) => token.valid).map((token) => token.raw).join(" ");
+    const matchingFiles = needle ? rankMaterialMatches(scopedResources, needle) : scopedResources;
+    onSeeAllFiles(parsed.freeText, label ? { ids: new Set(matchingFiles.map(({ id }) => id)), label } : undefined);
+  };
+  const recent = resources.find((resource) => resource.id === recentId)
+    ?? resources.reduce<Resource | undefined>((latest, resource) => !latest || latest.firstSeenAt < resource.firstSeenAt ? resource : latest, undefined);
+
+  const resetQuery = () => {
+    setDraft("");
+    setTokens([]);
+  };
 
   const run = (fn: () => void) => {
+    resetQuery();
     onOpenChange(false);
     fn();
   };
+
+  const noResults = hasQuery && files.length === 0 && courseMatches.length === 0 && actionMatches.length === 0 && navItems.length === 0 && !anyFileMatch;
 
   return (
     <Dialog
       open={open}
       onOpenChange={(next) => {
         onOpenChange(next);
-        if (!next) setQuery("");
+        if (!next) resetQuery();
       }}
       label="Command palette"
       className="palette"
@@ -79,109 +158,163 @@ export default function CommandPalette({
       <Command shouldFilter={false} label="Command palette">
         <div className="palette-input-row">
           <Search aria-hidden="true" />
+          {tokens.length > 0 && (
+            <span className="palette-tokens">
+              {tokens.map((token, i) => (
+                <button key={`${token}-${i}`} type="button" className="palette-token" aria-label={`Remove ${token} filter`}
+                  onClick={() => {
+                    setTokens((current) => current.filter((_, index) => index !== i));
+                    inputRef.current?.focus();
+                  }}>{token}</button>
+              ))}
+            </span>
+          )}
           <Command.Input
+            ref={inputRef}
             className="palette-input"
-            value={query}
-            onValueChange={setQuery}
-            placeholder="Search files and commands…"
+            value={draft}
+            onValueChange={(value) => {
+              if (/\s$/.test(value)) {
+                const token = parsePaletteQuery(value, { courses, resources });
+                if (!token.freeText && token.tokens.length > 0 && token.tokens.every((entry) => entry.valid)) {
+                  setTokens((current) => [...current, ...token.tokens.map((entry) => entry.raw)]);
+                  setDraft("");
+                  return;
+                }
+              }
+              setDraft(value);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Backspace" && !draft && tokens.length) {
+                setTokens((current) => current.slice(0, -1));
+              } else if (event.key === "Tab" && !event.shiftKey && draft && !parsed.freeText) {
+                const token = parsed.tokens.at(-1);
+                if (token?.valid && token.raw === draft.trim()) {
+                  event.preventDefault();
+                  setTokens((current) => [...current, token.raw]);
+                  setDraft("");
+                }
+              }
+            }}
+            placeholder={hasQuery ? "" : "Search commands, courses and files…"}
             autoFocus
           />
+          <span className="palette-extra"><Kbd keys="Esc" /></span>
         </div>
         <Command.List className="palette-list">
-          {views.length + courseMatches.length + files.length + actionMatches.length ===
-            0 && (
-            <div className="palette-empty">No matches for that search</div>
+          {noResults && (
+            <div className="palette-empty-state">
+              <div className="palette-empty-title">No results for “{query.trim()}”</div>
+              <div className="palette-empty-copy">Try fewer words, or search all files.</div>
+            </div>
           )}
 
-          {views.length > 0 && (
+          {!hasQuery && navItems.length > 0 && (
             <Command.Group className="palette-group">
-              <div className="palette-heading">Views</div>
-              {views.map((item) => (
-                <Command.Item
-                  key={item.id}
-                  className="palette-item"
-                  onSelect={() => run(() => onView(item.id))}
-                >
+              <div className="palette-heading">Navigate</div>
+              {navItems.map((item) => (
+                <Command.Item key={item.id} className="palette-item" onSelect={() => run(() => onView(item.id))}>
                   <span className="icon">{VIEW_ICON[item.id]}</span>
-                  <span>{item.label}</span>
-                  <span className="palette-extra">
-                    <Kbd keys={`Mod+${NAV.findIndex((view) => view.id === item.id) + 1}`} />
-                  </span>
+                  <span>Go to {item.label}</span>
+                  <span className="palette-extra">{GO_SHORTCUT[item.id].split(" ").map((key) => <Kbd key={key} keys={key} />)}</span>
                 </Command.Item>
               ))}
             </Command.Group>
           )}
 
-          {courseMatches.length > 0 && (
+          {!hasQuery && recent && (
             <Command.Group className="palette-group">
-              <div className="palette-heading">Courses</div>
-              {courseMatches.map((course) => (
-                <Command.Item
-                  key={course.id}
-                  className="palette-item"
-                  value={course.name}
-                  onSelect={() => run(() => onCourse(course.id))}
-                >
-                  <span>{courseTitle(course.id, course.name)}</span>
-                  <span className="palette-extra">
-                    <span className="faint">{course.resourceCount} files</span>
-                  </span>
-                </Command.Item>
-              ))}
+              <div className="palette-heading">Recent</div>
+              <Command.Item className="palette-item" value={`Recent ${recent.id} ${recent.title}`}
+                onSelect={() => run(() => { setRecentId(recent.id); onInspectResource(recent); })}>
+                <FileTypeIcon type={recent.resourceType} />
+                <span className="palette-main">{recent.title}</span>
+                {recent.courseName && <span className="palette-extra mono faint">{recent.courseName}</span>}
+              </Command.Item>
             </Command.Group>
           )}
-
-          {files.length > 0 && (
+          {hasQuery && files.length > 0 && (
             <Command.Group className="palette-group">
               <div className="palette-heading">Files</div>
               {files.map((resource) => (
                 <Command.Item
                   key={resource.id}
                   className="palette-item"
-                  value={`${resource.title} ${resource.courseName ?? ""}`}
-                  onSelect={() => run(() => onOpenResource(resource.url))}
+                  value={`File ${resource.id} ${resource.title}`}
+                  onSelect={() => run(() => { setRecentId(resource.id); onInspectResource(resource); })}
                 >
-                  <span>{resource.title}</span>
+                  <FileTypeIcon type={resource.resourceType} />
+                  <span className="palette-main"><Highlight text={resource.title} query={needle || query.trim()} /></span>
                   <span className="palette-extra">
-                    <span className="faint">{resource.courseName}</span>
+                    <span className="mono faint">{resource.courseName}</span>
                   </span>
                 </Command.Item>
               ))}
             </Command.Group>
           )}
 
-          {actionMatches.length > 0 && (
+          {hasQuery && courseMatches.length > 0 && (
             <Command.Group className="palette-group">
-              <div className="palette-heading">Actions</div>
-              {actionMatches.map((action) => (
-                <Command.Item
-                  key={action.id}
-                  className="palette-item"
-                  onSelect={() => run(action.onSelect)}
-                >
-                  {action.icon && <span className="icon">{action.icon}</span>}
-                  <span>{action.label}</span>
-                  {action.shortcut && (
-                    <span className="palette-extra">
-                      <Kbd keys={action.shortcut} />
-                    </span>
-                  )}
+              <div className="palette-heading">Courses</div>
+              {courseMatches.map((course) => (
+                <Command.Item key={course.id} className="palette-item" value={course.name} onSelect={() => run(() => onCourse(course.id))}>
+                  <span className="icon"><Library aria-hidden="true" /></span>
+                  <span className="palette-main"><Highlight text={courseTitle(course.id, course.name)} query={needle} /></span>
+                  <span className="palette-extra"><span className="faint">{course.resourceCount} files</span></span>
                 </Command.Item>
               ))}
             </Command.Group>
           )}
+
+          {noResults && (
+            <Command.Group className="palette-group">
+              {parsed.tokens.length > 0 && (
+                <Command.Item className="palette-item" value="Clear filters" onSelect={() => {
+                  setTokens([]);
+                  setDraft(parsed.freeText);
+                  inputRef.current?.focus();
+                }}>Clear filters</Command.Item>
+              )}
+              <Command.Item className="palette-item" value={`Search all files ${query.trim()}`} onSelect={() => run(() => onSeeAllFiles(parsed.freeText))}>
+                <span className="icon"><Search aria-hidden="true" /></span>
+                <span>Search all files</span>
+                <span className="palette-extra"><Kbd keys="Enter" /></span>
+              </Command.Item>
+            </Command.Group>
+          )}
+
+          {(actionMatches.length > 0 || (hasQuery && navItems.length > 0) || anyFileMatch) && (
+            <Command.Group className="palette-group">
+              <div className="palette-heading">Actions</div>
+              {hasQuery && navItems.map((item) => (
+                <Command.Item key={item.id} className="palette-item" onSelect={() => run(() => onView(item.id))}>
+                  <span className="icon">{VIEW_ICON[item.id]}</span>
+                  <span>{item.label}</span>
+                  <span className="palette-extra"><Kbd keys={`Mod+${NAV.findIndex((view) => view.id === item.id) + 1}`} /></span>
+                </Command.Item>
+              ))}
+              {actionMatches.map((action) => (
+                <Command.Item key={action.id} className="palette-item" onSelect={() => run(action.onSelect)}>
+                  {action.icon && <span className="icon">{action.icon}</span>}
+                  <span>{action.label}</span>
+                  {action.shortcut && <span className="palette-extra"><Kbd keys={action.shortcut} /></span>}
+                </Command.Item>
+              ))}
+              {anyFileMatch && (
+                <Command.Item className="palette-item" value={`See all results ${query.trim()}`} onSelect={() => run(viewAllFiles)}>
+                  <span className="icon"><Search aria-hidden="true" /></span>
+                  <span>See all results for “{query.trim()}”</span>
+                  <span className="palette-extra"><Kbd keys="Enter" /></span>
+                </Command.Item>
+              )}
+            </Command.Group>
+          )}
         </Command.List>
         <div className="palette-footer">
-          <span>File results use local titles, courses, and section names.</span>
-          <span>
-            <Kbd keys="Up" /> <Kbd keys="Down" /> to navigate
-          </span>
-          <span>
-            <Kbd keys="Enter" /> to select
-          </span>
-          <span>
-            <Kbd keys="Esc" /> to close
-          </span>
+          <span className="hint"><Kbd keys="↑↓" /> Navigate</span>
+          <span className="hint"><Kbd keys="Enter" /> Open</span>
+          {parsed.tokens.length > 0 && <span className="hint"><Kbd keys="Tab" /> Add filter</span>}
+          <span className="palette-footer-note">{parsed.tokens.length > 0 ? "Try course: type: is: due:" : "Pulse command"}</span>
         </div>
       </Command>
     </Dialog>

@@ -17,6 +17,7 @@ interface SelectProps {
   ariaLabel?: string;
   id?: string;
   className?: string;
+  disabled?: boolean;
 }
 
 /** A single-choice select. Option values must be non-empty strings. */
@@ -29,6 +30,7 @@ export function Select({
   ariaLabel,
   id,
   className,
+  disabled = false,
 }: SelectProps) {
   const autoId = useId();
   const fieldId = id ?? autoId;
@@ -40,7 +42,7 @@ export function Select({
           {label}
         </label>
       )}
-      <SelectPrimitive.Root value={value} onValueChange={onValueChange}>
+      <SelectPrimitive.Root value={value} onValueChange={onValueChange} disabled={disabled}>
         <SelectPrimitive.Trigger
           id={fieldId}
           className="select-trigger"

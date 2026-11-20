@@ -50,10 +50,15 @@ export function setupApp({ width = 1280, dark = false, platform = "Linux" } = {}
   Object.values(appApi).forEach((mock) => (mock as Mock).mockReset().mockResolvedValue(undefined));
   native.listeners.clear();
   localStorage.clear();
-  vi.stubGlobal("matchMedia", (query: string) => ({
-    matches: query.includes("prefers-color") ? dark : query.includes("959") && width <= 959,
-    media: query, addEventListener: () => {}, removeEventListener: () => {},
-  }));
+  vi.stubGlobal("matchMedia", (query: string) => {
+    const max = /max-width:\s*(\d+)px/.exec(query);
+    const min = /min-width:\s*(\d+)px/.exec(query);
+    return {
+      matches: query.includes("prefers-color") ? dark : Boolean(max || min) &&
+        (!max || width <= Number(max[1])) && (!min || width >= Number(min[1])),
+      media: query, addEventListener: () => {}, removeEventListener: () => {},
+    };
+  });
   vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
   appClipboard.writeText.mockReset().mockResolvedValue(undefined);
   vi.stubGlobal("navigator", new Proxy(navigator, {
@@ -66,14 +71,34 @@ export function setupApp({ width = 1280, dark = false, platform = "Linux" } = {}
   installBrowserMethod("hasPointerCapture", () => false);
   installBrowserMethod("releasePointerCapture", () => {});
   installBrowserMethod("setPointerCapture", () => {});
-  appApi.authStatus.mockResolvedValue({ authenticated: true, email: "student@example.test", fullName: "Student", method: "password", acquiredAt: null, sessionExpired: false });
+  appApi.authStatus.mockResolvedValue({ authenticated: true, attemptId: null, email: "student@example.test", fullName: "Student", method: "password", acquiredAt: null, sessionExpired: false });
   appApi.syncStatus.mockResolvedValue({ running: false, phase: "Idle", progress: 0, lastSuccessAt: null, nextScheduledAt: null, unreadNew: 1, lastError: null, authState: "connected" });
   appApi.getSettings.mockResolvedValue(settings);
   appApi.listCourses.mockResolvedValue([course]);
   appApi.listResources.mockResolvedValue([resource()]);
   appApi.listDashboardResources.mockResolvedValue([resource()]);
   appApi.listDashboardEvents.mockResolvedValue([change()]);
+  appApi.queryInbox.mockImplementation(async (filter = {}) => {
+    const events = await appApi.listDashboardEvents();
+    const byKey = new Map<string, typeof events>();
+    for (const event of events) {
+      const key = event.resourceId == null ? `event:${event.id}` : `resource:${event.resourceId}`;
+      byKey.set(key, [...(byKey.get(key) ?? []), event]);
+    }
+    const items = [...byKey].map(([key, group]) => ({ key, resourceId: group[0].resourceId, courseId: group[0].courseId, latestEvent: group[0], eventIds: group.map(e => e.id), changeTypes: [...new Set(group.map(e => e.changeType))], unread: group.some(e => !e.read) })).filter(item =>
+      (!filter.courseId || item.courseId === filter.courseId) && (!filter.changeType || item.changeTypes.includes(filter.changeType)) && (filter.attention !== 'unread' || item.unread) && (!filter.search || `${item.latestEvent.resourceTitle} ${item.latestEvent.title} ${item.latestEvent.courseName}`.toLowerCase().includes(filter.search.toLowerCase())));
+    const courseCounts = [...new Set(items.map(item => item.courseId))].map(courseId => ({ courseId, total: items.filter(item => item.courseId === courseId).length, unreadTotal: items.filter(item => item.courseId === courseId && item.unread).length }));
+    return { items: items.slice(filter.offset ?? 0, (filter.offset ?? 0) + (filter.limit ?? 100)), total: items.length, unreadTotal: items.filter(item => item.unread).length, courseCounts };
+  });
+  appApi.snapshotResourceUnreadEventIds.mockImplementation(async (id) =>
+    (await appApi.listDashboardEvents()).filter(event => event.resourceId === id && !event.read).map(event => event.id));
+  appApi.snapshotInboxEventIds.mockImplementation(async filter => (await appApi.queryInbox(filter)).items.flatMap(item => item.eventIds));
+  appApi.queryDueResources.mockResolvedValue({ items: [], total: 0 });
   appApi.listHistoryEvents.mockResolvedValue([change()]);
+  appApi.queryHistoryEvents.mockImplementation(async ({ offset, limit }) => {
+    const events = await appApi.listHistoryEvents();
+    return { items: events.slice(offset, offset + limit), total: events.length };
+  });
   appApi.listHistoryScans.mockResolvedValue([]);
   appApi.unreadCount.mockResolvedValue(1);
   appApi.dbInfo.mockResolvedValue({ path: "/local/pulse.db", sizeBytes: 0, courseCount: 1, resourceCount: 1, eventCount: 1, logDir: null });

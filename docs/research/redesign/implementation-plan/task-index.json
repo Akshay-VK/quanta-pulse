@@ -1,0 +1,974 @@
+[
+  {
+    "id": "00",
+    "title": "Freeze design decisions and contracts",
+    "deps": "none",
+    "spec": "0\u20137",
+    "files": [
+      "src/App.tsx",
+      "src/lib/appearance.ts",
+      "src/lib/types.ts",
+      "src/lib/api.ts",
+      "src-tauri/src/commands.rs"
+    ],
+    "tests": [
+      "tests/appAttention.test.tsx",
+      "tests/appearanceContrast.test.ts"
+    ],
+    "accept": "Resolve every row in decisions.md; record exact affected tests, wire types and ownership before dispatching dependent work. Produce a contract excerpt per consumer, with no production edits."
+  },
+  {
+    "id": "01",
+    "title": "Tokens and appearance persistence",
+    "deps": "00",
+    "spec": "1, 2, 6",
+    "files": [
+      "src/styles/tokens.css",
+      "src/styles/base.css",
+      "src/lib/appearance.ts",
+      "src/hooks/useTheme.ts"
+    ],
+    "tests": [
+      "tests/appearance.test.ts",
+      "tests/appearanceContrast.test.ts",
+      "tests/appAppearance.test.tsx"
+    ],
+    "accept": "Implement dark/light reference tokens, Geist roles, radii, 4px spacing and 36/30 material density. Startup and live appearance use the same resolver. Preserve existing stored preferences through the decision in D03. Selection background stays neutral. Validate readable text for every retained palette/accent. Add the specified monospace preference with safe old/future-record handling."
+  },
+  {
+    "id": "02",
+    "title": "Shared controls and overlays (umbrella)",
+    "deps": "02B",
+    "spec": "3, 4, 6",
+    "files": [],
+    "tests": [],
+    "accept": "Umbrella acceptance is complete only after native child tasks 02A (shared controls) and 02B (overlays) are accepted and integrated. Downstream task dependencies remain on 02."
+  },
+  {
+    "id": "02A",
+    "title": "Shared controls",
+    "deps": "01",
+    "spec": "3, 6 (focus)",
+    "files": [
+      "src/components/ui/Button.tsx",
+      "src/components/ui/IconButton.tsx",
+      "src/components/ui/TextField.tsx",
+      "src/components/ui/PasswordField.tsx",
+      "src/components/ui/SearchField.tsx",
+      "src/components/ui/TimeField.tsx",
+      "src/components/ui/Switch.tsx",
+      "src/components/ui/Checkbox.tsx",
+      "src/components/ui/Select.tsx",
+      "src/components/ui/ToggleGroup.tsx",
+      "src/components/ui/Tabs.tsx",
+      "src/components/ui/Kbd.tsx",
+      "src/components/ui/StatusTag.tsx",
+      "src/components/ui/CoursePill.tsx",
+      "src/styles/components/ui.css",
+      "tests/redesignControls.test.tsx"
+    ],
+    "tests": [
+      "tests/redesignControls.test.tsx"
+    ],
+    "accept": "Restyle only Button, IconButton, TextField, PasswordField, SearchField, TimeField, Switch, Checkbox, Select, ToggleGroup, Tabs, Kbd, StatusTag and CoursePill plus their exact ui.css selectors. Preserve public props and presentational Radix behavior. Buttons 28px, inputs 32px, switches 32\u00d718, checkboxes 16px, keycaps 18px, tags/course pills 20px. Apply semantic/size/radius tokens, readable text, disabled/loading/mixed/error/keyboard states and 2px focus outline with 2px offset (inputs also retain 3px accent-soft ring). Course dot rendering may consume --course-1/2/3 tokens; do not change persisted color assignment. Add meaningful interaction/ARIA regressions. No overlays, app shell, views, global hotkeys or overlays.css."
+  },
+  {
+    "id": "02B",
+    "title": "Shared overlays",
+    "deps": "02A",
+    "spec": "3, 4, 6 (focus)",
+    "files": [
+      "src/components/ui/Menu.tsx",
+      "src/components/ui/Popover.tsx",
+      "src/components/ui/Tooltip.tsx",
+      "src/components/ui/Dialog.tsx",
+      "src/components/ui/Toast.tsx",
+      "src/components/ConfirmDialog.tsx",
+      "src/styles/components/overlays.css"
+    ],
+    "tests": [
+      "tests/redesignOverlays.test.tsx"
+    ],
+    "accept": "After 02A acceptance, own overlay primitives and overlays.css only. Implement menu/popover/dialog/toast sizing, focus behavior, timing, keyboard/ARIA states and reduced motion from task 02. Do not change shell, views, global hotkeys or shared control ownership without an explicit serialized handoff."
+  },
+  {
+    "id": "03",
+    "title": "Workspace shell and layout",
+    "deps": "01,02",
+    "spec": "2, 4, 6",
+    "files": [
+      "src/components/Sidebar.tsx",
+      "src/components/TopBar.tsx",
+      "src/components/PageHeader.tsx",
+      "src/styles/layout.css",
+      "src/styles/components/shell.css",
+      "src/lib/nav.ts"
+    ],
+    "tests": [
+      "tests/navigation.test.tsx",
+      "tests/appInteractions.test.tsx"
+    ],
+    "accept": "Build 224px sidebar/48px rail, 8px inset main panel, 44px header, 40px toolbar and 30px status bar. Keep existing route IDs compatible while labels become Inbox/Calendar/Library/History. Establish slots for status, due banner, content and shared inspector. Below 960px use accessible trapped drawer; preserve native titlebar hit regions. Export exact slot/prop contract to integrator."
+  },
+  {
+    "id": "04",
+    "title": "Material rows and list keyboard policy (umbrella)",
+    "deps": "04C",
+    "spec": "3, 4, 6",
+    "files": [],
+    "tests": [],
+    "accept": "Complete only after 04A visual geometry, 04B pure policy, and 04C serialized list wiring are accepted. Preserve all original task 04 behavior and all screen ownership rows. I01 later adds read-on-inspect; it is not a prerequisite for 04C."
+  },
+  {
+    "id": "04A",
+    "title": "Material row and table visual foundation",
+    "deps": "02,03",
+    "spec": "3, 6",
+    "files": [
+      "src/components/ResourceRow.tsx",
+      "src/components/DataTable.tsx",
+      "src/components/GroupHeader.tsx",
+      "src/styles/components/content.css"
+    ],
+    "tests": [
+      "tests/resourceRowDensity.test.tsx"
+    ],
+    "accept": "36/30px material rows, 34px table rows including virtualizer estimate, 28px headers, slot order, valid action siblings; rendered dimensions and overflow. No keyboard ownership changes."
+  },
+  {
+    "id": "04B",
+    "title": "Pure list keyboard and focus policy",
+    "deps": "04A",
+    "spec": "4, 6",
+    "files": [
+      "src/lib/listNavigation.ts"
+    ],
+    "tests": [
+      "tests/listNavigation.test.ts"
+    ],
+    "accept": "Pure focus navigation, distinct action intents, immutable captured scope, editable/inactive suppression, boundary and filtering restoration policy. No App/view wiring. Handoff concrete inputs and outputs for 04C."
+  },
+  {
+    "id": "04C",
+    "title": "Serialized list keyboard and collapse integration",
+    "deps": "04C0,04C1,04C2,04C3,04C4,04C5,04C6,04C7,04C8",
+    "spec": "3, 4, 6",
+    "files": [
+      "src/App.tsx",
+      "src/hooks/useHotkey.ts",
+      "src/components/ResourceRow.tsx",
+      "src/components/DataTable.tsx",
+      "src/components/GroupHeader.tsx",
+      "src/views/TodayView.tsx",
+      "src/views/CalendarView.tsx",
+      "src/views/library/CoursePage.tsx",
+      "src/views/HistoryView.tsx"
+    ],
+    "tests": [
+      "tests/appKeyboardInteractions.test.tsx",
+      "tests/appInteractions.test.tsx"
+    ],
+    "accept": "Coordinator dispatches surface-sized child leases after policy acceptance. Wire existing App-owned intents without read-on-inspect change until I01. Prove focus distinct from inspected and multi-selected state, all task04 keys, captured scope, section/time collapse, virtualization/filter/overlay restoration, and editable/modal suppression. Do not accept umbrella before wiring passes. Inbox child 04C1 alone is insufficient: Agenda, Library/Course, History and collapse/focus requirements remain explicit pending surface dispatches."
+  },
+  {
+    "id": "04C0",
+    "title": "Complete resource event snapshot API",
+    "deps": "B05A,B07B",
+    "spec": "4, 7",
+    "files": [
+      "src-tauri/src/attention.rs",
+      "src-tauri/src/attention_tests.rs",
+      "src-tauri/src/commands.rs",
+      "src-tauri/src/lib.rs",
+      "src/lib/api.ts",
+      "tests/resourceEventSnapshot-api.test.ts",
+      "docs/research/redesign/implementation-plan/tasks/04C0.md",
+      "docs/research/redesign/implementation-plan/task-index.json",
+      "docs/research/redesign/implementation-plan/README.md",
+      "docs/research/redesign/implementation-plan/contracts/04C0-handoff.md"
+    ],
+    "tests": [
+      "tests/resourceEventSnapshot-api.test.ts",
+      "focused Rust attention tests"
+    ],
+    "accept": "Expose api.snapshotResourceEventIds(resourceIds: number[]): Promise<number[]> through snapshot_resource_event_ids with camelCase resourceIds. Return complete stable ascending unique eligible event IDs for exactly the selected resources, including read and unread events while excluding baseline and calendar-suppressed events; ignore History clear watermark and Inbox dismissal. Reject nonpositive resource IDs; duplicates are harmless; empty selection returns empty. Handle selections beyond SQLite bind limits without caps. Membership is frozen at query time and does not mutate state. Preserve snapshotResourceUnreadEventIds unchanged. Prove >1,000 resources, >legacy caps, eligibility, isolation, validation, ordering and unchanged DB/read state. No UI integration."
+  },
+  {
+    "id": "04C1",
+    "title": "Inbox keyboard integration",
+    "deps": "04B,B05A",
+    "spec": "4, 6",
+    "files": [
+      "src/views/InboxView.tsx",
+      "src/components/ResourceRow.tsx",
+      "src/styles/components/content.css"
+    ],
+    "tests": [
+      "tests/appInboxKeyboard.test.tsx"
+    ],
+    "accept": "Scope keyboard intents to Inbox, preserve sole App details/material owner, complete captured group/bulk actions, independent focus/multi-selection, accessible native controls and stable restoration. No read-on-inspect change until I01. Other 04C surfaces remain pending."
+  },
+  {
+    "id": "04C2",
+    "title": "Agenda keyboard integration",
+    "deps": "04B,04C0,04C1",
+    "spec": "4, 6",
+    "files": [
+      "src/views/AgendaView.tsx",
+      "tests/appAgendaKeyboard.test.tsx"
+    ],
+    "tests": [
+      "tests/appAgendaKeyboard.test.tsx"
+    ],
+    "accept": "Scope keyboard intents to Agenda and keep focus, existing DetailsAdapter inspection, and local multi-selection independent. Use stable external resource IDs and complete resource event snapshots for captured read/unread/dismiss actions, including the full filtered due inventory for Shift+A. Dismiss only Inbox events, preserve due records and History/files, and exclude later arrivals. Guard nested controls/editables/IME/repeats/modifiers/modals/inactive surfaces; preview through the existing material action context. Restore identity focus after settled list changes and overlays. Preserve date rendering and past collapse. Tests use real App fixtures. This child does not accept 04C/task 04."
+  },
+  {
+    "id": "04C3",
+    "title": "Library All files keyboard integration",
+    "deps": "04B,04C0,04C2",
+    "spec": "4, 5.4 (All files/search/inspector), 6, 7",
+    "files": [
+      "src/views/library/AllFiles.tsx",
+      "tests/appLibraryKeyboard.test.tsx"
+    ],
+    "tests": [
+      "tests/appLibraryKeyboard.test.tsx"
+    ],
+    "accept": "After coordinator adapter integration, wire only Library All files through accepted keyboard policy, complete App-published paged inventory and authoritative captured resource event IDs. Keep focus/inspection/multi-selection distinct; E/U mutate captured events, Delete dismisses Inbox only, Shift+A confirms complete filtered scope beyond virtualization. Preserve existing search/filter/sort, guard nested/editable/modal/inactive targets, reject stale and duplicate actions, await App refresh and restore virtual/filter/overlay identity focus. Exact coordinator App/LibraryView/DataTable/CSS seams are in contracts/04C3-preflight.md. Real-App tests, frontend gates and two rendered states required. CoursePage, History and collapse remain separate; this child does not accept 04C/04 or change screen owners."
+  },
+  {
+    "id": "05",
+    "title": "Inspector variants",
+    "deps": "02,04,B02",
+    "spec": "3, 5.6",
+    "files": [
+      "src/components/PeekPanel.tsx",
+      "src/components/PropertyList.tsx",
+      "src/components/MaterialButtons.tsx",
+      "src/lib/details.ts",
+      "src/lib/materialActions.ts"
+    ],
+    "tests": [
+      "tests/peekPanel.test.tsx",
+      "tests/details.test.ts",
+      "tests/materialActions.test.ts"
+    ],
+    "accept": "One 340px inspector renders saved, unsaved, downloading, failed, source unavailable, external/announcement, historical orphan, deadline and expanded technical states. Use real progress/cancel contract. Distinguish source from saved destinations; verify disk before local open. Include first 12 SHA characters/copy, path and URL when available. Due has original value, timezone, countdown and submission disclaimer; absent metadata stays absent. Inspector emits intent through existing action/selection adapters."
+  },
+  {
+    "id": "06",
+    "title": "Inbox states and scoped actions",
+    "deps": "04,05",
+    "spec": "5.2, 7",
+    "files": [
+      "src/views/InboxView.tsx",
+      "src/hooks/useAttention.ts"
+    ],
+    "tests": [
+      "tests/appAttention.test.tsx",
+      "tests/appTodayStates.test.tsx",
+      "tests/attention-api.test.ts"
+    ],
+    "accept": "Implement all ten Inbox references. Retain independent list/count request generations and complete inventories. List refresh failure retains rows with stale warning; count-only failure shows en dash in counts while list stays current. Order toolbar \u2192 status \u2192 due banner \u2192 groups/rows \u2192 status bar. Capture bulk/dismiss IDs at dialog opening and show exact scope; newer arrivals remain untouched. Undo restores captured prior states only. Opening-to-read wiring belongs to I01, not a second mutation in this view."
+  },
+  {
+    "id": "07",
+    "title": "Calendar agenda",
+    "deps": "04,05",
+    "spec": "5.3",
+    "files": [
+      "src/views/CalendarView.tsx",
+      "src/views/AgendaView.tsx",
+      "src/lib/agenda.ts"
+    ],
+    "tests": [
+      "tests/agenda.test.ts",
+      "tests/appCalendarInteractions.test.tsx"
+    ],
+    "accept": "Keep Calendar tabs as wrapper and App/useDueInventory as data owner. Add week strip, T jump, Today/Tomorrow/This week/Later and collapsed Past dates. Use real due inventory, date-only/timezone truth and paused-course resume. Implement empty, filtered, refresh-failed and deadline-inspected states. Today is neutral circle; due-under-24h uses warning shape/label; status bar says submission status is not tracked. Preserve retained-data timestamp and stale indicator."
+  },
+  {
+    "id": "08",
+    "title": "Activity calendar and day inspection",
+    "deps": "04,05",
+    "spec": "5.3",
+    "files": [
+      "src/views/ActivityCalendar.tsx",
+      "src/lib/events.ts"
+    ],
+    "tests": [
+      "tests/calendar.test.tsx",
+      "tests/calendarKeyboard.test.tsx",
+      "tests/events.test.ts"
+    ],
+    "accept": "Render neutral detected-change month grid with 96px day cells, up to three pills, outside-month opacity and selected-day panel. Keep independent month/day requests and stale response guards. Inspect event replaces day panel with historical inspector and can return to selected day. Calendar keyboard dates, local-day grouping, resource/event identity and focus survive navigation. Never render detection dates as deadlines."
+  },
+  {
+    "id": "09",
+    "title": "Library course inventory and all files",
+    "deps": "04,05",
+    "spec": "5.4",
+    "files": [
+      "src/views/LibraryView.tsx",
+      "src/views/library/CourseList.tsx",
+      "src/views/library/AllFiles.tsx",
+      "src/lib/courseLibrary.ts",
+      "src/lib/filter.ts"
+    ],
+    "tests": [
+      "tests/appLibraryInteractions.test.tsx",
+      "tests/courseLibrary.test.ts",
+      "tests/courseLibraryView.test.tsx",
+      "tests/filter.test.ts"
+    ],
+    "accept": "Implement Courses/All files, attention group for paused/error, 48px course rows, sortable table and Type/Course/Saved chips. Search highlights literal matches safely and includes original path. Maintain complete results, stable sorting, virtualization and saved/source independence. Persist existing per-session queries/scroll and palette search request keys. Inspector/table states share policy. Define course-page props for task 10 without rewriting that page."
+  },
+  {
+    "id": "10",
+    "title": "Course page, folders and course actions",
+    "deps": "04,05,B01,B06,09",
+    "spec": "5.4",
+    "files": [
+      "src/views/library/CoursePage.tsx",
+      "src/views/library/TreeRow.tsx",
+      "src/views/library/courseUrl.ts",
+      "src/lib/courseTree.ts",
+      "src/lib/courseName.ts"
+    ],
+    "tests": [
+      "tests/courses.test.tsx",
+      "tests/courseTree.test.ts",
+      "tests/treeKeyboard.test.tsx",
+      "tests/courseName.test.ts"
+    ],
+    "accept": "Implement Materials/Activity, 26px tree rows/16px nesting, path breadcrumb, tooltip overflow and flat search with original paths. Implement rename, pause/resume, explicit source open and captured-course baseline reset dialog. Rename persists locally and survives scrape refresh. Reset preserves history/files and next scan emits no baseline flood. Separate no-material/no-match/loading-failure states, retain known rows after failure. Reuse History-style event rendering without owning global History requests."
+  },
+  {
+    "id": "11",
+    "title": "Palette, search syntax and shortcut help",
+    "deps": "03,04,09",
+    "spec": "4, 5.9",
+    "files": [
+      "src/components/CommandPalette.tsx",
+      "src/lib/filter.ts",
+      "src/lib/nav.ts",
+      "new src/lib/paletteQuery.ts"
+    ],
+    "tests": [
+      "tests/appKeyboardInteractions.test.tsx",
+      "tests/filter.test.ts",
+      "new tests/paletteQuery.test.ts"
+    ],
+    "accept": "Use cmdk 640px palette at top 96px; Files/Courses/Actions groups; default/results/empty; final See all results action. Parse course:, type:, is:, due: against documented grammar and complete inventories; disclose unknown/invalid token handling in tests. Safe text highlighting, no HTML injection. Cmd/Ctrl+K, G then I/C/L/H, slash and question-mark help respect current input/overlay scope. Preserve guarded Settings navigation and repeat searches."
+  },
+  {
+    "id": "12",
+    "title": "Quick Look viewer",
+    "deps": "02,04,05",
+    "spec": "5.5",
+    "files": [
+      "src/components/PreviewDialog.tsx",
+      "src/lib/preview.ts",
+      "src/styles/components/overlays.css",
+      "package.json only if D06 authorizes dependency"
+    ],
+    "tests": [
+      "tests/previewDialog.test.tsx",
+      "tests/preview.test.ts",
+      "new tests/quickLook.test.tsx"
+    ],
+    "accept": "Implement 980\u00d7712 clamped shell, PDF thumbnails/search N/P, image fit/zoom, 640px text reading column, audio/video controls, loading, unsupported, oversized, network/auth retry/reconnect. Keep authenticated backend fetching, content size limits, safe text, object-URL cleanup and stale request guards. Saved-copy/reveal actions use shared material policy. Repeated Space/Escape closes and restores focus. Complete actual PDF functions per D06 rather than decorative controls."
+  },
+  {
+    "id": "13",
+    "title": "Settings appearance and single-page structure",
+    "deps": "01,02",
+    "spec": "5.8",
+    "files": [
+      "src/views/SettingsView.tsx",
+      "src/components/Appearance.tsx",
+      "src/components/SettingRow.tsx",
+      "src/styles/components/appearance.css",
+      "src/styles/components/screens.css"
+    ],
+    "tests": [
+      "tests/settingsLayout.test.tsx",
+      "tests/appAppearance.test.tsx",
+      "tests/settingsDraft.test.ts"
+    ],
+    "accept": "One scrolling Settings page, 216px sticky section nav, 640px column, seven named sections. Appearance has theme tiles, palette, 24px accent radios, density, monospace, reset. Preserve one shared immediate appearance owner and existing draft boundaries per D03; no second form state. Section anchors work with scroll and narrow select. First finish this structural task before task 14 writes SettingsView."
+  },
+  {
+    "id": "14",
+    "title": "Settings draft, save and leave lifecycle",
+    "deps": "13",
+    "spec": "5.8",
+    "files": [
+      "src/views/SettingsView.tsx",
+      "src/lib/settingsDraft.ts"
+    ],
+    "tests": [
+      "tests/settingsDraft.test.ts",
+      "tests/appSettingsInteractions.test.tsx"
+    ],
+    "accept": "Implement sticky 48px unsaved/saving/failed save bar, duplicate-save protection, preserved failed drafts and leave-without-saving dialog. Keep Appearance immediate/local and other Settings drafts transactional. Stay is focused; Discard discards captured draft only. Existing registered navigation controller remains the integration seam. Test replacement navigation intents, slow saves and failed retries; coordinator alone wires App. Other controls and updater are separate packets."
+  },
+  {
+    "id": "15",
+    "title": "History activity, scans and diagnostics",
+    "deps": "04,05,B04,B05",
+    "spec": "5.7",
+    "files": [
+      "src/views/HistoryView.tsx",
+      "src/lib/historyActions.ts if introduced",
+      "src/lib/details.ts scan presentation only"
+    ],
+    "tests": [
+      "tests/appHistoryInteractions.test.tsx",
+      "tests/historyActions.test.tsx",
+      "tests/clearActivity.test.tsx",
+      "tests/details.test.ts"
+    ],
+    "accept": "Activity/Scans tabs, day groups, Type/Course/Date range/search, scan summary columns with real duration/result/counts. Scan inspector consumes persisted per-course diagnostics, retry and redacted diagnostics copy. Old scans without details explicitly say unavailable. Delete freezes and displays event/scan scope, preserves files/baselines, explains irreversibility. Empty state matches export. Share historical rendering with course activity through a small explicit interface."
+  },
+  {
+    "id": "16",
+    "title": "Sign-in and first-run baseline",
+    "deps": "01,02,03,B08",
+    "spec": "5.1, 7",
+    "files": [
+      "src/components/LoginScreen.tsx",
+      "src/components/SyncProgress.tsx"
+    ],
+    "tests": [
+      "tests/todayBaseline.test.tsx",
+      "tests/sessionRefresh.test.tsx",
+      "new tests/onboarding.test.tsx"
+    ],
+    "accept": "Implement all five Auth card states: sign-in, inline failure, pending SSO with reopen/cancel, first scan four-step progress/background, baseline completion stats and destinations. Use real auth/scan outcomes; baseline new=0 and exact baseline explanation. Preserve password redaction and SSO lifecycle. Background button means continue process, not fake completion. Native cancellation/reopen capability must be verified in 00 and implemented as a separate prerequisite if missing."
+  },
+  {
+    "id": "17",
+    "title": "Global session recovery and downloads",
+    "deps": "02,03,B02,B08,14B",
+    "spec": "5.9",
+    "files": [
+      "src/components/SessionRefreshBanner.tsx",
+      "src/components/DownloadsPopover.tsx",
+      "src/components/SyncStatus.tsx",
+      "src/components/SyncButton.tsx"
+    ],
+    "tests": [
+      "tests/sessionRefresh.test.tsx",
+      "tests/mirrorUi.test.tsx",
+      "tests/appMaterialActions.test.tsx"
+    ],
+    "accept": "Implement expired/reconnecting/succeeded/failed-or-cancelled recovery with real retry/cancel, success timeout 4s and red sidebar status. Downloads shows badge, real per-file progress, failed retry and Open folder. Toast success/error/Undo uses shared primitive. Banner placement follows D02 and session state remains available on all views. Report only actual outcomes; no secrets in diagnostics or toast text."
+  },
+  {
+    "id": "I01",
+    "title": "Integrate App intents and read-on-inspect",
+    "deps": "03,04,05,06,07,08,09,10,11,12,14C,15,16,17",
+    "spec": "4, 7",
+    "files": [
+      "src/App.tsx",
+      "src/hooks/useMaterialActions.tsx",
+      "src/hooks/useAttention.ts adapter only",
+      "src/main.tsx import wiring only"
+    ],
+    "tests": [
+      "tests/appAttention.test.tsx",
+      "tests/appIntegratedMaterial.test.tsx",
+      "tests/appCalendarInteractions.test.tsx",
+      "tests/appMaterialActions.test.tsx",
+      "tests/appSettingsInteractions.test.tsx"
+    ],
+    "accept": "Sole App owner wires accepted prop contracts; preserve one route, selection, material executor and Settings navigation guard. Enter/click inspect marks captured unread event IDs read optimistically with rollback; J/K focus, X and preview alone do not. Define resource-to-event mapping for Library/Agenda from complete data, never first-page IDs. Update prior no-mark-on-inspect assertions intentionally while preserving source/local independence and race regressions. Route every navigation including palette, course, About and onboarding through dirty guard."
+  },
+  {
+    "id": "18",
+    "title": "Responsive, zoom and accessibility closure",
+    "deps": "I01",
+    "spec": "6",
+    "files": [
+      "src/styles/layout.css",
+      "src/styles/components/ responsive rules",
+      "src/hooks/useMediaQuery.ts",
+      "src/App.tsx only serialized integrator patch"
+    ],
+    "tests": [
+      "tests/axeViews.test.tsx",
+      "tests/navigation.test.tsx",
+      "tests/resourceRowDensity.test.tsx",
+      "tests/appearanceContrast.test.ts"
+    ],
+    "accept": "Below 1100px inspector is 320px trapped overlay; below 960px rail/drawer/search icon, table columns Section then Detected, row Section then time, Settings nav select. At 200%/720\u00d7480 reflow one column, wrap header, local filter scrolling, dialog width minus 16px, no page overflow. Check all focus references, reduced motion, forced colors, pointer-coarse access, long names, large inventories and light/dark. Fix at responsible component, never hide essential actions."
+  },
+  {
+    "id": "19",
+    "title": "Final acceptance and native handoff",
+    "deps": "18",
+    "spec": "0\u20137",
+    "files": [
+      "tests/",
+      "docs/acceptance/ new dated evidence only"
+    ],
+    "tests": [
+      "all frontend and relevant Rust tests"
+    ],
+    "accept": "Every screen in screen-coverage.md has an implemented state, deterministic scenario and evidence or an explicit unaccepted blocker. Prove spec-only requirements in the coverage checklist. Run lint, test, build; Rust check/test if backend changed. Review behavior and visual fidelity independently. Native dev smoke covers Windows WebView2/macOS WKWebView where available, auth/baseline/reconnect/file open/PDF/media/OS theme; record unavailable environments honestly. No packaged app in dev; no claim of successful signed update without evidence."
+  },
+  {
+    "id": "B01",
+    "title": "Durable course rename",
+    "deps": "00",
+    "spec": "5.4",
+    "files": [
+      "src-tauri/src/db.rs",
+      "migrations/ additive migration",
+      "src-tauri/src/commands.rs",
+      "src-tauri/src/lib.rs",
+      "src/lib/api.ts",
+      "src/lib/types.ts",
+      "src/lib/courseName.ts"
+    ],
+    "tests": [
+      "new tests/courseRename-api.test.ts",
+      "focused Rust database tests"
+    ],
+    "accept": "Add a local display-name override keyed by stable course identity, with explicit reset semantics. Discovery never overwrites it. Preserve original name/code for Quanta identity and diagnostics. Register command plus sole API wrapper, camelCase types, transactional durable storage and old-database migration. Test restart, scrape refresh, Unicode, empty/invalid input and original identity preservation. Coordinate file locks with every other B task."
+  },
+  {
+    "id": "B02",
+    "title": "Truthful per-file download lifecycle",
+    "deps": "00",
+    "spec": "3, 5.6, 5.8, 5.9",
+    "files": [
+      "src-tauri/src/core/mirror.rs",
+      "src-tauri/src/models.rs",
+      "src-tauri/src/commands.rs",
+      "src-tauri/src/lib.rs",
+      "src/hooks/useMirror.tsx",
+      "src/lib/api.ts",
+      "src/lib/types.ts"
+    ],
+    "tests": [
+      "tests/mirrorUi.test.tsx",
+      "tests/materialActions.test.ts",
+      "focused Rust mirror tests"
+    ],
+    "accept": "Define bytes transferred/total optional, queued/downloading/failed/cancelled/saved states and per-resource cancellation/retry. Unknown total is indeterminate, never guessed percent. Emit progress to shared mirror owner; cancellation cleans partial work without deleting valid saved copy. Handle concurrent auto-download/ensure-local, repeated cancel, resource change, failed retry and late events. Verify disk truth remains authoritative. Publish exact stable DTO/event excerpt for 05/14/17."
+  },
+  {
+    "id": "B03",
+    "title": "Monitoring interval policy and validation",
+    "deps": "00",
+    "spec": "5.8",
+    "files": [
+      "src-tauri/src/settings.rs",
+      "src/lib/settingsDraft.ts"
+    ],
+    "tests": [
+      "tests/settingsDraft.test.ts",
+      "tests/appSettingsInteractions.test.tsx",
+      "focused Rust settings/notification tests"
+    ],
+    "accept": "Implement the D04 approved interval policy consistently in frontend validation, Rust sanitization/defaults and scheduling. Test persisted old values, all offered values and invalid input. Either support 5/10/15/30/60 as approved or record an explicitly accepted spec amendment to 15/30/60; UI must never silently clamp a chosen option. Reuse existing settings transport."
+  },
+  {
+    "id": "B04",
+    "title": "Persisted scan course diagnostics (umbrella)",
+    "deps": "B04A,B04B",
+    "spec": "5.7",
+    "files": [],
+    "tests": [],
+    "accept": "Umbrella acceptance requires native children B04A (storage/query) and B04B (engine observation/proof) accepted and integrated. Downstream task 15 continues to depend on B04."
+  },
+  {
+    "id": "B04A",
+    "title": "Scan diagnostics storage and query",
+    "deps": "00",
+    "spec": "5.7",
+    "files": [
+      "src-tauri/src/db.rs",
+      "src-tauri/migrations/0007_scan_details.sql",
+      "src-tauri/src/models.rs",
+      "src-tauri/src/commands.rs",
+      "src-tauri/src/lib.rs",
+      "src/lib/api.ts",
+      "src/lib/types.ts"
+    ],
+    "tests": [
+      "focused Rust database tests",
+      "new tests/scanDetails-api.test.ts"
+    ],
+    "accept": "Add additive populated-database-safe storage/query for exact camelCase ScanDetails DTO and api.scanDetails(scanId): Promise<ScanDetails|null>. Legacy details remain null. Provide atomic observed-terminal write helper for B04B; clean on history deletion. Sanitize before persistence and query. Cover migration, reopen, nested serialization, partial/fail/cancel, deletion cleanup, and stored/DTO secret absence. No engine instrumentation."
+  },
+  {
+    "id": "B04B",
+    "title": "Scan engine observation and persistence proof",
+    "deps": "B04A",
+    "spec": "5.7",
+    "files": [
+      "src-tauri/src/sync/engine.rs"
+    ],
+    "tests": [
+      "focused Rust scan/engine tests"
+    ],
+    "accept": "Observe and persist actual per-course terminal outcomes, timestamps and steps for future scans, including partial/failure/cancellation. Preserve baseline silence; never infer historic or per-course values from aggregate counts. Use B04A storage seam and test all outcomes plus persistence. No schema/API changes."
+  },
+  {
+    "id": "B05",
+    "title": "Complete History queries and authoritative deletion scope",
+    "deps": "B05A,B05B",
+    "spec": "5, 7",
+    "files": [],
+    "tests": [],
+    "accept": "Umbrella acceptance requires sequential native children B05A (complete History reads and resource unread snapshot) and B05B (frozen deletion scope) accepted and integrated. Task 15 remains directly dependent on B05; I01 continues to consume the contract through its existing task dependencies."
+  },
+  {
+    "id": "B05A",
+    "title": "Complete History queries and resource unread snapshot",
+    "deps": "00",
+    "spec": "5.7, 7",
+    "files": [
+      "src-tauri/src/db.rs",
+      "src-tauri/src/attention.rs",
+      "src-tauri/src/models.rs",
+      "src-tauri/src/commands.rs",
+      "src-tauri/src/lib.rs",
+      "src/lib/api.ts",
+      "src/lib/types.ts"
+    ],
+    "tests": [
+      "tests/historyQueries-api.test.ts",
+      "focused Rust database/attention tests"
+    ],
+    "accept": "Add filtered/paginated History events and scans with complete totals, explicit offset/limit, deterministic tie ordering, clear-watermark and calendar-suppression semantics, retaining legacy wrappers. Add an independent complete resource unread event-ID snapshot that excludes baseline/calendar-suppressed rows but ignores Inbox dismissal and the History clear watermark. Define exact camelCase DTO/API types and cover records beyond legacy caps, ties, filters, pagination, totals, unread/read state, suppression, dismissal, watermarks and resource isolation. No deletion mutation or UI changes."
+  },
+  {
+    "id": "B05B",
+    "title": "Freeze and apply History deletion scope",
+    "deps": "B05A",
+    "spec": "5.7, 7",
+    "files": [
+      "src-tauri/src/attention.rs",
+      "src-tauri/src/db.rs",
+      "src-tauri/src/commands.rs",
+      "src-tauri/src/lib.rs",
+      "src/lib/api.ts",
+      "src/lib/types.ts"
+    ],
+    "tests": [
+      "tests/appHistoryInteractions.test.tsx",
+      "tests/attention-api.test.ts",
+      "focused Rust database/attention tests"
+    ],
+    "accept": "After B05A, capture exact event/scan deletion IDs or a local snapshot token and return authoritative counts. Delete only that scope transactionally; changed scope requires renewed confirmation and later arrivals survive. Preserve resources, saved files, baselines and unrelated markers. Test rollback and preserved data. No UI changes."
+  },
+  {
+    "id": "B06",
+    "title": "Baseline reset survives partial scans",
+    "deps": "00",
+    "spec": "5, 7",
+    "files": [
+      "src-tauri/src/sync/engine.rs",
+      "src-tauri/src/db.rs"
+    ],
+    "tests": [
+      "focused Rust scan/baseline tests"
+    ],
+    "accept": "Keep reset markers for failed or unvisited courses until that course completes its baseline successfully. Cover cancelled scan, partial course failure, next successful retry, per-course vs all-course reset, and restart persistence. Existing resources in the recovered baseline produce zero new events; history and saved files remain intact. Limit fix to marker lifecycle."
+  },
+  {
+    "id": "B07",
+    "title": "Saved-file deletion reports partial failure",
+    "deps": "B07B",
+    "spec": "5, 7",
+    "files": [],
+    "tests": [],
+    "accept": "Umbrella completes only after native children B07A (frozen core deletion scope) and B07B (Tauri/frontend API exposure) are accepted and integrated. Downstream task 14B remains dependent on B07."
+  },
+  {
+    "id": "B07A",
+    "title": "Frozen saved-file deletion core",
+    "deps": "00,B02",
+    "spec": "5, 7",
+    "files": [
+      "src-tauri/src/core/mirror.rs",
+      "src-tauri/src/core/mirror/deletion.rs",
+      "src-tauri/src/db.rs"
+    ],
+    "tests": [
+      "focused Rust temporary-filesystem tests"
+    ],
+    "accept": "Capture confirmed current copies and retained versions as exact indexed entries under the original root. Keep unfinished queue/attempts out. Use bounded in-memory scopes with documented expiry; unknown/expired/restarted scopes require renewed confirmation. Retry only remaining failed entries from the same scope. Missing files clear only matching rows idempotently without claiming bytes were unlinked. Root/identity changes preserve successor data. Validate traversal and symlink containment, serialize with publication, retain matching rows on filesystem/DB failures, and preserve resources, baselines, History, queue and uncaptured versions/downloads. Prove partial failure/retry, NotFound, unsafe paths, changed root/publication identity, versions, DB failure, repeated retry, and barrier-controlled later publication. No API/command/model/UI registration."
+  },
+  {
+    "id": "B07B",
+    "title": "Expose saved-file deletion scope API",
+    "deps": "B07A",
+    "spec": "5, 7",
+    "files": [
+      "src-tauri/src/commands.rs",
+      "src-tauri/src/lib.rs",
+      "src-tauri/src/models.rs",
+      "src/lib/api.ts",
+      "src/lib/types.ts"
+    ],
+    "tests": [
+      "Tauri command/API contract tests"
+    ],
+    "accept": "After B07A is accepted, expose the frozen snapshot and scoped-delete contracts through Tauri and the frontend API. Preserve the legacy delete-all command signature for existing consumers while routing it through safe core behavior. Leave Settings and Inbox UI ownership to their assigned workers."
+  },
+  {
+    "id": "B08",
+    "title": "SSO window focus and cancellation lifecycle",
+    "deps": "B08A,B08B",
+    "spec": "5, 7",
+    "files": [
+      "src-tauri/src/auth.rs",
+      "src-tauri/src/commands.rs",
+      "src-tauri/src/lib.rs",
+      "src/lib/api.ts"
+    ],
+    "tests": [
+      "tests/sessionRefresh.test.tsx",
+      "focused Rust auth lifecycle tests"
+    ],
+    "accept": "The implementation uses a native SSO window. Expose focus/reopen-existing and cancel operations with bounded attempt identity, idempotent close and late-callback protection. Never start duplicate concurrent attempts. Card copy describes a sign-in window truthfully. Add API wrapper/registration and prove cancel cannot later overwrite a newer attempt; native focus behavior needs development-runtime evidence."
+  },
+  {
+    "id": "B09",
+    "title": "Scan-failure notification preference and delivery",
+    "deps": "B09A,B09B",
+    "spec": "5.8",
+    "files": [
+      "src-tauri/src/settings.rs",
+      "src-tauri/src/notify.rs",
+      "src-tauri/src/sync/engine.rs",
+      "src/lib/types.ts",
+      "src/lib/settingsDraft.ts"
+    ],
+    "tests": [
+      "tests/settingsDraft.test.ts",
+      "focused Rust settings/notification tests"
+    ],
+    "accept": "Add the missing scan-failure preference and real delivery path with backward-compatible saved-settings defaults and camelCase parity. Define one notification per failed scan/partial outcome according to task 00 contract, respecting global enable, quiet hours and existing authentication notifications. Test preference on/off, quiet hours, repeated failures, partial scans and redacted failure copy. Existing OS permission query/open APIs are reused."
+  },
+  {
+    "id": "B10",
+    "title": "Explicit version-retention semantics",
+    "deps": "00",
+    "spec": "5.8",
+    "files": [
+      "src-tauri/src/settings.rs",
+      "src/lib/settingsDraft.ts",
+      "src/lib/types.ts"
+    ],
+    "tests": [
+      "tests/settingsDraft.test.ts",
+      "focused Rust settings/notification tests"
+    ],
+    "accept": "Resolve D05 with an explicit version-retention label/control over existing mirrorKeepVersions, preserving permanent saved files. Test retained value and explanatory copy through the Settings consumer. This task does not add age-based deletion. If product requires time-based deletion, return a blocker and separately specified lifecycle task; task 14 remains unaccepted for that feature until resolved."
+  },
+  {
+    "id": "14A",
+    "title": "Settings account, notifications and Telegram",
+    "deps": "14,B03,B09",
+    "spec": "5.8",
+    "files": [
+      "src/views/SettingsView.tsx",
+      "src/lib/settingsDraft.ts"
+    ],
+    "tests": [
+      "tests/appSettingsInteractions.test.tsx",
+      "tests/settingsDraft.test.ts"
+    ],
+    "accept": "Wire real account/session status, approved intervals, background/autostart, notification preferences/OS permission/quiet hours/reminder window and Telegram masked token/chat ID/test result. Reuse existing platform APIs and B09 delivery contract. Preserve extra existing supported notification categories. Verify validation, secret masking, permission-denied and failed test states; no inert controls. Shared draft controller belongs to accepted task 14."
+  },
+  {
+    "id": "14B",
+    "title": "Settings storage and destructive recovery",
+    "deps": "14A,B02,B07,B10,B06",
+    "spec": "5.8",
+    "files": [
+      "src/views/SettingsView.tsx",
+      "src/components/DownloadsPopover.tsx",
+      "src/lib/settingsDraft.ts"
+    ],
+    "tests": [
+      "tests/appSettingsInteractions.test.tsx",
+      "tests/settingsDraft.test.ts"
+    ],
+    "accept": "Wire location picker, automatic saving, max size, explicit version retention, active/failure downloads, cache size/clear, reset all baselines and delete saved files. Use real B02 progress and B07 frozen scope/partial failure. Require typed DELETE, show affected counts and retained baseline/history. Test permission failures and concurrent arrivals; invoke B06-proven reset behavior. Release DownloadsPopover to 17 after integration."
+  },
+  {
+    "id": "14C",
+    "title": "About and signed updater UI",
+    "deps": "14B",
+    "spec": "5.8",
+    "files": [
+      "src/views/SettingsView.tsx",
+      "src/lib/updateLifecycle.ts"
+    ],
+    "tests": [
+      "tests/appSettingsInteractions.test.tsx",
+      "tests/updateLifecycle.test.ts",
+      "tests/settingsAbout.test.tsx",
+      "tests/apiUpdater.test.ts"
+    ],
+    "accept": "Wire version, automatic checks and finite updater lifecycle: checking, available, downloading, installing, failed/retry and restart required. Preserve signature verification and platform relaunch ordering. Use existing lifecycle/API; no feed or key changes. Test cancelled/failed operations, retry and duplicate install; native signed-install evidence is separate from mocked UI proof."
+  },
+  {
+    "id": "B08A",
+    "title": "Native SSO attempt lifecycle",
+    "deps": "00",
+    "spec": "5, 7",
+    "files": [
+      "src-tauri/src/auth.rs",
+      "src-tauri/src/state.rs"
+    ],
+    "tests": [
+      "focused Rust auth lifecycle tests",
+      "ignored Windows blank-window native test"
+    ],
+    "accept": "Implement and prove the native attempt lifecycle, matching-ID focus/cancel, stale callback fencing, and session commit guard with deterministic regressions, Windows compilation and library tests, and explicit native delivery proof. B08B remains a separate consumer."
+  },
+  {
+    "id": "B08B",
+    "title": "SSO lifecycle command and API exposure",
+    "deps": "B08A",
+    "spec": "5, 7",
+    "files": [
+      "src-tauri/src/commands.rs",
+      "src-tauri/src/lib.rs",
+      "src-tauri/src/models.rs",
+      "src/lib/api.ts",
+      "src/lib/types.ts"
+    ],
+    "tests": [
+      "focused command/API contract coverage"
+    ],
+    "accept": "After B08A integration, add nullable AuthStatus.attemptId and focus/cancel command and API wrappers. Preserve startSsoLogin completion semantics and camelCase wire fields. B08 umbrella is incomplete until this child is accepted and integrated."
+  },
+  {
+    "id": "B09A",
+    "title": "Native scan-failure notification core",
+    "deps": "00",
+    "spec": "5.8",
+    "files": [
+      "src-tauri/src/settings.rs",
+      "src-tauri/src/notify.rs",
+      "src-tauri/src/sync/engine.rs",
+      "src-tauri/src/db.rs",
+      "src-tauri/migrations/0008_scan_failure_notifications.sql"
+    ],
+    "tests": [
+      "focused Rust settings/notification tests"
+    ],
+    "accept": "Add backward-compatible notifyScanFailures default true, durable at-most-once per-scan claims, and generic native alerts under the frozen eligibility rules. No UI/API transport changes."
+  },
+  {
+    "id": "B09B",
+    "title": "Scan-failure preference consumer",
+    "deps": "B09A",
+    "spec": "5.8",
+    "files": [
+      "src/lib/types.ts",
+      "src/views/SettingsView.tsx",
+      "tests/settingsScanFailure.test.tsx"
+    ],
+    "tests": [
+      "Settings draft/save and preference tests"
+    ],
+    "accept": "Expose notifyScanFailures through the existing Settings draft/save path, preserve persisted false and navigation guarding, and prove draft comparison, toggle/save/discard, disabled behavior and rendered controls. Run assembled lint, full tests and build before acceptance."
+  },
+  {
+    "id": "04C4",
+    "title": "Course Materials keyboard integration",
+    "deps": "04C3,04B,04C0",
+    "spec": "4, 5.4 (Course Materials/expanded/search/empty-failure), 5.5, 6, 7",
+    "files": [
+      "src/views/library/CoursePage.tsx",
+      "src/views/library/TreeRow.tsx",
+      "tests/appCourseMaterialsKeyboard.test.tsx"
+    ],
+    "tests": [
+      "tests/appCourseMaterialsKeyboard.test.tsx"
+    ],
+    "accept": "Approved native child #50 under #35, BLOCKED / NOT ready-for-agent until 04C3 #48 accepted and root dispatch prerequisites. Materials-only exact lease and adapter prerequisites in contracts/04C4-preflight.md. Reuse complete App inventory beyond 2000, authoritative captured resource events, independent stable tree focus/inspection/selection, nested-control guards, Inbox-only dismissal and tab/filter/async invalidation. Preserve tree expansion/virtualization and existing action owners. Real-App regressions, frontend gates and two rendered states required. Activity, Courses navigation, History and remaining collapse/focus integration stay separate; no screen ownership changes."
+  },
+  {
+    "id": "04C5",
+    "title": "History Changes keyboard integration",
+    "deps": "04B,04C0,04C3",
+    "spec": "4 (keyboard), 5.7 (History Changes), 7 (capture/dismiss/preservation)",
+    "files": [
+      "src/views/HistoryView.tsx",
+      "tests/appHistoryKeyboard.test.tsx"
+    ],
+    "tests": [
+      "tests/appHistoryKeyboard.test.tsx"
+    ],
+    "accept": "Approved native child #51 under #35, BLOCKED / NOT ready-for-agent until RUNNING 04C3 #48 accepted and root adapter/base dispatch. Changes-only lease in contracts/04C5-preflight.md: complete B05A event publication, event identity distinct from resources, captured E/U and Shift+A, Inbox-only Delete, independent focus/inspection/selection, guarded keys, async invalidation and real-App proof. Root owns App/adapter tests/CSS; no #50 dependency. Preserve B05B permanent-deletion APIs and explicit missing/History-hidden event caveats. Scans, header frozen-deletion conversion, collapse, Course Materials/Activity, Courses hub and cross-surface virtual-focus proof remain separate. No screen ownership changes."
+  },
+  {
+    "id": "B05C",
+    "title": "Offset paging preserving Course Activity range membership",
+    "deps": "00,B05A",
+    "spec": "5.4 (Course Activity), 7 (retained events)",
+    "files": [
+      "src-tauri/src/commands.rs",
+      "src-tauri/src/db.rs",
+      "src/lib/api.ts"
+    ],
+    "tests": [
+      "tests/eventsRangePaging-api.test.ts",
+      "focused Rust range paging tests"
+    ],
+    "accept": "Extend existing events_range with optional offset default 0 normalized nonnegative via EventFilter.offset, preserving default limit 2000/clamp 1..5000, dates, errors, and membership. Use raw detected_at DESC,id DESC stable ties after shared caller assessment; B05A instant ordering and accepted B05 umbrella remain unchanged. Exact lease and serialized dispatch requirements are in tasks/B05C.md. Prove >2000/>5000 traversals, exact multiples, ties, course/date/membership, defaults/negative offsets and API forwarding. No new command/DTO/registration/mode; offset traversal remains non-atomic."
+  },
+  {
+    "id": "04C6",
+    "title": "Course Activity keyboard integration",
+    "deps": "04C4,04B,04C0,B05C",
+    "spec": "4 (keys), 5.4 (Course Activity/retained failure), 7 (capture/dismiss/baseline)",
+    "files": [
+      "src/views/library/CoursePage.tsx",
+      "tests/appCourseActivityKeyboard.test.tsx"
+    ],
+    "tests": [
+      "tests/appCourseActivityKeyboard.test.tsx"
+    ],
+    "accept": "After accepted Materials and B05C plus root Activity adapter integration, add Activity-only event-ID keyboard actions and actual-App proof under tasks/04C6.md. Preserve eventsRange membership including History-cleared events; complete App History is incompatible due to its clear watermark. Capture exact eligible event IDs for read/unread/Shift+A and Inbox-only dismissal, exclude baseline actions, avoid sibling expansion, guard keys, separate focus/inspection/selection, invalidate stale generations and retry refresh without replaying successful mutation. Root remains sole integrator; preserve all screen owners and defer other UI/cleanup."
+  },
+  {
+    "id": "04C7",
+    "title": "History Scans keyboard navigation",
+    "deps": "04B,04C5",
+    "spec": "4 (navigation/inspection only), 5.7 (Scans), 7 (safety)",
+    "files": [
+      "src/views/HistoryView.tsx",
+      "tests/appHistoryScansKeyboard.test.tsx"
+    ],
+    "tests": [
+      "tests/appHistoryScansKeyboard.test.tsx"
+    ],
+    "accept": "Approved native child #54 under #35; BLOCKED / NOT ready-for-agent until #51 keyboard acceptance and root dispatch. Scans-only serialized two-file lease in tasks/04C7.md and contracts/04C7-preflight.md. Stable scan-ID J/K/Up/Down focus and Enter inspection via existing DataTable/DetailsAdapter; independent focus/inspection, nested/modal/editor/IME/modifier guards, identity restoration and real virtual-scroll proof with >200 direct-props rows. E/U/Delete/Space/Shift+A/X remain inert; no scan membership, multiselection or material/file mutation. Preserve Changes/header actions/App query owner. Navigate published rows only; 50-cap paging, diagnostics and redesign remain task15. All screen ownership bytes unchanged."
+  },
+  {
+    "id": "04C8",
+    "title": "Courses hub keyboard navigation",
+    "deps": "04B,04C3",
+    "spec": "4 (focus navigation), 5.4 (Courses hub), 6 (focus)",
+    "files": [
+      "src/views/library/CourseList.tsx",
+      "tests/appCoursesKeyboard.test.tsx"
+    ],
+    "tests": [
+      "tests/appCoursesKeyboard.test.tsx"
+    ],
+    "accept": "Approved native child #55 under #35, with accepted #33/#48 prerequisite edges. BLOCKED / NOT ready-for-agent until root integrates search fallback/focus CSS and supplies dispatch base. Exact two-file lease and behavior in tasks/04C8.md and contracts/04C8-preflight.md: stable course-ID J/K/Up/Down DOM focus, complete existing filtered/incoming-order membership, native Enter/Space navigation once, native Tab/menu controls, identity recovery and scoped guards. No resource context, multiselection, mutation shortcuts, App/global registry or table conversion. Task10 retains visual/course-actions redesign; collapse/Activity/Scans/task04 remain incomplete. No History/B05C dependency; all 98 screen ownership bytes unchanged."
+  }
+]

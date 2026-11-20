@@ -9,7 +9,10 @@ use std::path::Path;
 
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::models::{ChangeEvent, Course, Digest, Resource, ScanRun};
+use crate::models::{
+    ChangeEvent, Course, Digest, HistoryFilter, HistoryPage, Resource, ScanDetails, ScanFilter,
+    ScanPage, ScanRun,
+};
 use crate::settings::Settings;
 
 /// Current UTC time as an RFC 3339 string.
@@ -180,6 +183,27 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     // persisted marker makes this one-time; normal future event queries use
     // the event flag, with no rolling timestamp rule.
     apply_course_tree_incident_cleanup(conn, &now_rfc3339())?;
+    conn.execute_batch(include_str!("../migrations/0005_inbox_dismissals.sql"))?;
+    // 0006: add the durable local presentation override to existing databases.
+    let has_display_name: bool = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('courses') WHERE name = 'display_name'",
+        [],
+        |r| r.get::<_, i64>(0),
+    )? > 0;
+    if !has_display_name {
+        conn.execute_batch(include_str!("../migrations/0006_course_display_name.sql"))?;
+    }
+    // 0007: old scan rows intentionally have no synthesized course details.
+    conn.execute_batch(include_str!("../migrations/0007_scan_details.sql"))?;
+    // 0008: scan failure notifications are claimed on the durable scan row.
+    let has_failure_notification_claim: bool = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('scan_runs') WHERE name = 'failure_notified_at'",
+        [],
+        |r| r.get::<_, i64>(0),
+    )? > 0;
+    if !has_failure_notification_claim {
+        conn.execute_batch(include_str!("../migrations/0008_scan_failure_notifications.sql"))?;
+    }
     Ok(())
 }
 
@@ -374,6 +398,63 @@ pub fn del_kv(conn: &Connection, key: &str) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// Persist a baseline reset request and its generation as one operation.
+/// Missing generations are treated as zero for databases created before this
+/// request identity was added.
+pub fn request_baseline_reset(
+    conn: &mut Connection,
+    course_id: Option<i64>,
+) -> rusqlite::Result<i64> {
+    let tx = conn.transaction()?;
+    let generation = get_kv(&tx, "baseline_reset_generation")
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(0)
+        .checked_add(1)
+        .ok_or_else(|| rusqlite::Error::InvalidQuery)?;
+
+    if let Some(id) = course_id {
+        let existing = get_kv(&tx, "rebaseline_courses").unwrap_or_else(|| "[]".into());
+        let mut list: Vec<i64> = serde_json::from_str(&existing).unwrap_or_default();
+        if !list.contains(&id) {
+            list.push(id);
+        }
+        set_kv(
+            &tx,
+            "rebaseline_courses",
+            &serde_json::to_string(&list).expect("course IDs always serialize"),
+        )?;
+    } else {
+        del_kv(&tx, "baseline_established")?;
+        set_kv(
+            &tx,
+            "baseline_global_reset_generation",
+            &generation.to_string(),
+        )?;
+    }
+    set_kv(&tx, "baseline_reset_generation", &generation.to_string())?;
+    tx.commit()?;
+    Ok(generation)
+}
+
+/// Establish the global baseline only if no newer global reset was requested.
+pub fn establish_baseline_if_generation(
+    conn: &mut Connection,
+    captured_generation: i64,
+    established_at: &str,
+) -> rusqlite::Result<bool> {
+    let tx = conn.transaction()?;
+    let current_generation = get_kv(&tx, "baseline_global_reset_generation")
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(0);
+    if current_generation != captured_generation {
+        tx.rollback()?;
+        return Ok(false);
+    }
+    set_kv(&tx, "baseline_established", established_at)?;
+    tx.commit()?;
+    Ok(true)
+}
+
 /* ------------------------------------------------------------------- courses */
 
 pub fn upsert_course(
@@ -421,6 +502,41 @@ pub fn set_monitoring(conn: &Connection, course_id: i64, status: &str) -> rusqli
     Ok(())
 }
 
+/// Set or reset a local display-name override without changing source identity.
+pub fn set_course_display_name(
+    conn: &Connection,
+    course_id: i64,
+    display_name: Option<&str>,
+) -> Result<Course, String> {
+    let display_name = match display_name {
+        Some(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Err("Course display name cannot be empty.".to_string());
+            }
+            if trimmed.chars().count() > 120 {
+                return Err("Course display name cannot exceed 120 characters.".to_string());
+            }
+            Some(trimmed)
+        }
+        None => None,
+    };
+    let changed = conn
+        .execute(
+            "UPDATE courses SET display_name = ?1 WHERE id = ?2",
+            params![display_name, course_id],
+        )
+        .map_err(|e| e.to_string())?;
+    if changed == 0 {
+        return Err("Course not found.".to_string());
+    }
+    list_courses(conn)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|course| course.id == course_id)
+        .ok_or_else(|| "Course not found.".to_string())
+}
+
 pub fn course_id_for_external(conn: &Connection, external_id: &str) -> Option<i64> {
     conn.query_row(
         "SELECT id FROM courses WHERE external_course_id = ?1",
@@ -434,7 +550,7 @@ pub fn course_id_for_external(conn: &Connection, external_id: &str) -> Option<i6
 
 pub fn list_courses(conn: &Connection) -> rusqlite::Result<Vec<Course>> {
     let mut stmt = conn.prepare(
-        "SELECT c.id, c.external_course_id, c.name, c.short_name, c.url, c.first_seen_at,
+        "SELECT c.id, c.external_course_id, c.name, c.short_name, c.display_name, c.url, c.first_seen_at,
                 c.last_scanned_at, c.last_scan_status, c.monitoring_status,
                 (SELECT COUNT(*) FROM resources r WHERE r.course_id = c.id) AS resource_count
          FROM courses c
@@ -446,12 +562,13 @@ pub fn list_courses(conn: &Connection) -> rusqlite::Result<Vec<Course>> {
             external_course_id: r.get(1)?,
             name: r.get(2)?,
             short_name: r.get(3)?,
-            url: r.get(4)?,
-            first_seen_at: r.get(5)?,
-            last_scanned_at: r.get(6)?,
-            last_scan_status: r.get(7)?,
-            monitoring_status: r.get(8)?,
-            resource_count: r.get(9)?,
+            display_name: r.get(4)?,
+            url: r.get(5)?,
+            first_seen_at: r.get(6)?,
+            last_scanned_at: r.get(7)?,
+            last_scan_status: r.get(8)?,
+            monitoring_status: r.get(9)?,
+            resource_count: r.get(10)?,
         })
     })?;
     rows.collect()
@@ -773,6 +890,102 @@ pub fn list_history_events(conn: &Connection, limit: i64) -> rusqlite::Result<Ve
     list_events_after_id(conn, clear_watermark(conn, HISTORY_CLEAR_EVENT_ID_KEY), limit)
 }
 
+fn history_page_bounds(offset: usize, limit: usize) -> Result<(i64, i64), String> {
+    if !(1..=1000).contains(&limit) {
+        return Err("limit must be between 1 and 1000".into());
+    }
+    let offset = i64::try_from(offset).map_err(|_| "offset is too large".to_string())?;
+    let limit = i64::try_from(limit).map_err(|_| "limit is too large".to_string())?;
+    Ok((offset, limit))
+}
+
+fn history_bound(raw: &Option<String>, label: &str) -> Result<Option<chrono::DateTime<chrono::Utc>>, String> {
+    raw.as_ref()
+        .map(|value| {
+            chrono::DateTime::parse_from_rfc3339(value)
+                .map(|date| date.with_timezone(&chrono::Utc))
+                .map_err(|_| format!("{label} must be an RFC 3339 timestamp"))
+        })
+        .transpose()
+}
+
+/// Query complete History activity before slicing a page. History's clear
+/// watermark and calendar suppression remain view-specific visibility rules.
+pub fn query_history_events(
+    conn: &Connection,
+    filter: &HistoryFilter,
+) -> Result<HistoryPage, String> {
+    let (offset, limit) = history_page_bounds(filter.offset, filter.limit)?;
+    if filter.course_id.is_some_and(|id| id <= 0) {
+        return Err("courseId must be positive".into());
+    }
+    if filter.change_type.as_deref().is_some_and(|kind| {
+        !matches!(
+            kind,
+            "new" | "updated" | "announcement" | "deadline" | "unavailable" | "restored" | "baseline"
+        )
+    }) {
+        return Err("Unknown History changeType".into());
+    }
+    let since = history_bound(&filter.since, "since")?;
+    let until = history_bound(&filter.until, "until")?;
+    if since
+        .as_ref()
+        .zip(until.as_ref())
+        .is_some_and(|(a, b)| a >= b)
+    {
+        return Err("since must precede until".into());
+    }
+    let course_id = filter.course_id;
+    let change_type = filter.change_type.as_deref();
+    let watermark = clear_watermark(conn, HISTORY_CLEAR_EVENT_ID_KEY);
+    let mut statement = conn
+        .prepare("SELECT e.id, e.resource_id, e.course_id, c.name, r.title, r.url, r.resource_type,
+                r.uploaded_at, e.change_type, e.title, e.description, e.detected_at, e.read_at, r.source_page_url,
+                r.section_path, r.section
+         FROM change_events e LEFT JOIN resources r ON r.id=e.resource_id LEFT JOIN courses c ON c.id=e.course_id
+         WHERE e.id > ?1 AND e.calendar_suppressed=0
+           AND (?2 IS NULL OR e.course_id=?2) AND (?3 IS NULL OR e.change_type=?3)
+         ORDER BY e.detected_at DESC, e.id DESC")
+        .map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map(params![watermark, course_id, change_type], map_event)
+        .map_err(|error| error.to_string())?;
+    let search = filter.search.as_deref().unwrap_or("").trim().to_lowercase();
+    // RFC 3339 strings can use different precision and offsets; compare actual
+    // instants so a whole-second suffix cannot sort after a later fraction.
+    let mut timed = rows
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|event| {
+            chrono::DateTime::parse_from_rfc3339(&event.detected_at)
+                .map(|at| (event, at.with_timezone(&chrono::Utc)))
+                .map_err(|_| "Invalid History event timestamp".to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    timed.retain(|(event, at)| {
+        if since.as_ref().is_some_and(|bound| at < bound)
+            || until.as_ref().is_some_and(|bound| at >= bound) {
+            return false;
+        }
+            search.is_empty()
+                || [
+                    event.title.as_str(),
+                    event.description.as_deref().unwrap_or(""),
+                    event.course_name.as_deref().unwrap_or(""),
+                    event.resource_title.as_deref().unwrap_or(""),
+                ]
+                .iter()
+                .any(|field| field.to_lowercase().contains(&search))
+    });
+    timed.sort_by(|(a, at), (b, bt)| bt.cmp(at).then_with(|| b.id.cmp(&a.id)));
+    let total = timed.len();
+    let items = timed.into_iter().skip(offset as usize).take(limit as usize)
+        .map(|(event, _)| event).collect();
+    Ok(HistoryPage { items, total })
+}
+
 fn list_events_after_id(conn: &Connection, watermark: i64, limit: i64) -> rusqlite::Result<Vec<ChangeEvent>> {
     let query = format!(
         "{EVENT_SELECT} WHERE e.id > ?1 AND e.calendar_suppressed = 0
@@ -869,14 +1082,14 @@ pub fn insert_event(
     Ok(changed > 0)
 }
 
-const EVENT_SELECT: &str = "SELECT e.id, e.resource_id, e.course_id, c.name, r.title, r.url, r.resource_type,
+pub(crate) const EVENT_SELECT: &str = "SELECT e.id, e.resource_id, e.course_id, c.name, r.title, r.url, r.resource_type,
         r.uploaded_at, e.change_type, e.title, e.description, e.detected_at, e.read_at, r.source_page_url,
         r.section_path, r.section
  FROM change_events e
  LEFT JOIN resources r ON r.id = e.resource_id
  LEFT JOIN courses c ON c.id = e.course_id";
 
-fn map_event(r: &rusqlite::Row<'_>) -> rusqlite::Result<ChangeEvent> {
+pub(crate) fn map_event(r: &rusqlite::Row<'_>) -> rusqlite::Result<ChangeEvent> {
     let read_at: Option<String> = r.get(12)?;
     Ok(ChangeEvent {
         id: r.get(0)?,
@@ -958,7 +1171,7 @@ pub fn list_events_filtered(
     if f.unread_only {
         sql.push_str(" AND e.read_at IS NULL");
     }
-    sql.push_str(" ORDER BY e.detected_at DESC LIMIT :limit OFFSET :offset");
+    sql.push_str(" ORDER BY e.detected_at DESC, e.id DESC LIMIT :limit OFFSET :offset");
     binds.push((":limit", &limit));
     binds.push((":offset", &offset));
 
@@ -1114,6 +1327,24 @@ pub fn finish_scan(
     Ok(())
 }
 
+/// Atomically claim the one native failure-notification attempt for an eligible finalized scan.
+/// Returns false for missing, unfinished, cancelled, authentication-expired, successful, or already
+/// claimed scans. The marker is part of scan History and is deleted with its scan row.
+pub fn claim_scan_failure_notification(
+    conn: &Connection,
+    id: i64,
+    notified_at: &str,
+) -> rusqlite::Result<bool> {
+    let changed = conn.execute(
+        "UPDATE scan_runs SET failure_notified_at = ?1
+         WHERE id = ?2 AND completed_at IS NOT NULL AND failure_notified_at IS NULL
+           AND status NOT IN ('running', 'cancelled', 'auth_expired')
+           AND (status IN ('partial', 'failed') OR courses_failed > 0)",
+        params![notified_at, id],
+    )?;
+    Ok(changed == 1)
+}
+
 pub fn list_scans(conn: &Connection, limit: i64) -> rusqlite::Result<Vec<ScanRun>> {
     let mut stmt = conn.prepare(
         "SELECT id, started_at, completed_at, status, discovered_count, new_count, updated_count,
@@ -1135,6 +1366,96 @@ pub fn list_history_scans(conn: &Connection, limit: i64) -> rusqlite::Result<Vec
         map_scan,
     )?;
     rows.collect()
+}
+
+/// Query the complete visible History scan set, then apply explicit paging.
+pub fn query_history_scans(conn: &Connection, filter: &ScanFilter) -> Result<ScanPage, String> {
+    let (offset, limit) = history_page_bounds(filter.offset, filter.limit)?;
+    let watermark = clear_watermark(conn, HISTORY_CLEAR_SCAN_ID_KEY);
+    let total: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM scan_runs WHERE id>?1",
+            [watermark],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    let mut statement = conn
+        .prepare("SELECT id, started_at, completed_at, status, discovered_count, new_count, updated_count,
+                unavailable_count, courses_scanned, courses_failed, error_summary, is_baseline
+         FROM scan_runs WHERE id>?1 ORDER BY started_at DESC, id DESC LIMIT ?2 OFFSET ?3")
+        .map_err(|error| error.to_string())?;
+    let items = statement
+        .query_map(params![watermark, limit, offset], map_scan)
+        .map_err(|error| error.to_string())?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|error| error.to_string())?;
+    Ok(ScanPage {
+        items,
+        total: total as usize,
+    })
+}
+
+/// Save the exact terminal observations supplied by the scan worker.
+///
+/// The existing scan row must be present; replacement and insertion are atomic.
+pub fn save_scan_details(conn: &Connection, details: &ScanDetails) -> rusqlite::Result<()> {
+    let details = sanitize_scan_details(details.clone());
+    let payload = serde_json::to_string(&details)
+        .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+    let changed = conn.execute(
+        "INSERT INTO scan_details(scan_id, payload) SELECT ?1, ?2 WHERE EXISTS (SELECT 1 FROM scan_runs WHERE id = ?1)\n         ON CONFLICT(scan_id) DO UPDATE SET payload = excluded.payload",
+        params![details.scan_id, payload],
+    )?;
+    if changed == 0 {
+        return Err(rusqlite::Error::QueryReturnedNoRows);
+    }
+    Ok(())
+}
+
+/// Return saved observations, or `None` for legacy/missing scan rows.
+pub fn scan_details(conn: &Connection, scan_id: i64) -> rusqlite::Result<Option<ScanDetails>> {
+    let payload = conn
+        .query_row(
+            "SELECT payload FROM scan_details WHERE scan_id = ?1",
+            [scan_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    payload
+        .map(|payload| {
+            let details: ScanDetails = serde_json::from_str(&payload)
+                .map_err(|error| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error)))?;
+            Ok(sanitize_scan_details(details))
+        })
+        .transpose()
+}
+
+fn sanitize_diagnostic_text(value: &str) -> String {
+    let redacted = crate::logging::redact(value);
+    let lower = redacted.to_ascii_lowercase();
+    if lower.contains("http://") || lower.contains("https://")
+        || lower.contains("token=") || lower.contains("token:")
+        || lower.contains("secret=") || lower.contains("cookie=")
+        || lower.contains("session=") || lower.contains("sessiontoken=")
+        || lower.contains("session_token=") || lower.contains("access_token=")
+        || lower.contains("api_key=") || lower.contains("authorization=")
+    {
+        "[redacted: sensitive diagnostic content]".to_string()
+    } else {
+        redacted
+    }
+}
+
+fn sanitize_scan_details(mut details: ScanDetails) -> ScanDetails {
+    for course in &mut details.courses {
+        course.course_name = sanitize_diagnostic_text(&course.course_name);
+        course.error = course.error.as_deref().map(sanitize_diagnostic_text);
+        for step in &mut course.steps {
+            step.label = sanitize_diagnostic_text(&step.label);
+            step.error = step.error.as_deref().map(sanitize_diagnostic_text);
+        }
+    }
+    details
 }
 
 fn map_scan(r: &rusqlite::Row<'_>) -> rusqlite::Result<ScanRun> {
@@ -1490,6 +1811,136 @@ pub struct MirrorVersion {
     pub replaced_at: String,
 }
 
+/// An exact saved-copy or retained-version index entry captured for explicit
+/// deletion. Version row IDs distinguish duplicate paths/replacement times.
+#[derive(Debug, Clone)]
+pub struct MirrorDeleteFile {
+    pub resource_id: i64,
+    pub rel_path: String,
+    pub sha256: Option<String>,
+    pub size_bytes: i64,
+    /// B02 attempt counter: distinguishes a later publication even when path,
+    /// bytes, and second-precision timestamps happen to repeat.
+    pub attempts: i64,
+    pub downloaded_at: Option<String>,
+    pub version_rowid: Option<i64>,
+    pub replaced_at: Option<String>,
+}
+
+/// Capture only confirmed copies and retained versions; queue state is excluded.
+pub fn mirror_delete_files(conn: &Connection) -> rusqlite::Result<Vec<MirrorDeleteFile>> {
+    let mut out = Vec::new();
+    {
+        let mut stmt = conn.prepare(
+            "SELECT resource_id, rel_path, sha256, size_bytes, attempts, downloaded_at
+             FROM local_files WHERE status IN ('ok', 'kept') ORDER BY resource_id",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(MirrorDeleteFile {
+                resource_id: row.get(0)?,
+                rel_path: row.get(1)?,
+                sha256: row.get(2)?,
+                size_bytes: row.get(3)?,
+                attempts: row.get(4)?,
+                downloaded_at: row.get(5)?,
+                version_rowid: None,
+                replaced_at: None,
+            })
+        })?;
+        out.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+    }
+    {
+        let mut stmt = conn.prepare(
+            "SELECT rowid, resource_id, rel_path, sha256, size_bytes, replaced_at
+             FROM local_file_versions ORDER BY rowid",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(MirrorDeleteFile {
+                resource_id: row.get(1)?,
+                rel_path: row.get(2)?,
+                sha256: row.get(3)?,
+                size_bytes: row.get(4)?,
+                attempts: 0,
+                downloaded_at: None,
+                version_rowid: Some(row.get(0)?),
+                replaced_at: Some(row.get(5)?),
+            })
+        })?;
+        out.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
+    }
+    Ok(out)
+}
+
+/// Whether the current index still represents the captured publication.
+pub fn mirror_delete_file_matches(
+    conn: &Connection,
+    file: &MirrorDeleteFile,
+) -> rusqlite::Result<bool> {
+    if let Some(rowid) = file.version_rowid {
+        return conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM local_file_versions WHERE rowid = ?1 AND resource_id = ?2
+             AND rel_path = ?3 AND sha256 IS ?4 AND size_bytes = ?5 AND replaced_at = ?6)",
+            params![
+                rowid,
+                file.resource_id,
+                file.rel_path,
+                file.sha256,
+                file.size_bytes,
+                file.replaced_at
+            ],
+            |row| row.get(0),
+        );
+    }
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM local_files WHERE resource_id = ?1 AND rel_path = ?2
+         AND sha256 IS ?3 AND size_bytes = ?4 AND attempts = ?5 AND downloaded_at IS ?6
+         AND status IN ('ok', 'kept'))",
+        params![
+            file.resource_id,
+            file.rel_path,
+            file.sha256,
+            file.size_bytes,
+            file.attempts,
+            file.downloaded_at
+        ],
+        |row| row.get(0),
+    )
+}
+
+/// Delete only the still-matching captured index entry.
+pub fn mirror_delete_captured_file(
+    conn: &Connection,
+    file: &MirrorDeleteFile,
+) -> rusqlite::Result<usize> {
+    if let Some(rowid) = file.version_rowid {
+        return conn.execute(
+            "DELETE FROM local_file_versions WHERE rowid = ?1 AND resource_id = ?2
+             AND rel_path = ?3 AND sha256 IS ?4 AND size_bytes = ?5 AND replaced_at = ?6",
+            params![
+                rowid,
+                file.resource_id,
+                file.rel_path,
+                file.sha256,
+                file.size_bytes,
+                file.replaced_at
+            ],
+        );
+    }
+    conn.execute(
+        "DELETE FROM local_files WHERE resource_id = ?1 AND rel_path = ?2 AND sha256 IS ?3
+         AND size_bytes = ?4 AND attempts = ?5 AND downloaded_at IS ?6
+         AND status IN ('ok', 'kept')",
+        params![
+            file.resource_id,
+            file.rel_path,
+            file.sha256,
+            file.size_bytes,
+            file.attempts,
+            file.downloaded_at
+        ],
+    )
+}
+
 pub fn version_insert(conn: &Connection, v: &MirrorVersion) -> rusqlite::Result<()> {
     conn.execute(
         "INSERT INTO local_file_versions(resource_id, rel_path, sha256, size_bytes, replaced_at)
@@ -1628,10 +2079,550 @@ mod tests {
     }
 
     #[test]
+    fn events_range_fixed_data_pages_have_no_gaps_and_stable_raw_ties() {
+        // Exact multiples must request an empty terminal page, not stop early.
+        for (count, page_size) in [(4000, 2000), (10000, 5000), (6001, 2000), (6001, 5000)] {
+            let conn = mem();
+            let tx = conn.unchecked_transaction().unwrap();
+            for id in 1..=count {
+                insert_event(
+                    &tx,
+                    None,
+                    Some(7),
+                    "new",
+                    "tied",
+                    None,
+                    &format!("paging-{id}"),
+                    "2026-11-16T10:00:00Z",
+                )
+                .unwrap();
+            }
+            tx.commit().unwrap();
+            let mut ids = Vec::new();
+            let mut lengths = Vec::new();
+            loop {
+                let page = list_events_filtered(
+                    &conn,
+                    &EventFilter {
+                        course_id: Some(7),
+                        limit: Some(page_size),
+                        offset: Some(ids.len() as i64),
+                        ..EventFilter::default()
+                    },
+                )
+                .unwrap();
+                lengths.push(page.len());
+                ids.extend(page.iter().map(|event| event.id));
+                if page.len() < page_size as usize {
+                    break;
+                }
+            }
+            assert_eq!(ids, (1..=count).rev().collect::<Vec<_>>());
+            assert_eq!(
+                ids.iter().collect::<std::collections::HashSet<_>>().len(),
+                count as usize
+            );
+            assert_eq!(*lengths.last().unwrap(), (count % page_size) as usize);
+            assert_eq!(lengths.len(), (count / page_size + 1) as usize);
+        }
+    }
+
+    #[test]
+    fn events_range_membership_and_shared_filters_remain_unchanged() {
+        let conn = mem();
+        let since = "2026-11-16T00:00:00Z";
+        let until = "2026-11-17T00:00:00Z";
+        for (id, course, kind, time) in [
+            (1, 7, "baseline", since),
+            (2, 7, "updated", since),
+            (3, 7, "new", since),
+            (4, 7, "new", since),
+            (5, 7, "new", until),
+            (6, 8, "new", since),
+            (7, 7, "new", "2026-11-15T23:59:59Z"),
+            (8, 7, "new", since),
+        ] {
+            insert_event(
+                &conn,
+                None,
+                Some(course),
+                kind,
+                "orphan",
+                None,
+                &format!("member-{id}"),
+                time,
+            )
+            .unwrap();
+        }
+        mark_read(&conn, &[2], since).unwrap();
+        conn.execute("INSERT INTO inbox_dismissals VALUES (3, ?1)", [since])
+            .unwrap();
+        conn.execute(
+            "UPDATE change_events SET calendar_suppressed=1 WHERE id=4",
+            [],
+        )
+        .unwrap();
+        conn.execute("DELETE FROM change_events WHERE id=8", [])
+            .unwrap();
+        clear_history_activity(&conn).unwrap();
+        clear_dashboard_activity(&conn).unwrap();
+        let filter = EventFilter {
+            course_id: Some(7),
+            since: Some(since.into()),
+            until: Some(until.into()),
+            ..EventFilter::default()
+        };
+        let ids = |rows: Vec<ChangeEvent>| rows.into_iter().map(|e| e.id).collect::<Vec<_>>();
+        assert_eq!(
+            ids(list_events_filtered(&conn, &filter).unwrap()),
+            vec![3, 2, 1]
+        );
+        assert_eq!(
+            ids(list_events_filtered(
+                &conn,
+                &EventFilter {
+                    unread_only: true,
+                    ..filter.clone()
+                }
+            )
+            .unwrap()),
+            vec![3, 1]
+        );
+        assert_eq!(
+            ids(list_events_filtered(
+                &conn,
+                &EventFilter {
+                    change_type: Some(" updated ".into()),
+                    ..filter.clone()
+                }
+            )
+            .unwrap()),
+            vec![2]
+        );
+        assert_eq!(
+            ids(list_events_filtered(
+                &conn,
+                &EventFilter {
+                    offset: Some(1),
+                    limit: Some(1),
+                    ..filter.clone()
+                }
+            )
+            .unwrap()),
+            vec![2]
+        );
+        for offset in [None, Some(0), Some(-3)] {
+            assert_eq!(
+                ids(list_events_filtered(
+                    &conn,
+                    &EventFilter {
+                        offset,
+                        ..filter.clone()
+                    }
+                )
+                .unwrap()),
+                vec![3, 2, 1]
+            );
+        }
+        assert_eq!(
+            ids(list_events(&conn, true, 100).unwrap()),
+            vec![5, 6, 3, 1, 7]
+        );
+        assert_eq!(list_events(&conn, false, 100).unwrap().len(), 6);
+        // Keep raw lexical timestamp order, even when parsed-instant order differs.
+        insert_event(
+            &conn,
+            None,
+            Some(9),
+            "new",
+            "fractional",
+            None,
+            "fractional",
+            "2026-11-16T10:00:00.900Z",
+        )
+        .unwrap();
+        insert_event(
+            &conn,
+            None,
+            Some(9),
+            "new",
+            "whole",
+            None,
+            "whole",
+            "2026-11-16T10:00:00Z",
+        )
+        .unwrap();
+        let raw = list_events_filtered(
+            &conn,
+            &EventFilter {
+                course_id: Some(9),
+                ..EventFilter::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            raw.iter().map(|e| e.title.as_str()).collect::<Vec<_>>(),
+            vec!["whole", "fractional"]
+        );
+    }
+
+    #[test]
     fn migration_is_idempotent() {
         let conn = mem();
         migrate(&conn).unwrap();
         assert_eq!(count_courses(&conn), 0);
+    }
+
+    fn insert_test_scan(conn: &Connection) -> i64 {
+        conn.execute(
+            "INSERT INTO scan_runs (started_at, status) VALUES ('2026-11-16T10:00:00Z', 'ok')",
+            [],
+        ).unwrap();
+        conn.last_insert_rowid()
+    }
+
+    fn test_scan_details(scan_id: i64) -> ScanDetails {
+        use crate::models::{ScanCourseDetail, ScanCourseStatus as Status, ScanStep};
+        ScanDetails {
+            scan_id,
+            courses: vec![
+                ScanCourseDetail {
+                    course_id: Some(7),
+                    course_name: "Computer Science".into(),
+                    status: Status::Partial,
+                    started_at: "2026-11-16T10:00:01Z".into(),
+                    completed_at: None,
+                    steps: vec![ScanStep {
+                        label: "Discover resources".into(),
+                        status: Status::Failed,
+                        started_at: "2026-11-16T10:00:02Z".into(),
+                        completed_at: Some("2026-11-16T10:00:03Z".into()),
+                        error: Some("safe failure detail".into()),
+                    }],
+                    error: Some("partial course result".into()),
+                },
+                ScanCourseDetail {
+                    course_id: None,
+                    course_name: "Unknown".into(),
+                    status: Status::Failed,
+                    started_at: "2026-11-16T10:01:00Z".into(),
+                    completed_at: Some("2026-11-16T10:01:01Z".into()),
+                    steps: vec![],
+                    error: Some("course failed".into()),
+                },
+                ScanCourseDetail {
+                    course_id: Some(9),
+                    course_name: "Cancelled course".into(),
+                    status: Status::Cancelled,
+                    started_at: "2026-11-16T10:02:00Z".into(),
+                    completed_at: None,
+                    steps: vec![],
+                    error: None,
+                },
+                ScanCourseDetail {
+                    course_id: Some(10),
+                    course_name: "Successful course".into(),
+                    status: Status::Success,
+                    started_at: "2026-11-16T10:03:00Z".into(),
+                    completed_at: Some("2026-11-16T10:04:00Z".into()),
+                    steps: vec![],
+                    error: None,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn legacy_scans_have_no_details_and_new_payload_survives_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("scan-details.sqlite");
+        let conn = Connection::open(&path).unwrap();
+        migrate(&conn).unwrap();
+        let scan_id = insert_test_scan(&conn);
+        assert_eq!(scan_details(&conn, scan_id).unwrap(), None);
+        let details = test_scan_details(scan_id);
+        save_scan_details(&conn, &details).unwrap();
+        drop(conn);
+
+        let reopened = Connection::open(path).unwrap();
+        migrate(&reopened).unwrap();
+        assert_eq!(scan_details(&reopened, scan_id).unwrap(), Some(details));
+    }
+
+    #[test]
+    fn scan_details_serialize_camel_case_and_clean_up_with_history_rows() {
+        let conn = mem();
+        let scan_id = insert_test_scan(&conn);
+        save_scan_details(&conn, &test_scan_details(scan_id)).unwrap();
+        let raw: String = conn.query_row("SELECT payload FROM scan_details", [], |row| row.get(0)).unwrap();
+        assert!(raw.contains("courseId") && raw.contains("startedAt") && raw.contains("completedAt"));
+        assert!(!raw.contains("course_id") && !raw.contains("started_at"));
+        for status in ["success", "partial", "failed", "cancelled"] {
+            assert!(raw.contains(&format!("\"status\":\"{status}\"")));
+        }
+
+        conn.execute("DELETE FROM scan_runs WHERE id = ?1", [scan_id]).unwrap();
+        let remaining: i64 = conn.query_row("SELECT COUNT(*) FROM scan_details", [], |row| row.get(0)).unwrap();
+        assert_eq!(remaining, 0);
+    }
+
+    #[test]
+    fn scan_detail_sanitization_covers_stored_payload_and_returned_dto() {
+        let conn = mem();
+        let scan_id = insert_test_scan(&conn);
+        let mut details = test_scan_details(scan_id);
+        details.courses[0].error = Some("password=hunter2 MoodleSession=abc wstoken=def https://example.test/path?token=secret".into());
+        details.courses[0].steps[0].error = Some("request failed: https://example.test/api?sid=private".into());
+        save_scan_details(&conn, &details).unwrap();
+
+        let raw: String = conn.query_row("SELECT payload FROM scan_details", [], |row| row.get(0)).unwrap();
+        let returned = scan_details(&conn, scan_id).unwrap().unwrap();
+        for secret in ["hunter2", "abc", "def", "secret", "private", "example.test"] {
+            assert!(!raw.contains(secret), "raw stored payload leaked {secret}");
+            assert!(!format!("{returned:?}").contains(secret), "returned DTO leaked {secret}");
+        }
+        assert!(returned.courses[0].error.as_deref().unwrap().contains("redacted"));
+    }
+
+    #[test]
+    fn populated_legacy_database_gets_idempotent_scan_details_migration() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(include_str!("../migrations/0001_init.sql")).unwrap();
+        let scan_id = insert_test_scan(&conn);
+        migrate(&conn).unwrap();
+        migrate(&conn).unwrap();
+        assert_eq!(scan_details(&conn, scan_id).unwrap(), None);
+        save_scan_details(&conn, &test_scan_details(scan_id)).unwrap();
+        assert!(scan_details(&conn, scan_id).unwrap().is_some());
+    }
+
+    #[test]
+    fn populated_scan_rows_get_idempotent_failure_claim_migration() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(include_str!("../migrations/0001_init.sql"))
+            .unwrap();
+        let scan_id = insert_test_scan(&conn);
+        migrate(&conn).unwrap();
+        migrate(&conn).unwrap();
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM scan_runs WHERE id=?1",
+                [scan_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "ok");
+        let marker: Option<String> = conn
+            .query_row(
+                "SELECT failure_notified_at FROM scan_runs WHERE id=?1",
+                [scan_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(marker, None);
+    }
+
+    #[test]
+    fn scan_failure_claim_requires_eligible_finalized_row_and_follows_history_deletion() {
+        let conn = mem();
+        let eligible = start_scan(&conn, "2026-11-16T10:00:00Z").unwrap();
+        finish_scan(
+            &conn,
+            eligible,
+            "partial",
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            None,
+            false,
+            "2026-11-16T10:01:00Z",
+        )
+        .unwrap();
+        let cancelled = start_scan(&conn, "2026-11-16T10:00:00Z").unwrap();
+        finish_scan(
+            &conn,
+            cancelled,
+            "cancelled",
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            None,
+            false,
+            "2026-11-16T10:01:00Z",
+        )
+        .unwrap();
+        let unfinished = start_scan(&conn, "2026-11-16T10:00:00Z").unwrap();
+
+        assert!(
+            claim_scan_failure_notification(&conn, eligible, "2026-11-16T10:02:00Z").unwrap()
+        );
+        assert!(
+            !claim_scan_failure_notification(&conn, eligible, "2026-11-16T10:03:00Z").unwrap()
+        );
+        assert!(
+            !claim_scan_failure_notification(&conn, cancelled, "2026-11-16T10:02:00Z").unwrap()
+        );
+        assert!(
+            !claim_scan_failure_notification(&conn, unfinished, "2026-11-16T10:02:00Z").unwrap()
+        );
+        assert!(
+            !claim_scan_failure_notification(&conn, i64::MAX, "2026-11-16T10:02:00Z").unwrap()
+        );
+
+        conn.execute("DELETE FROM scan_runs WHERE id=?1", [eligible]).unwrap();
+        assert!(!claim_scan_failure_notification(&conn, eligible, "2026-11-16T10:04:00Z").unwrap());
+    }
+
+    #[test]
+    fn scan_failure_claim_includes_failed_course_success_status_and_excludes_nonfailures() {
+        let conn = mem();
+        let failed_course = start_scan(&conn, "2026-11-16T10:00:00Z").unwrap();
+        finish_scan(
+            &conn,
+            failed_course,
+            "ok",
+            0,
+            0,
+            0,
+            0,
+            1,
+            1,
+            None,
+            false,
+            "2026-11-16T10:01:00Z",
+        )
+        .unwrap();
+        let success = start_scan(&conn, "2026-11-16T10:00:00Z").unwrap();
+        finish_scan(
+            &conn,
+            success,
+            "ok",
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+            None,
+            true,
+            "2026-11-16T10:01:00Z",
+        )
+        .unwrap();
+        let auth = start_scan(&conn, "2026-11-16T10:00:00Z").unwrap();
+        finish_scan(
+            &conn,
+            auth,
+            "auth_expired",
+            0,
+            0,
+            0,
+            0,
+            0,
+            1,
+            None,
+            false,
+            "2026-11-16T10:01:00Z",
+        )
+        .unwrap();
+
+        assert!(claim_scan_failure_notification(&conn, failed_course, "now").unwrap());
+        assert!(!claim_scan_failure_notification(&conn, success, "now").unwrap());
+        assert!(!claim_scan_failure_notification(&conn, auth, "now").unwrap());
+    }
+
+    #[test]
+    fn course_display_name_migrates_a_populated_legacy_database() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(include_str!("../migrations/0001_init.sql"))
+            .unwrap();
+        conn.execute(
+            "INSERT INTO courses (id, external_course_id, name, short_name, url, first_seen_at)
+             VALUES (42, 'legacy-42', 'Original Quanta name', 'CS F111', 'https://quanta.bits-pilani.ac.in/course/42', '2026-11-15T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        assert!(conn.prepare("SELECT display_name FROM courses").is_err());
+
+        migrate(&conn).unwrap();
+        migrate(&conn).unwrap();
+
+        let courses = list_courses(&conn).unwrap();
+        assert_eq!(courses.len(), 1);
+        let course = &courses[0];
+        assert_eq!(course.id, 42);
+        assert_eq!(course.external_course_id, "legacy-42");
+        assert_eq!(course.name, "Original Quanta name");
+        assert_eq!(course.short_name.as_deref(), Some("CS F111"));
+        assert_eq!(course.display_name, None);
+        assert_eq!(course.url, "https://quanta.bits-pilani.ac.in/course/42");
+        assert_eq!(course.first_seen_at, "2026-11-15T00:00:00Z");
+    }
+
+    #[test]
+    fn course_display_name_is_durable_and_discovery_preserves_source_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("course-name.sqlite");
+        let conn = Connection::open(&path).unwrap();
+        migrate(&conn).unwrap();
+        let id = upsert_course(
+            &conn,
+            "external-42",
+            "Original Quanta name",
+            Some("CS F111"),
+            "https://quanta.bits-pilani.ac.in/course/42",
+            "2026-11-15T00:00:00Z",
+        )
+        .unwrap();
+
+        let updated = set_course_display_name(&conn, id, Some("  Álgebra 東京  ")).unwrap();
+        assert_eq!(updated.display_name.as_deref(), Some("Álgebra 東京"));
+        assert_eq!(updated.name, "Original Quanta name");
+        assert_eq!(updated.short_name.as_deref(), Some("CS F111"));
+        assert_eq!(updated.external_course_id, "external-42");
+        upsert_course(
+            &conn,
+            "external-42",
+            "Updated Quanta source name",
+            Some("CS F111"),
+            "https://quanta.bits-pilani.ac.in/course/42",
+            "2026-11-16T00:00:00Z",
+        )
+        .unwrap();
+        assert_eq!(list_courses(&conn).unwrap()[0].display_name.as_deref(), Some("Álgebra 東京"));
+        drop(conn);
+
+        let reopened = Connection::open(path).unwrap();
+        migrate(&reopened).unwrap();
+        let course = &list_courses(&reopened).unwrap()[0];
+        assert_eq!(course.display_name.as_deref(), Some("Álgebra 東京"));
+        assert_eq!(course.name, "Updated Quanta source name");
+
+        let reset = set_course_display_name(&reopened, id, None).unwrap();
+        assert_eq!(reset.display_name, None);
+    }
+
+    #[test]
+    fn course_display_name_rejects_empty_overlong_and_unknown_without_mutation() {
+        let conn = mem();
+        let id = upsert_course(&conn, "external-7", "Original", None, "u", "t").unwrap();
+        assert!(set_course_display_name(&conn, id, Some(" \u{2003} ")).is_err());
+        assert!(set_course_display_name(&conn, id, Some(&"é".repeat(121))).is_err());
+        assert!(set_course_display_name(&conn, id + 100, Some("No course")).is_err());
+        assert_eq!(list_courses(&conn).unwrap()[0].display_name, None);
+        let max_length = "é".repeat(120);
+        assert_eq!(
+            set_course_display_name(&conn, id, Some(&max_length))
+                .unwrap()
+                .display_name
+                .as_deref(),
+            Some(max_length.as_str())
+        );
     }
 
     /// A file-backed database whose recorded version is older than the running
@@ -2058,6 +3049,220 @@ mod tests {
         )
         .unwrap();
         assert_eq!(limited.len(), 2);
+    }
+
+    #[test]
+    fn paged_history_queries_keep_full_totals_watermarks_filters_and_tie_order() {
+        let conn = mem();
+        insert_event(
+            &conn,
+            None,
+            None,
+            "new",
+            "before clear",
+            None,
+            "before-clear",
+            "2026-11-15T00:00:00Z",
+        )
+        .unwrap();
+        let old_scan = start_scan(&conn, "2026-11-15T00:00:00Z").unwrap();
+        finish_scan(
+            &conn,
+            old_scan,
+            "ok",
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            None,
+            false,
+            "2026-11-15T00:00:01Z",
+        )
+        .unwrap();
+        clear_history_activity(&conn).unwrap();
+
+        let tx = conn.unchecked_transaction().unwrap();
+        for n in 0..1_205 {
+            let kind = if n % 2 == 0 { "new" } else { "updated" };
+            let title = if n == 1_204 { "Needle result" } else { "event" };
+            insert_event(
+                &tx,
+                None,
+                Some(7),
+                kind,
+                title,
+                None,
+                &format!("visible-{n}"),
+                "2026-11-16T10:00:00Z",
+            )
+            .unwrap();
+        }
+        let suppressed_id = tx.last_insert_rowid() + 1;
+        insert_event(
+            &tx,
+            None,
+            Some(7),
+            "new",
+            "suppressed",
+            None,
+            "suppressed",
+            "2026-11-16T10:00:00Z",
+        )
+        .unwrap();
+        tx.execute(
+            "UPDATE change_events SET calendar_suppressed=1 WHERE id=?1",
+            [suppressed_id],
+        )
+        .unwrap();
+        tx.execute(
+            "UPDATE change_events SET read_at='2026-11-16T10:01:00Z' WHERE id=(SELECT MIN(id) FROM change_events WHERE deduplication_key LIKE 'visible-%')",
+            [],
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO inbox_dismissals(event_id,dismissed_at) SELECT id,'2026-11-16T10:01:00Z' FROM change_events WHERE deduplication_key='visible-2'",
+            [],
+        )
+        .unwrap();
+        for n in 0..605 {
+            let id = start_scan(&tx, "2026-11-16T10:00:00Z").unwrap();
+            finish_scan(
+                &tx,
+                id,
+                "ok",
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                None,
+                false,
+                "2026-11-16T10:01:00Z",
+            )
+            .unwrap();
+            assert_eq!(id, old_scan + 1 + n);
+        }
+        tx.commit().unwrap();
+
+        let first = query_history_events(
+            &conn,
+            &HistoryFilter {
+                offset: 0,
+                limit: 5,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(first.total, 1_205);
+        assert_eq!(first.items.len(), 5);
+        assert!(
+            first.items.windows(2).all(|pair| pair[0].id > pair[1].id),
+            "equal timestamps break ties by descending ID"
+        );
+        let later = query_history_events(
+            &conn,
+            &HistoryFilter {
+                offset: 1_000,
+                limit: 20,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(later.total, 1_205);
+        assert_eq!(later.items.len(), 20);
+        let old_attention_rows = query_history_events(
+            &conn,
+            &HistoryFilter {
+                offset: 1_202,
+                limit: 5,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            old_attention_rows
+                .items
+                .iter()
+                .map(|event| event.id)
+                .collect::<Vec<_>>(),
+            vec![4, 3, 2],
+            "read and Inbox-dismissed events remain in History"
+        );
+        assert!(old_attention_rows.items.last().unwrap().read);
+        let search = query_history_events(
+            &conn,
+            &HistoryFilter {
+                search: Some("NEEDLE".into()),
+                offset: 0,
+                limit: 10,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(search.total, 1);
+        assert_eq!(search.items[0].title, "Needle result");
+        let typed = query_history_events(
+            &conn,
+            &HistoryFilter {
+                change_type: Some("updated".into()),
+                course_id: Some(7),
+                offset: 0,
+                limit: 1,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(typed.total, 602);
+        assert_eq!(typed.items.len(), 1);
+        let date_range = query_history_events(
+            &conn,
+            &HistoryFilter {
+                since: Some("2026-11-16T10:00:00Z".into()),
+                until: Some("2026-11-16T10:00:01Z".into()),
+                offset: 0,
+                limit: 10,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(date_range.total, 1_205, "since is inclusive and until exclusive");
+
+        let scans = query_history_scans(&conn, &ScanFilter {
+            offset: 600,
+            limit: 10,
+        })
+        .unwrap();
+        assert_eq!(scans.total, 605);
+        assert_eq!(scans.items.len(), 5);
+        assert!(
+            scans.items.windows(2).all(|pair| pair[0].id > pair[1].id),
+            "equal start times break ties by descending ID"
+        );
+    }
+
+    #[test]
+    fn history_bounds_compare_instants_and_reject_invalid_filters() {
+        let conn = mem();
+        for (n, at) in ["2026-11-16T10:00:00Z", "2026-11-16T10:00:00.500Z", "2026-11-16T10:00:01Z"].iter().enumerate() {
+            insert_event(&conn, None, None, "new", "event", None, &format!("bounds-{n}"), at).unwrap();
+        }
+        let filter = HistoryFilter { offset: 0, limit: 10,
+            since: Some("2026-11-16T15:30:00.500+05:30".into()),
+            until: Some("2026-11-16T10:00:01Z".into()), ..Default::default() };
+        let page = query_history_events(&conn, &filter).unwrap();
+        assert_eq!(page.total, 1, "whole seconds before a fractional lower bound are excluded");
+        assert_eq!(page.items[0].detected_at, "2026-11-16T10:00:00.500Z");
+        for invalid in [
+            HistoryFilter { limit: 0, ..filter.clone() },
+            HistoryFilter { limit: 1001, ..filter.clone() },
+            HistoryFilter { since: Some("not-a-date".into()), ..filter.clone() },
+            HistoryFilter { since: filter.until.clone(), ..filter.clone() },
+            HistoryFilter { course_id: Some(0), ..filter.clone() },
+            HistoryFilter { change_type: Some("unknown".into()), ..filter.clone() },
+        ] { assert!(query_history_events(&conn, &invalid).is_err()); }
     }
 
     #[test]

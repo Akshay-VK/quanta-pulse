@@ -1,4 +1,4 @@
-// A2: Settings is a centred 160px + 720px grid with an unstyled-link section
+// Redesign: Settings is a centred 216px + 640px grid with an unstyled-link section
 // nav, sentence-case section titles and no doubled separators. jsdom does not
 // lay out CSS, so the structural contract is asserted against the stylesheet
 // source as well as the DOM.
@@ -6,7 +6,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import type { ThemeMode } from "../src/lib/types";
 import type { Settings } from "../src/lib/types";
 import contentCssRaw from "../src/styles/components/content.css?raw";
 import screensCssRaw from "../src/styles/components/screens.css?raw";
@@ -91,6 +90,7 @@ const SETTINGS: Settings = {
   notifyDeadlines: true,
   notifyAvailability: true,
   notifyAuth: true,
+  notifyScanFailures: true,
   quietHoursStart: null,
   quietHoursEnd: null,
   deadlineReminderHours: 48,
@@ -147,8 +147,7 @@ async function render() {
         onSave={() => Promise.resolve()}
         onLogout={() => Promise.resolve()}
         onRefresh={() => {}}
-        themeMode={"light" as ThemeMode}
-        onThemeMode={() => {}}
+        appearance={<p>Appearance controls</p>}
       />,
     );
   });
@@ -160,37 +159,43 @@ describe("Settings structure", () => {
     const labels = [...container.querySelectorAll(".settings-link")].map((el) => el.textContent);
     expect(labels).toEqual([
       "Appearance",
-      "Account",
+      "Account & connection",
       "Notifications",
-      "Telegram",
-      "Monitoring",
-      "Files",
-      "Data",
+      "Files & storage",
+      "Integrations",
+      "Data & recovery",
       "About",
     ]);
-    expect(container.querySelectorAll(".settings-section")).toHaveLength(8);
+    expect(container.querySelectorAll(".settings-section")).toHaveLength(7);
     // The first section is the one highlighted on load.
     expect(container.querySelector(".settings-link[aria-current='true']")?.textContent).toBe(
       "Appearance",
     );
   });
 
+  it("updates the current section immediately when a section link is chosen", async () => {
+    await render();
+    const files = [...container.querySelectorAll<HTMLAnchorElement>(".settings-link")].find((link) => link.textContent === "Files & storage");
+    expect(files).toBeTruthy();
+    await act(async () => files!.click());
+    expect(files?.getAttribute("aria-current")).toBe("true");
+  });
+
   it("renders no group dividers; the rows carry the separators", async () => {
     await render();
     expect(container.querySelectorAll(".settings-group-divider")).toHaveLength(0);
-    // Exactly one hairline per section, and the rule removing the last one.
     expect(rule(contentCss, ".setting-row")).toContain("border-bottom: 1px solid var(--line)");
-    expect(rule(screensCss, ".settings-section .setting-row:last-child")).toContain(
-      "border-bottom: 0",
+    expect(rule(screensCss, ".settings-section .setting-row")).toContain(
+      "border-top: 1px solid var(--line)",
     );
   });
 
-  it("shows the notification permission as muted text beside its action", async () => {
+  it("shows the notification permission as a status tag beside its action", async () => {
     await render();
     const row = [...container.querySelectorAll(".setting-row")].find((el) =>
       el.querySelector(".setting-title")?.textContent?.includes("Notification permission"),
     );
-    expect(row?.querySelector(".settings-inline .muted")).toBeTruthy();
+    expect(row?.querySelector(".settings-inline .tag")).toBeTruthy();
     // Each control is its own element, spaced by the flex gap.
     expect(row?.querySelectorAll(".settings-inline > *").length).toBeGreaterThan(1);
   });
@@ -214,7 +219,7 @@ describe("Settings structure", () => {
 describe("Settings > Telegram", () => {
   it("holds the bot fields and no second set of category switches", async () => {
     await render();
-    const section = container.querySelector("#telegram");
+    const section = container.querySelector("#integrations");
     expect(section).toBeTruthy();
     const titles = [...section!.querySelectorAll(".setting-title")].map((el) => el.textContent);
     expect(titles).toEqual(["Forward to Telegram", "Bot token", "Chat id", "Connection"]);
@@ -225,7 +230,7 @@ describe("Settings > Telegram", () => {
   it("never prints the bot token in clear text", async () => {
     await render();
     const token = container.querySelector<HTMLInputElement>(
-      "#telegram input[aria-label='Bot token']",
+      "#integrations input[aria-label='Bot token']",
     );
     expect(token?.type).toBe("password");
     expect(token?.autocomplete).toBe("off");
@@ -245,32 +250,27 @@ describe("Settings > Telegram", () => {
 });
 
 describe("Settings stylesheet contract", () => {
-  it("centres a bounded 160px navigation grid with a 24px gap", () => {
+  it("places the Settings rail flush with the panel and insets the content column", () => {
     expect(rule(screensCss, ".settings-layout")).toContain(
-      "grid-template-columns: 160px minmax(0, 1fr)",
+      "grid-template-columns: 216px minmax(0, 1fr)",
     );
-    expect(rule(screensCss, ".settings-layout")).toContain("gap: var(--sp-6)");
-    expect(rule(screensCss, ".settings-page")).toContain("max-width: 880px");
-    expect(rule(screensCss, ".settings-page")).toContain("margin-inline: auto");
+    expect(rule(screensCss, ".settings-sticky")).toContain("border-right: 1px solid var(--line)");
+    expect(rule(screensCss, ".settings-content")).toContain("max-width: 640px");
+    expect(rule(screensCss, ".settings-content")).toContain("padding: var(--sp-8) var(--sp-12)");
   });
 
-  it("renders the section list as plain 32px rows, not underlined links", () => {
+  it("renders the section list as plain 28px rows, not underlined links", () => {
     const link = rule(screensCss, ".settings-link");
     expect(link).toContain("text-decoration: none");
-    expect(link).toContain("height: 32px");
+    expect(link).toContain("height: 28px");
     expect(link).toContain("border-radius: var(--radius-sm)");
-    expect(rule(screensCss, ".settings-link[aria-current=\"true\"]")).toContain("font-weight: 600");
+    expect(rule(screensCss, ".settings-link[aria-current=\"true\"]")).toContain("font-weight: var(--weight-label)");
   });
 
-  it("uses compact section titles with 40px above each", () => {
-    const title = rule(screensCss, ".settings-group-title");
-    expect(title).toContain("font: 600 16px/24px var(--type-dialog)");
-    expect(title).toContain("padding: var(--sp-10) 0 var(--sp-2)");
-    expect(title).not.toContain("uppercase");
-    // Only the first section loses the lead-in; the old rule matched every h2.
-    expect(rule(screensCss, ".settings-section:first-child .settings-group-title")).toContain(
-      "padding-top: 0",
-    );
+  it("uses the reference title hierarchy and section gaps", () => {
+    expect(rule(screensCss, ".settings-title")).toContain("font-size: var(--fs-title)");
+    expect(rule(screensCss, ".settings-group-title")).toContain("font-size: var(--fs-section)");
+    expect(rule(screensCss, ".settings-section + .settings-section")).toContain("margin-top: var(--sp-8)");
   });
 
   it("defines the danger ghost variant without a solid fill", () => {

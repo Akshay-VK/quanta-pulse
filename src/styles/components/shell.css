@@ -5,172 +5,66 @@
 @layer components {
   /* ------------------------------------------------------------- sidebar */
 
+  .sidebar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-1);
+    min-height: 42px;
+    padding: 10px var(--sp-2) 0;
+  }
+
   .sidebar-brand {
-    flex: 0 0 auto;
-    height: var(--topbar-h);
     display: flex;
     align-items: center;
-    gap: var(--sp-3);
-    padding: 0 var(--sp-3);
+    gap: var(--sp-2);
     min-width: 0;
-    width: 100%;
-    text-align: left;
-  }
-
-  .app.rail .sidebar-brand,
-  .app .sidebar.overlay .sidebar-brand {
-    justify-content: center;
-    padding: 0;
-  }
-
-  .sidebar-brand .brand-mark {
-    flex: 0 0 auto;
-    display: inline-flex;
-    width: 26px;
-    height: 26px;
-    border-radius: var(--radius-sm);
-  }
-
-  .brand-name {
-    font: 500 14px/20px var(--type-ui-strong);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  /* macOS traffic-light inset (76px) — App adds [data-platform='macos']. */
-  [data-platform="macos"] .sidebar-brand {
-    padding-left: calc(76px + var(--sp-3));
-  }
-
-  [data-platform="macos"] .app.rail .sidebar-brand,
-  [data-platform="macos"] .app .sidebar.overlay .sidebar-brand {
-    padding-left: 0;
-  }
-
-  /* Sidebar search trigger (opens the palette). */
-  .search-trigger {
-    display: flex;
-    align-items: center;
-    gap: var(--sp-3);
-    width: 100%;
-    height: var(--control-h);
-    padding: 0 var(--sp-2);
-    border: 1px solid var(--line);
-    border-radius: var(--radius-sm);
-    background: var(--raised);
-    color: var(--muted);
-    font: 400 14px/20px var(--type-ui);
-  }
-
-  .search-trigger:hover {
-    box-shadow: inset 0 0 0 999px var(--hover);
-  }
-
-  .search-trigger .st-kbd {
-    margin-left: auto;
-  }
-
-  .app.rail .search-trigger {
-    justify-content: center;
-    padding: 0;
-    border-color: transparent;
-    background: transparent;
-  }
-
-  /* NavItem, CourseNavItem. */
-  /* Section label: caption style, not shouting caps (section 9). */
-  .nav-section-label {
-    padding: var(--sp-2) var(--sp-2) var(--sp-1);
-    font: 500 12px/16px var(--type-caption);
-    color: var(--faint);
-  }
-
-  .nav-item {
-    display: flex;
-    align-items: center;
-    gap: var(--sp-3);
-    width: 100%;
     height: 32px;
-    padding: 0 var(--sp-2);
+    padding: 0 6px;
     border-radius: var(--radius-sm);
-    color: var(--muted);
-    font: 400 14px/20px var(--type-ui);
-    transition: background-color var(--dur-fast) var(--ease-inout), color var(--dur-fast) var(--ease-inout);
-  }
-
-  .nav-item:hover {
-    background: var(--hover);
-    color: var(--ink);
-  }
-
-  .nav-item[aria-current="page"] {
-    background: var(--selected);
     color: var(--ink);
     font-weight: 600;
   }
 
-  .nav-item:disabled {
-    opacity: 0.5;
+  .sidebar-brand:hover {
+    background: var(--hover);
   }
 
-  .nav-badge {
-    margin-left: auto;
-    font-family: var(--type-mono);
-    font-size: 12px;
-    font-variant-numeric: tabular-nums;
-    color: var(--muted);
+  .brand-mark {
+    display: grid;
+    place-items: center;
+    flex: 0 0 20px;
+    height: 20px;
+    border-radius: var(--radius-sm);
+    color: var(--on-accent);
+    background: var(--accent);
+    font-size: var(--fs-meta);
   }
 
+  .brand-chevron {
+    color: var(--faint);
+  }
+
+  [data-platform="macos"] .sidebar:not(.overlay) {
+    padding-top: 24px;
+  }
+
+  .sidebar-scroll nav,
   .course-nav-list {
     display: flex;
     flex-direction: column;
     gap: 2px;
   }
 
-  .course-nav-item {
-    display: flex;
-    align-items: center;
-    gap: var(--sp-2);
-    width: 100%;
-    height: 28px;
-    padding: 0 var(--sp-2);
-    border-radius: var(--radius-sm);
-    color: var(--ink);
-    font-size: 13px;
-    line-height: 18px;
-    min-width: 0;
+  .nav-section-label {
+    padding: 14px var(--sp-2) var(--sp-1);
+    font-size: var(--fs-meta);
+    font-weight: var(--weight-label);
+    color: var(--faint);
   }
 
-  .course-nav-item:hover {
-    background: var(--hover);
-  }
-
-  /* A sidebar course entry reads as the page it opens, so its selected state
-     is persistent rather than hover-only. */
-  .course-nav-item[aria-current="page"] {
-    background: var(--selected);
-    font-weight: 600;
-  }
-
-  .course-nav-item.paused {
-    color: var(--muted);
-  }
-
-  .course-nav-code {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .course-nav-count {
-    margin-left: auto;
-    font-family: var(--type-mono);
-    font-size: 12px;
-    font-variant-numeric: tabular-nums;
-    color: var(--muted);
-  }
-
+  .nav-item,
+  .course-nav-item,
   .all-courses-link {
     display: flex;
     align-items: center;
@@ -179,62 +73,173 @@
     height: 28px;
     padding: 0 var(--sp-2);
     border-radius: var(--radius-sm);
-    color: var(--link);
-    font-size: 13px;
-    line-height: 18px;
-  }
-
-  .all-courses-link:hover {
-    background: var(--hover);
-  }
-
-  /* Collapse is chrome, not a link: muted text plus icon, never accent blue. */
-  .sidebar-collapse {
-    display: flex;
-    align-items: center;
-    gap: var(--sp-2);
-    width: 100%;
-    height: 28px;
-    padding: 0 var(--sp-2);
-    border-radius: var(--radius-sm);
     color: var(--muted);
-    font-size: 13px;
-    line-height: 18px;
+    text-align: left;
   }
 
-  .sidebar-collapse:hover {
+  .nav-item .icon {
+    display: grid;
+    flex: 0 0 16px;
+    place-items: center;
+    color: var(--faint);
+  }
+
+  .nav-item:hover,
+  .course-nav-item:hover,
+  .all-courses-link:hover {
     background: var(--hover);
     color: var(--ink);
   }
 
-  /* Rail: icons only, tooltips carry the names. `display: none` rather than
-     clipping, so nothing is left taking horizontal space. */
-  .app.rail .nav-section-label,
-  .app.rail .nav-label,
-  .app.rail .nav-badge,
-  .app.rail .course-nav-section,
-  .app.rail .all-courses-link,
-  .app.rail .brand-name,
-  .app.rail .sidebar-collapse,
-  .app.rail .st-kbd,
-  .app.rail .search-trigger .st-hint {
+  .nav-item[aria-current="page"],
+  .course-nav-item[aria-current="page"] {
+    background: var(--selected);
+    color: var(--ink);
+    font-weight: var(--weight-label);
+  }
+
+  .nav-item[aria-current="page"] .icon {
+    color: var(--ink);
+  }
+
+  .nav-badge,
+  .course-nav-count,
+  .sync-time {
+    margin-left: auto;
+    color: var(--faint);
+    font: var(--fs-meta)/var(--lh-ui) var(--type-mono);
+  }
+
+  .course-nav-code {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .all-courses-link {
+    font-size: var(--fs-label);
+  }
+
+  .sidebar-footer-actions {
+    position: absolute;
+    right: var(--sp-2);
+    bottom: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid var(--control-line);
+    border-radius: var(--radius-sm);
+    background: var(--floating);
+    opacity: 0;
+  }
+
+  .sidebar-footer {
+    position: relative;
+  }
+
+  .sidebar-footer:hover .sidebar-footer-actions,
+  .sidebar-footer:focus-within .sidebar-footer-actions {
+    opacity: 1;
+  }
+
+  @media (hover: none) {
+    .sidebar-footer-actions {
+      opacity: 1;
+    }
+  }
+
+  .sidebar-footer .icon-button {
+    width: 24px;
+    height: 24px;
+  }
+
+  .app.rail .sidebar:not(.overlay) .sidebar-header {
+    justify-content: center;
+    min-height: 32px;
+    padding: 8px 0 0;
+  }
+
+  .app.rail .sidebar:not(.overlay) .sidebar-brand {
+    justify-content: center;
+    padding: 0;
+    width: 32px;
+    height: 24px;
+  }
+
+  .app.rail .sidebar:not(.overlay) :is(.brand-name, .brand-chevron, .search-trigger, .nav-label, .nav-badge, .sync-copy, .sync-time) {
     display: none;
   }
 
-  .app.rail .nav-item {
+  .app.rail .sidebar:not(.overlay) .sidebar-scroll {
+    padding-top: 6px;
+  }
+
+  .app.rail .sidebar:not(.overlay) .nav-item {
     justify-content: center;
+    height: 32px;
     padding: 0;
   }
 
-  .app.rail .sidebar-footer .sync-copy,
-  .app.rail .sidebar-footer .sync-btn-label {
+  .app.rail .sidebar:not(.overlay) .sidebar-footer,
+  .app.rail .sidebar:not(.overlay) .sidebar-footer-actions {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .workspace-search {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 200px;
+    height: 28px;
+    padding: 0 6px 0 var(--sp-2);
+    border: 1px solid var(--control-line);
+    border-radius: var(--radius-sm);
+    color: var(--faint);
+    text-align: left;
+    font-size: var(--fs-label);
+  }
+
+  .workspace-search:hover {
+    color: var(--ink);
+    background: var(--hover);
+  }
+
+  .workspace-search .kbd {
+    margin-left: auto;
+  }
+
+  .workspace-navigation-trigger.icon-button {
     display: none;
   }
 
-  .app.rail .sidebar-footer {
-    align-items: center;
-    padding: var(--sp-2);
-    gap: var(--sp-2);
+  @media (max-width: 760px) {
+    .workspace-page :is(.workspace-view-header, .library-panel-header) {
+      position: relative;
+      padding-inline-start: 50px;
+    }
+
+    .workspace-navigation-trigger.icon-button {
+      position: absolute;
+      inset-inline-start: var(--sp-3);
+      top: 6px;
+      display: inline-flex;
+      border: 1px solid var(--control-line);
+    }
+  }
+
+  @media (max-width: 959px) {
+    .workspace-search {
+      justify-content: center;
+      width: 28px;
+      padding: 0;
+    }
+
+    .workspace-search :is(span, .kbd) {
+      display: none;
+    }
   }
 
   /* --------------------------------------------------------------- topbar */
@@ -333,6 +338,8 @@
     gap: var(--sp-2);
     min-width: 0;
     max-width: 100%;
+    height: 28px;
+    padding: 0 var(--sp-2);
     font-size: 12px;
     line-height: 16px;
     color: var(--muted);
@@ -340,8 +347,8 @@
 
   .sync-dot {
     flex: 0 0 auto;
-    width: 8px;
-    height: 8px;
+    width: 6px;
+    height: 6px;
     border-radius: var(--radius-pill);
     background: var(--dot-ok);
     position: relative;
@@ -441,20 +448,47 @@
   /* ----------------------------------------------------- command palette */
 
   .palette {
-    width: 560px;
+    width: 640px;
+    max-width: calc(100vw - 32px);
+    margin-top: 96px;
+    align-self: start;
   }
 
   .palette-input-row {
     display: flex;
     align-items: center;
-    gap: var(--sp-3);
-    height: 48px;
+    gap: var(--sp-2);
+    min-height: 52px;
     padding: 0 var(--sp-4);
     border-bottom: 1px solid var(--line);
   }
 
   .palette-input-row > svg {
     color: var(--muted);
+    flex: none;
+  }
+
+  .palette-tokens {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex: none;
+  }
+
+  .palette-token {
+    display: inline-flex;
+    align-items: center;
+    height: 24px;
+    padding: 0 8px;
+    border-radius: 6px;
+    border: 1px solid var(--accent-border, var(--line-accent, var(--accent)));
+    background: var(--accent-soft, var(--selection));
+    color: var(--accent-text, var(--accent));
+    font: 500 12px/16px var(--type-mono, var(--type-ui));
+  }
+
+  .palette-token.is-invalid {
+    opacity: 0.7;
   }
 
   .palette-input {
@@ -462,40 +496,47 @@
     border: 0;
     background: transparent;
     outline: none;
-    font: 14px/20px var(--type-ui);
+    font: 15px/22px var(--type-ui);
     color: var(--ink);
     min-width: 0;
   }
 
   .palette-input::placeholder {
-    color: var(--muted);
+    color: var(--faint);
+  }
+
+  .palette-input-row .palette-extra {
+    display: inline-flex;
+    flex: none;
+    margin-left: auto;
   }
 
   .palette-list {
-    padding: var(--sp-1);
+    padding: 4px 8px 8px;
     overflow-y: auto;
     max-height: 360px;
   }
 
   .palette-group {
-    padding-top: var(--sp-1);
+    padding-top: 0;
   }
 
   .palette-heading {
-    padding: var(--sp-2) var(--sp-3) var(--sp-1);
-    font: 500 12px/16px var(--type-caption);
+    margin: 0;
+    padding: 8px 8px 4px;
+    font: 500 11px/16px var(--type-caption);
     color: var(--faint);
   }
 
   .palette-item {
     display: flex;
     align-items: center;
-    gap: var(--sp-3);
-    height: 36px;
-    padding: 0 var(--sp-3);
+    gap: 10px;
+    min-height: 34px;
+    padding: 0 8px;
     border-radius: var(--radius-sm);
-    font: 14px/20px var(--type-ui);
-    color: var(--ink);
+    font: 13px/20px var(--type-ui);
+    color: var(--muted);
     cursor: pointer;
     outline: none;
   }
@@ -503,6 +544,12 @@
   .palette-item[aria-selected="true"],
   .palette-item[data-selected] {
     background: var(--hover);
+    color: var(--ink);
+  }
+
+  .palette-item .palette-main {
+    flex: 1 1 auto;
+    min-width: 0;
   }
 
   .palette-item .palette-extra {
@@ -510,16 +557,37 @@
     display: inline-flex;
     align-items: center;
     gap: var(--sp-2);
+    flex: none;
   }
 
   .palette-item .icon {
+    color: var(--faint);
+    width: 16px;
+    display: inline-flex;
+    justify-content: center;
+  }
+
+  .palette-mark {
+    background: transparent;
+    color: var(--accent-text, var(--accent));
+    font-weight: 600;
+  }
+
+  .palette-empty,
+  .palette-empty-state {
+    padding: 28px 8px;
+    text-align: center;
+    font: 13px/20px var(--type-ui);
     color: var(--muted);
   }
 
-  .palette-empty {
-    padding: var(--sp-6);
-    text-align: center;
-    font: 14px/20px var(--type-ui);
+  .palette-empty-title {
+    font-weight: 600;
+    color: var(--ink);
+    margin-bottom: 4px;
+  }
+
+  .palette-empty-copy {
     color: var(--muted);
   }
 
@@ -527,14 +595,22 @@
     display: flex;
     align-items: center;
     gap: var(--sp-4);
-    padding: var(--sp-2) var(--sp-4);
+    min-height: 36px;
+    padding: 0 var(--sp-4);
     border-top: 1px solid var(--line);
-    font-size: 12px;
+    font-size: 11px;
     line-height: 16px;
     color: var(--faint);
   }
 
-  .palette-footer .kbd {
-    color: var(--muted);
+  .palette-footer .hint {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .palette-footer-note {
+    margin-left: auto;
+    font: 11px/16px var(--type-mono, var(--type-ui));
   }
 }

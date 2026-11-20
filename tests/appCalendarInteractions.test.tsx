@@ -18,6 +18,8 @@ describe("Calendar details in the application", () => {
     });
     app = await renderApp();
     await click(button("Calendar"));
+    await click(button("Activity calendar"));
+    await click(document.querySelector<HTMLButtonElement>('.cal-day[aria-current="date"]')!);
     await flushApp();
 
     await click(button("Show details for New calendar event"));
@@ -37,6 +39,8 @@ describe("Calendar details in the application", () => {
     });
     app = await renderApp();
     await click(button("Calendar"));
+    await click(button("Activity calendar"));
+    await click(document.querySelector<HTMLButtonElement>('.cal-day[aria-current="date"]')!);
     await click(button("Show details for Second event"));
     expect(button("Show details for Second event").closest(".resource-row")?.classList.contains("selected")).toBe(true);
     expect(button("Show details for First event").closest(".resource-row")?.classList.contains("selected")).toBe(false);
@@ -55,6 +59,8 @@ describe("Calendar details in the application", () => {
       .mockResolvedValueOnce({ ...digest, items: [] });
     app = await renderApp();
     await click(button("Calendar"));
+    await click(button("Activity calendar"));
+    await click(document.querySelector<HTMLButtonElement>('.cal-day[aria-current="date"]')!);
     async function move(key: string) {
       await act(async () => {
         document.querySelector(".cal-day.selected")!.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
@@ -81,6 +87,8 @@ describe("Calendar details in the application", () => {
     });
     app = await renderApp();
     await click(button("Calendar"));
+    await click(button("Activity calendar"));
+    await click(document.querySelector<HTMLButtonElement>('.cal-day[aria-current="date"]')!);
     await click(button("Show details for New calendar event"));
     const selectedDay = document.querySelector<HTMLButtonElement>(".cal-day.selected")!;
 

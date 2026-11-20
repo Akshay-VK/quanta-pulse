@@ -10,7 +10,10 @@ use tauri_plugin_opener::OpenerExt;
 use zeroize::Zeroizing;
 
 use crate::db::{self, EventFilter, ResourceFilter};
-use crate::models::{AuthStatus, CacheStats, ChangeEvent, Course, Digest, Resource, ScanOutcome, ScanRun, SessionRefreshResult, SessionResetResult, SyncStatus};
+use crate::models::{
+    AuthStatus, CacheStats, ChangeEvent, Course, Digest, Resource, ScanOutcome, ScanRun,
+    SessionRefreshResult, SessionResetResult, SyncStatus,
+};
 use crate::quanta::client::QuantaError;
 use crate::quanta::parse::extract_readable_text;
 use crate::quanta::preview::{
@@ -19,7 +22,7 @@ use crate::quanta::preview::{
 };
 use crate::quanta::urlnorm::is_internal;
 use crate::settings::Settings;
-use crate::state::AppState;
+use crate::state::{AppState, SyncControl};
 use crate::{auth, notify};
 
 #[derive(Debug, Deserialize)]
@@ -65,6 +68,16 @@ pub async fn start_sso_login(app: AppHandle) -> Result<AuthStatus, String> {
 }
 
 #[tauri::command]
+pub fn focus_sso_login(app: AppHandle, attempt_id: String) -> Result<(), String> {
+    auth::focus_sso_login(&app, &attempt_id)
+}
+
+#[tauri::command]
+pub fn cancel_sso_login(app: AppHandle, attempt_id: String) -> Result<(), String> {
+    auth::cancel_sso_login(&app, &attempt_id)
+}
+
+#[tauri::command]
 pub fn auth_status(state: State<AppState>) -> AuthStatus {
     auth::auth_status(&state)
 }
@@ -90,6 +103,16 @@ pub fn logout(state: State<AppState>) -> Result<(), String> {
 pub fn list_courses(state: State<AppState>) -> Result<Vec<Course>, String> {
     let conn = state.conn();
     db::list_courses(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_course_display_name(
+    state: State<AppState>,
+    course_id: i64,
+    display_name: Option<String>,
+) -> Result<Course, String> {
+    let conn = state.conn();
+    db::set_course_display_name(&conn, course_id, display_name.as_deref())
 }
 
 #[tauri::command]
@@ -124,8 +147,12 @@ pub fn list_events(
     limit: Option<i64>,
 ) -> Result<Vec<ChangeEvent>, String> {
     let conn = state.conn();
-    db::list_events(&conn, unread_only.unwrap_or(false), limit.unwrap_or(200).clamp(1, 1000))
-        .map_err(|e| e.to_string())
+    db::list_events(
+        &conn,
+        unread_only.unwrap_or(false),
+        limit.unwrap_or(200).clamp(1, 1000),
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -138,6 +165,15 @@ pub fn list_dashboard_events(state: State<AppState>) -> Result<Vec<ChangeEvent>,
 pub fn list_history_events(state: State<AppState>) -> Result<Vec<ChangeEvent>, String> {
     let conn = state.conn();
     db::list_history_events(&conn, 1000).map_err(|e| e.to_string())
+}
+
+/// Query a page of complete filtered History activity.
+#[tauri::command]
+pub fn query_history_events(
+    state: State<AppState>,
+    filter: crate::models::HistoryFilter,
+) -> Result<crate::models::HistoryPage, String> {
+    db::query_history_events(&state.conn(), &filter)
 }
 
 #[tauri::command]
@@ -165,20 +201,153 @@ pub fn events_range(
     to: Option<String>,
     course_id: Option<i64>,
     limit: Option<i64>,
+    offset: Option<i64>,
 ) -> Result<Vec<ChangeEvent>, String> {
     let conn = state.conn();
-    let (since, until) = local_date_range(from.as_deref(), to.as_deref())?;
     db::list_events_filtered(
         &conn,
-        &EventFilter {
-            course_id,
-            since,
-            until,
-            limit: Some(limit.unwrap_or(2000).clamp(1, 5000)),
-            ..EventFilter::default()
-        },
+        &events_range_filter(from.as_deref(), to.as_deref(), course_id, limit, offset)?,
     )
     .map_err(|e| e.to_string())
+}
+
+/// Preserve calendar membership while normalizing the existing range query.
+fn events_range_filter(
+    from: Option<&str>,
+    to: Option<&str>,
+    course_id: Option<i64>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Result<EventFilter, String> {
+    let (since, until) = local_date_range(from, to)?;
+    Ok(EventFilter {
+        course_id,
+        since,
+        until,
+        limit: Some(limit.unwrap_or(2000).clamp(1, 5000)),
+        offset: Some(offset.unwrap_or(0).max(0)),
+        ..EventFilter::default()
+    })
+}
+
+#[cfg(test)]
+mod events_range_tests {
+    use super::*;
+
+    #[test]
+    fn events_range_normalizes_defaults_offsets_and_limits() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        db::migrate(&conn).unwrap();
+        let tx = conn.unchecked_transaction().unwrap();
+        for id in 1..=6001 {
+            db::insert_event(
+                &tx,
+                None,
+                None,
+                "new",
+                "event",
+                None,
+                &format!("range-{id}"),
+                "2026-11-16T10:00:00Z",
+            )
+            .unwrap();
+        }
+        tx.commit().unwrap();
+        for (limit, expected) in [
+            (None, 2000),
+            (Some(0), 1),
+            (Some(-1), 1),
+            (Some(5000), 5000),
+            (Some(9000), 5000),
+            (Some(123), 123),
+        ] {
+            for offset in [None, Some(0), Some(-10)] {
+                let filter = events_range_filter(None, None, None, limit, offset).unwrap();
+                assert_eq!(filter.offset, Some(0));
+                let page = db::list_events_filtered(&conn, &filter).unwrap();
+                assert_eq!(page.len(), expected);
+            }
+        }
+        let filter = events_range_filter(None, None, None, Some(2000), Some(6000)).unwrap();
+        let page = db::list_events_filtered(&conn, &filter).unwrap();
+        assert_eq!(page.len(), 1);
+        assert_eq!(page[0].id, 1);
+        let filter = events_range_filter(None, None, None, None, Some(6001)).unwrap();
+        assert!(db::list_events_filtered(&conn, &filter).unwrap().is_empty());
+        // The shared DB default stays 500, independent of the command's 2000.
+        assert_eq!(
+            db::list_events_filtered(&conn, &EventFilter::default())
+                .unwrap()
+                .len(),
+            500
+        );
+    }
+
+    #[test]
+    fn events_range_local_dates_are_half_open_and_errors_unchanged() {
+        use chrono::{TimeZone, Timelike};
+        let filter = events_range_filter(
+            Some("2026-11-16"),
+            Some("2026-11-16"),
+            Some(7),
+            None,
+            Some(1),
+        )
+        .unwrap();
+        let since = chrono::DateTime::parse_from_rfc3339(filter.since.as_deref().unwrap()).unwrap();
+        let until = chrono::DateTime::parse_from_rfc3339(filter.until.as_deref().unwrap()).unwrap();
+        assert_eq!(
+            since.with_timezone(&chrono::Local).date_naive().to_string(),
+            "2026-11-16"
+        );
+        assert_eq!(
+            until.with_timezone(&chrono::Local).date_naive().to_string(),
+            "2026-11-17"
+        );
+        assert_eq!(since.with_timezone(&chrono::Local).hour(), 0);
+        assert_eq!(until.with_timezone(&chrono::Local).hour(), 0);
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        db::migrate(&conn).unwrap();
+        let before = (since - chrono::Duration::seconds(1))
+            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        for (id, time, course) in [
+            (1, before.as_str(), 7),
+            (2, filter.since.as_deref().unwrap(), 7),
+            (3, filter.since.as_deref().unwrap(), 7),
+            (4, filter.until.as_deref().unwrap(), 7),
+            (5, filter.since.as_deref().unwrap(), 8),
+        ] {
+            db::insert_event(
+                &conn,
+                None,
+                Some(course),
+                "new",
+                "boundary",
+                None,
+                &format!("boundary-{id}"),
+                time,
+            )
+            .unwrap();
+        }
+        let page = db::list_events_filtered(&conn, &filter).unwrap();
+        assert_eq!(page.iter().map(|e| e.id).collect::<Vec<_>>(), vec![2]);
+        for (from, to) in [(Some("invalid"), None), (None, Some("2026-02-30"))] {
+            assert_eq!(
+                events_range_filter(from, to, None, None, None).unwrap_err(),
+                "Invalid date (expected YYYY-MM-DD)."
+            );
+        }
+        let open = events_range_filter(Some(" "), None, None, None, None).unwrap();
+        assert!(open.since.is_none() && open.until.is_none());
+        // Assert conversion independently using the host local timezone.
+        let expected = chrono::Local
+            .with_ymd_and_hms(2026, 11, 16, 0, 0, 0)
+            .earliest()
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        assert_eq!(filter.since.as_deref(), Some(expected.as_str()));
+    }
 }
 
 #[tauri::command]
@@ -188,9 +357,48 @@ pub fn list_scans(state: State<AppState>, limit: Option<i64>) -> Result<Vec<Scan
 }
 
 #[tauri::command]
-pub fn list_history_scans(state: State<AppState>, limit: Option<i64>) -> Result<Vec<ScanRun>, String> {
+pub fn list_history_scans(
+    state: State<AppState>,
+    limit: Option<i64>,
+) -> Result<Vec<ScanRun>, String> {
     let conn = state.conn();
     db::list_history_scans(&conn, limit.unwrap_or(50).clamp(1, 500)).map_err(|e| e.to_string())
+}
+
+/// Query a page of History scan runs, with a complete filtered total.
+#[tauri::command]
+pub fn query_history_scans(
+    state: State<AppState>,
+    filter: crate::models::ScanFilter,
+) -> Result<crate::models::ScanPage, String> {
+    db::query_history_scans(&state.conn(), &filter)
+}
+
+/// Capture every eligible unread event ID associated with a resource.
+#[tauri::command]
+pub fn snapshot_resource_unread_event_ids(
+    state: State<AppState>,
+    resource_id: i64,
+) -> Result<Vec<i64>, String> {
+    crate::attention::snapshot_resource_unread_event_ids(&state.conn(), resource_id)
+}
+
+/// Capture all eligible event IDs associated with the selected resources.
+#[tauri::command]
+pub fn snapshot_resource_event_ids(
+    state: State<AppState>,
+    resource_ids: Vec<i64>,
+) -> Result<Vec<i64>, String> {
+    crate::attention::snapshot_resource_event_ids(&state.conn(), &resource_ids)
+}
+
+/// Fetch observed per-course diagnostics for one scan; legacy scans return none.
+#[tauri::command]
+pub fn scan_details(
+    state: State<AppState>,
+    scan_id: i64,
+) -> Result<Option<crate::models::ScanDetails>, String> {
+    db::scan_details(&state.conn(), scan_id).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -223,6 +431,78 @@ pub fn daily_digest(state: State<AppState>, date: Option<String>) -> Result<Dige
     db::digest(&conn, &start, &end, &day.to_string()).map_err(|e| e.to_string())
 }
 
+/// Complete grouped attention collection, with matching counts before pagination.
+#[tauri::command]
+pub fn query_inbox(
+    state: State<AppState>,
+    filter: crate::models::InboxFilter,
+) -> Result<crate::models::InboxPage, String> {
+    crate::attention::inbox(&state.conn(), &filter)
+}
+
+/// Capture all matching event IDs; offset and limit do not restrict the scope.
+#[tauri::command]
+pub fn snapshot_inbox_event_ids(
+    state: State<AppState>,
+    filter: crate::models::InboxFilter,
+) -> Result<Vec<i64>, String> {
+    crate::attention::snapshot_inbox(&state.conn(), &filter)
+}
+
+/// Set explicit desired state; this is never a toggle.
+#[tauri::command]
+pub fn set_event_read_state(
+    state: State<AppState>,
+    event_ids: Vec<i64>,
+    desired_read: bool,
+) -> Result<(), String> {
+    crate::attention::set_event_read_state(
+        &state.conn(),
+        &event_ids,
+        desired_read,
+        &db::now_rfc3339(),
+    )
+}
+
+/// Persistent Inbox-only dismissal of an explicit captured set.
+#[tauri::command]
+pub fn dismiss_inbox_events(state: State<AppState>, event_ids: Vec<i64>) -> Result<(), String> {
+    crate::attention::dismiss_inbox(&state.conn(), &event_ids, &db::now_rfc3339())
+}
+
+/// Legacy whole-history deletion for callers not yet migrated to frozen scopes.
+#[tauri::command]
+pub fn delete_history(state: State<AppState>, include_scans: bool) -> Result<(), String> {
+    crate::attention::delete_history(&state.conn(), include_scans)
+}
+
+/// Capture all physically stored History event IDs and optionally scan IDs.
+#[tauri::command]
+pub fn snapshot_history_deletion(
+    state: State<AppState>,
+    include_scans: bool,
+) -> Result<crate::models::HistoryDeletionScope, String> {
+    crate::attention::snapshot_history_deletion(&state.conn(), include_scans)
+}
+
+/// Apply only a previously captured History deletion scope.
+#[tauri::command]
+pub fn delete_history_snapshot(
+    state: State<AppState>,
+    scope: crate::models::HistoryDeletionScope,
+) -> Result<crate::models::HistoryDeletionResult, String> {
+    crate::attention::delete_history_snapshot(&state.conn(), &scope)
+}
+
+/// Complete resource deadlines; independent of all event/view-clear state.
+#[tauri::command]
+pub fn query_due_resources(
+    state: State<AppState>,
+    filter: crate::models::DueFilter,
+) -> Result<crate::models::DuePage, String> {
+    crate::attention::due_resources(&state.conn(), &filter)
+}
+
 /* --------------------------------------------------------------------- sync */
 
 #[tauri::command]
@@ -245,19 +525,8 @@ pub fn sync_status(state: State<AppState>) -> SyncStatus {
 
 #[tauri::command]
 pub fn rebuild_baseline(state: State<AppState>, course_id: Option<i64>) -> Result<(), String> {
-    let conn = state.conn();
-    if let Some(id) = course_id {
-        // Per-course re-baseline: the next scan suppresses events for this course.
-        let existing = db::get_kv(&conn, "rebaseline_courses").unwrap_or_else(|| "[]".into());
-        let mut list: Vec<i64> = serde_json::from_str(&existing).unwrap_or_default();
-        if !list.contains(&id) {
-            list.push(id);
-        }
-        db::set_kv(&conn, "rebaseline_courses", &serde_json::to_string(&list).unwrap())
-            .map_err(|e| e.to_string())?;
-    } else {
-        db::del_kv(&conn, "baseline_established").map_err(|e| e.to_string())?;
-    }
+    let mut conn = state.conn();
+    db::request_baseline_reset(&mut conn, course_id).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -321,7 +590,11 @@ const PREVIEW_MAX_TEXT_CHARS: usize = 200_000;
 /// - `unsupported` — a type the webview cannot render; open it externally.
 /// - `tooLarge` — exceeded `limitBytes`; open it externally.
 #[derive(Debug, Serialize)]
-#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum ResourcePreview {
     Text {
         text: String,
@@ -403,10 +676,9 @@ pub async fn preview_resource(
 
     // From here the network is needed, so take the lease (it pauses scanning)
     // and require a session.
-    let _preview_lease = state
-        .sync
-        .begin_preview()
-        .ok_or_else(|| "Quanta authentication is being reset. Try again after sign-in.".to_string())?;
+    let _preview_lease = state.sync.begin_preview().ok_or_else(|| {
+        "Quanta authentication is being reset. Try again after sign-in.".to_string()
+    })?;
     let Some(client) = state.client() else {
         return Err("Sign in to Quanta to preview resources.".to_string());
     };
@@ -598,7 +870,9 @@ pub fn test_notification(app: AppHandle) {
 #[tauri::command]
 pub fn db_info(state: State<AppState>) -> DbInfo {
     let conn = state.conn();
-    let size = std::fs::metadata(&state.db_path).map(|m| m.len()).unwrap_or(0);
+    let size = std::fs::metadata(&state.db_path)
+        .map(|m| m.len())
+        .unwrap_or(0);
     let log_dir = crate::logging::log_dir().map(|p| p.to_string_lossy().to_string());
     DbInfo {
         path: state.db_path.to_string_lossy().to_string(),
@@ -719,7 +993,10 @@ fn local_midnight_to_utc(date: chrono::NaiveDate) -> Result<String, String> {
         LocalResult::None => None,
     };
     resolved
-        .map(|dt| dt.with_timezone(&chrono::Utc).to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+        .map(|dt| {
+            dt.with_timezone(&chrono::Utc)
+                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        })
         .ok_or_else(|| "Could not resolve local timezone.".to_string())
 }
 
@@ -735,20 +1012,46 @@ pub fn mirror_status(state: State<AppState>) -> crate::models::MirrorStats {
 /// One status per indexed resource, so rows can show their own mirror state
 /// without one command per row.
 #[tauri::command]
-pub fn mirror_local_files(
-    state: State<'_, AppState>,
-) -> Vec<crate::models::LocalFileStatus> {
+pub fn mirror_local_files(state: State<'_, AppState>) -> Vec<crate::models::LocalFileStatus> {
     let conn = state.conn();
     state
         .mirror
         .statuses(&conn)
         .into_iter()
-        .map(|(resource_id, status, error)| crate::models::LocalFileStatus {
-            resource_id,
-            status,
-            error,
-        })
+        .map(
+            |(resource_id, status, error)| crate::models::LocalFileStatus {
+                resource_id,
+                status,
+                error,
+            },
+        )
         .collect()
+}
+
+/// Current per-resource download attempts and known mirror states.
+#[tauri::command]
+pub fn mirror_download_progress(
+    state: State<'_, AppState>,
+) -> Vec<crate::models::MirrorDownloadProgress> {
+    let conn = state.conn();
+    state.mirror.download_progress(&conn)
+}
+
+/// Cancel one resource's current mirror attempt.
+#[tauri::command]
+pub fn cancel_mirror_download(state: State<'_, AppState>, resource_id: i64) {
+    let conn = state.conn();
+    state.mirror.cancel_download(&conn, resource_id);
+}
+
+/// Queue a fresh attempt for one resource.
+#[tauri::command]
+pub fn retry_mirror_download(
+    state: State<'_, AppState>,
+    resource_id: i64,
+) -> crate::models::MirrorDownloadProgress {
+    let conn = state.conn();
+    state.mirror.retry_download(&conn, resource_id)
 }
 
 /// The resolved local copy of one resource, for the peek panel. `null` when
@@ -781,9 +1084,28 @@ pub fn mirror_delete_all(state: State<'_, AppState>) -> crate::models::MirrorSta
         let conn = state.conn();
         state.mirror.delete_all(&conn)
     };
-    tracing::info!(removed, "all local mirror copies deleted");
+    tracing::info!(removed, "legacy mirror delete-all command completed");
     let conn = state.conn();
     state.mirror.stats(&conn)
+}
+
+/// Capture the exact saved files covered by a mirror deletion confirmation.
+#[tauri::command]
+pub fn snapshot_mirror_delete_scope(
+    state: State<'_, AppState>,
+) -> Result<crate::core::mirror::MirrorDeleteScope, String> {
+    let conn = state.conn();
+    state.mirror.snapshot_delete_scope(&conn)
+}
+
+/// Delete only outstanding entries from a previously confirmed mirror scope.
+#[tauri::command]
+pub fn mirror_delete_scope(
+    state: State<'_, AppState>,
+    scope_id: String,
+) -> Result<crate::core::mirror::MirrorDeleteResult, String> {
+    let conn = state.conn();
+    state.mirror.delete_scope(&conn, &scope_id)
 }
 
 /// Let the user pick the mirror folder. Existing files stay where they are: the
@@ -826,7 +1148,10 @@ pub async fn mirror_move_files(
 ) -> Result<crate::models::MirrorStats, String> {
     let moved = {
         let conn = state.conn();
-        state.mirror.move_to_new_root(&conn).map_err(|e| e.to_string())?
+        state
+            .mirror
+            .move_to_new_root(&conn)
+            .map_err(|e| e.to_string())?
     };
     tracing::info!(moved, "mirror files moved to new root");
     let conn = state.conn();
@@ -1057,16 +1382,18 @@ pub fn app_version() -> String {
 
 /// Stop background work and wait for in-flight scans, downloads and previews
 /// to finish before an update installs and the app relaunches.
+fn request_update_quiescence(sync: &SyncControl) {
+    // This is deliberately a cooperative cancel request, not scheduler shutdown.
+    // A later scan resets the flag, so a failed update leaves monitoring alive.
+    sync.cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
 #[tauri::command]
 pub fn prepare_for_update(_app: AppHandle, state: State<AppState>) -> Result<(), String> {
-    state
-        .sync
-        .cancel
-        .store(true, std::sync::atomic::Ordering::SeqCst);
-    state
-        .sync
-        .shutdown
-        .store(true, std::sync::atomic::Ordering::SeqCst);
+    // Cancel the in-flight scan so it can finish without starting another one,
+    // but do not permanently shut down the scheduler: an update that fails to
+    // install must leave background sync and update checks running.
+    request_update_quiescence(&state.sync);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     loop {
         if !state.is_busy() {
@@ -1080,4 +1407,18 @@ pub fn prepare_for_update(_app: AppHandle, state: State<AppState>) -> Result<(),
     Ok(())
 }
 
+#[cfg(test)]
+mod update_prepare_tests {
+    use super::request_update_quiescence;
+    use crate::state::SyncControl;
+    use std::sync::atomic::Ordering;
 
+    #[test]
+    fn update_prepare_requests_cooperative_cancel_without_stopping_monitoring() {
+        let sync = SyncControl::default();
+        request_update_quiescence(&sync);
+
+        assert!(sync.cancel.load(Ordering::SeqCst));
+        assert!(!sync.shutdown.load(Ordering::SeqCst));
+    }
+}

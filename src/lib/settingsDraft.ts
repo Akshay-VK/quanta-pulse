@@ -3,6 +3,7 @@ import type { Settings } from "./types";
 export type SettingsDraftValidation = {
   syncIntervalMinutes?: string;
   deadlineReminderHours?: string;
+  mirrorKeepVersions?: string;
   quietHoursStart?: string;
   quietHoursEnd?: string;
   quietHours?: string;
@@ -36,8 +37,12 @@ export function isValidChatId(s: string | null | undefined): boolean {
 export function validateSettingsDraft(draft: Settings): SettingsDraftValidation {
   const errors: SettingsDraftValidation = {};
   const sync = draft.syncIntervalMinutes;
-  if (!Number.isFinite(sync) || sync < 15 || sync > 24 * 60) {
-    errors.syncIntervalMinutes = "Sync interval must be between 15 and 1440 minutes.";
+  if (!Number.isFinite(sync) || !Number.isInteger(sync) || sync < 5 || sync > 24 * 60) {
+    errors.syncIntervalMinutes = "Sync interval must be a whole number between 5 and 1440 minutes.";
+  }
+  const versions = draft.mirrorKeepVersions;
+  if (!Number.isInteger(versions) || versions < 0 || versions > 10) {
+    errors.mirrorKeepVersions = "Previous versions must be a whole number between 0 and 10.";
   }
   const deadline = draft.deadlineReminderHours;
   if (!Number.isFinite(deadline) || deadline < 1 || deadline > 24 * 30) {
@@ -52,6 +57,8 @@ export function validateSettingsDraft(draft: Settings): SettingsDraftValidation 
   if (draft.quietHoursStart && draft.quietHoursEnd && isValidHHMM(draft.quietHoursStart) && isValidHHMM(draft.quietHoursEnd)) {
     if (draft.quietHoursStart === draft.quietHoursEnd) {
       errors.quietHours = "Quiet hours start and end cannot be the same.";
+    } else if (draft.quietHoursStart > draft.quietHoursEnd) {
+      errors.quietHours = "Quiet hours start must be before the end.";
     }
   }
   if (!isValidBotToken(draft.telegramBotToken)) {

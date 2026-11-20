@@ -39,6 +39,7 @@ const COURSE: Course = {
   externalCourseId: "math-f211",
   name: "MATH F211",
   shortName: "MATH F211",
+  displayName: null,
   url: "https://quanta.bits-pilani.ac.in/course/view.php?id=1",
   firstSeenAt: "2026-09-01T00:00:00Z",
   lastScannedAt: "2026-10-12T00:00:00Z",
@@ -104,6 +105,7 @@ async function render() {
       <TooltipProvider>
         <CoursePage
           course={COURSE}
+          inventory={RESOURCES}
           onOpen={() => {}}
           onPreview={() => {}}
           onChanged={() => {}}
@@ -148,7 +150,7 @@ async function collapseAll() {
 }
 
 function selectedIndex(): number {
-  return treeRows().findIndex((el) => el.getAttribute("aria-selected") === "true");
+  return treeRows().findIndex((el) => el === document.activeElement);
 }
 
 describe("tree keyboard model", () => {
@@ -191,7 +193,7 @@ describe("tree keyboard model", () => {
     expect(selectedIndex()).toBe(0);
 
     await press("ArrowRight", 0);
-    expect(selectedIndex()).toBe(1);
+    expect(document.activeElement?.textContent).toContain("Notice");
   });
 
   it("ArrowLeft collapses an expanded folder, else moves to the parent", async () => {

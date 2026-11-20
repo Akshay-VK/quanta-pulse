@@ -12,6 +12,8 @@ pub struct Course {
     pub external_course_id: String,
     pub name: String,
     pub short_name: Option<String>,
+    /// Local presentation override; never used as the Quanta identity.
+    pub display_name: Option<String>,
     pub url: String,
     pub first_seen_at: Timestamp,
     pub last_scanned_at: Option<Timestamp>,
@@ -40,7 +42,8 @@ pub struct Resource {
     pub published_at: Option<Timestamp>,
     /// When the underlying file/page was last modified, if known.
     pub modified_at: Option<Timestamp>,
-    /// Deadline for assignments and quizzes, if known.
+    /// Deadline for assignments and quizzes, if known: RFC 3339 instant or
+    /// YYYY-MM-DD when the source supplies only a date.
     pub due_at: Option<Timestamp>,
     /// When Quanta Pulse first observed the resource.
     pub first_seen_at: Timestamp,
@@ -116,6 +119,62 @@ pub struct ChangeEvent {
     pub read: bool,
 }
 
+/// Filter and explicit pagination for the History Activity tab.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryFilter {
+    pub change_type: Option<String>,
+    pub course_id: Option<i64>,
+    /// Inclusive RFC 3339 timestamp.
+    pub since: Option<Timestamp>,
+    /// Exclusive RFC 3339 timestamp.
+    pub until: Option<Timestamp>,
+    pub search: Option<String>,
+    pub offset: usize,
+    pub limit: usize,
+}
+
+/// Complete filtered total and one page of History activity.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryPage {
+    pub items: Vec<ChangeEvent>,
+    pub total: usize,
+}
+
+/// Explicit pagination for History scan runs. The History scan recipe has no
+/// additional filters.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanFilter {
+    pub offset: usize,
+    pub limit: usize,
+}
+
+/// Complete History scan total and one page of runs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanPage {
+    pub items: Vec<ScanRun>,
+    pub total: usize,
+}
+
+/// Exact History IDs frozen for a destructive confirmation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryDeletionScope {
+    pub event_ids: Vec<i64>,
+    pub scan_ids: Vec<i64>,
+}
+
+/// Number of rows removed from a previously confirmed History scope.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryDeletionResult {
+    pub events_deleted: usize,
+    pub scans_deleted: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanRun {
@@ -131,6 +190,48 @@ pub struct ScanRun {
     pub courses_failed: i64,
     pub error_summary: Option<String>,
     pub is_baseline: bool,
+}
+
+/// Terminal state observed for a course scan or one of its steps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ScanCourseStatus {
+    Success,
+    Partial,
+    Failed,
+    Cancelled,
+}
+
+/// Persisted per-course observations for one scan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanDetails {
+    pub scan_id: i64,
+    pub courses: Vec<ScanCourseDetail>,
+}
+
+/// Actual timing, result and steps observed for a course during a scan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanCourseDetail {
+    pub course_id: Option<i64>,
+    pub course_name: String,
+    pub status: ScanCourseStatus,
+    pub started_at: Timestamp,
+    pub completed_at: Option<Timestamp>,
+    pub steps: Vec<ScanStep>,
+    pub error: Option<String>,
+}
+
+/// Actual step timing and result observed during a course scan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanStep {
+    pub label: String,
+    pub status: ScanCourseStatus,
+    pub started_at: Timestamp,
+    pub completed_at: Option<Timestamp>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -153,6 +254,7 @@ pub struct SyncStatus {
 #[serde(rename_all = "camelCase")]
 pub struct AuthStatus {
     pub authenticated: bool,
+    pub attempt_id: Option<String>,
     pub email: Option<String>,
     pub full_name: Option<String>,
     pub method: Option<String>,
@@ -243,6 +345,19 @@ pub struct LocalFileStatus {
     pub error: Option<String>,
 }
 
+/// One in-memory mirror download attempt's observed progress.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MirrorDownloadProgress {
+    pub resource_id: i64,
+    /// Unique to this attempt so consumers can discard late updates.
+    pub attempt_id: String,
+    pub state: String,
+    pub bytes_done: u64,
+    pub bytes_total: Option<u64>,
+    pub error: Option<String>,
+}
+
 /// Mirror occupancy and queue state, for Settings > Files and the sidebar.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -262,4 +377,118 @@ pub struct MirrorStats {
     pub state: String,
     pub root: String,
     pub free_bytes: u64,
+}
+
+/// Attention filtering is independent from the recorded change type.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum Attention {
+    #[default]
+    All,
+    Unread,
+}
+
+/// Complete collection filters. Offset pagination is stable for an unchanged snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct InboxFilter {
+    pub course_id: Option<i64>,
+    pub change_type: Option<String>,
+    pub attention: Attention,
+    pub search: Option<String>,
+    pub offset: usize,
+    pub limit: usize,
+}
+impl Default for InboxFilter {
+    fn default() -> Self {
+        Self {
+            course_id: None,
+            change_type: None,
+            attention: Attention::All,
+            search: None,
+            offset: 0,
+            limit: 100,
+        }
+    }
+}
+
+/// One surviving resource group, or one recorded orphan event. All IDs are
+/// non-dismissed relevant events; matching a type selects the whole group.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InboxItem {
+    pub key: String,
+    pub resource_id: Option<i64>,
+    pub course_id: Option<i64>,
+    pub latest_event: ChangeEvent,
+    pub event_ids: Vec<i64>,
+    pub change_types: Vec<String>,
+    pub unread: bool,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InboxCourseCount {
+    pub course_id: Option<i64>,
+    pub total: usize,
+    pub unread_total: usize,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InboxPage {
+    pub items: Vec<InboxItem>,
+    pub total: usize,
+    pub unread_total: usize,
+    pub course_counts: Vec<InboxCourseCount>,
+}
+
+/// Due bounds are inclusive `from`, exclusive `until`; accept RFC 3339 or
+/// YYYY-MM-DD (midnight UTC). No implicit current time or submission status.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct DueFilter {
+    pub course_id: Option<i64>,
+    pub resource_type: Option<String>,
+    pub search: Option<String>,
+    pub from: Option<String>,
+    pub until: Option<String>,
+    /// Optional local calendar bounds for date-only sources; override the
+    /// instant range for those sources without assigning them a timezone.
+    pub date_from: Option<String>,
+    pub date_until: Option<String>,
+    pub offset: usize,
+    pub limit: usize,
+}
+impl Default for DueFilter {
+    fn default() -> Self {
+        Self {
+            course_id: None,
+            resource_type: None,
+            search: None,
+            from: None,
+            until: None,
+            date_from: None,
+            date_until: None,
+            offset: 0,
+            limit: 100,
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DueDateKind {
+    Date,
+    Instant,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DueResource {
+    pub resource: Resource,
+    pub date_kind: DueDateKind,
+    pub course_paused: bool,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DuePage {
+    pub items: Vec<DueResource>,
+    pub total: usize,
 }

@@ -7,6 +7,14 @@ let app: Awaited<ReturnType<typeof renderApp>>;
 beforeEach(() => setupApp());
 afterEach(() => app?.unmount());
 
+async function clickInspectorAction(label: string, panel: ParentNode) {
+  const trigger = button("More actions", panel);
+  await act(async () => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true })));
+  const action = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent === label);
+  if (!action) throw new Error(`Missing inspector menu action: ${label}`);
+  await click(action);
+}
+
 describe("App details lifecycle", () => {
   it("inspects Today without opening or acknowledging and returns to the pointer origin", async () => {
     app = await renderApp();
@@ -36,8 +44,8 @@ describe("App details lifecycle", () => {
   it("ignores an older mirror lookup even after the same resource is selected again", async () => {
     const first = deferred<LocalFile | null>();
     const current = deferred<LocalFile | null>();
-    appApi.listDashboardResources.mockResolvedValue([resource(), resource({ id: 2, title: "Lecture 5" })]);
-    appApi.listDashboardEvents.mockResolvedValue([change(), change({ id: 11, resourceId: 2 })]);
+    appApi.listResources.mockResolvedValue([resource(), resource({ id: 2, externalResourceId: "r2", title: "Lecture 5" })]);
+    appApi.listDashboardEvents.mockResolvedValue([change(), change({ id: 11, resourceId: 2, resourceTitle: "Lecture 5" })]);
     appApi.mirrorLocalFile.mockReturnValueOnce(first.promise).mockResolvedValueOnce(null).mockReturnValueOnce(current.promise);
     app = await renderApp();
     await click(button("Show details for Lecture 4"));
@@ -68,12 +76,12 @@ describe("App details lifecycle", () => {
 
   it("keeps a previous selection's late download out of the current details", async () => {
     const download = deferred<LocalFile>();
-    appApi.listDashboardResources.mockResolvedValue([resource(), resource({ id: 2, title: "Lecture 5" })]);
-    appApi.listDashboardEvents.mockResolvedValue([change(), change({ id: 11, resourceId: 2 })]);
+    appApi.listResources.mockResolvedValue([resource(), resource({ id: 2, externalResourceId: "r2", title: "Lecture 5" })]);
+    appApi.listDashboardEvents.mockResolvedValue([change(), change({ id: 11, resourceId: 2, resourceTitle: "Lecture 5" })]);
     appApi.ensureLocal.mockReturnValue(download.promise);
     app = await renderApp();
     await click(button("Show details for Lecture 4"));
-    await click(button("Download now", document.querySelector(".peek")!));
+    await click(button("Download and open", document.querySelector(".peek")!));
     await click(button("Show details for Lecture 5"));
     await act(async () => download.resolve({ resourceId: 1, relPath: "old.pdf", path: "/files/old.pdf", sizeBytes: 42, mime: null, sha256: null, status: "ok", error: null }));
     await flushApp();
@@ -94,7 +102,8 @@ describe("App details lifecycle", () => {
   it("keeps selection while filters retain the row, then clears it with heading focus", async () => {
     app = await renderApp();
     await click(button("Show details for Lecture 4"));
-    const search = document.querySelector<HTMLInputElement>('[aria-label="Search activity"]')!;
+    await click(button("Filter"));
+    const search = document.querySelector<HTMLInputElement>('[aria-label="Search Inbox"]')!;
     const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
     await act(async () => { setValue.call(search, "Lecture"); search.dispatchEvent(new Event("input", { bubbles: true })); });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 170)); });
@@ -106,6 +115,8 @@ describe("App details lifecycle", () => {
   });
 
   it("dismisses a nested preview before details and returns keyboard focus in two steps", async () => {
+    appApi.mirrorLocalFiles.mockResolvedValue([{ resourceId: 1, status: "ok", error: null }]);
+    appApi.mirrorLocalFile.mockResolvedValue({ resourceId: 1, relPath: "lecture.pdf", path: "/files/lecture.pdf", sizeBytes: 42, mime: null, sha256: null, status: "ok", error: null });
     app = await renderApp();
     const row = button("Show details for Lecture 4");
     row.focus();
@@ -150,39 +161,36 @@ describe("App details lifecycle", () => {
     const panel = document.querySelector(".peek")!;
     expect(panel.textContent).toContain("/files/lecture.pdf");
     expect(panel.textContent).not.toContain("Waiting");
-    await click(button("Open local copy", panel));
+    await click(button("Open saved copy", panel));
     expect(document.body.textContent).toContain("Disk unavailable");
-    await click(button("Open local copy", panel));
+    await click(button("Open saved copy", panel));
     expect(appApi.openLocalFile).toHaveBeenCalledTimes(2);
     await click(button("Dismiss"));
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 160)); });
-    await click(button("Show in folder", panel));
+    await clickInspectorAction("Show in folder", panel);
     expect(document.body.textContent).toContain("Folder unavailable");
     await emitAppEvent("mirror:file", { resourceId: 1, status: "failed", error: "Download interrupted" });
     expect(panel.textContent).toContain("Download interrupted");
   });
 
-  it("describes absent local data and missing dates honestly and reports failed downloads", async () => {
+  it("describes absent local data without inventing dates and reports failed downloads inline", async () => {
     appApi.ensureLocal.mockRejectedValue("No space available");
     app = await renderApp();
     await click(button("Show details for Lecture 4"));
     const panel = document.querySelector(".peek")!;
-    expect(panel.textContent).toContain("Upload date unavailable");
-    expect(panel.textContent).toContain("No local copy yet");
-    await click(button("Download now", panel));
-    expect(document.body.textContent).toContain("No space available");
+    expect(panel.textContent).not.toContain("Uploaded");
+    expect(panel.textContent).toContain("Not saved");
+    await click(button("Download and open", panel));
+    expect(panel.textContent).toContain("No space available");
+    expect(button("Retry", panel)).toBeTruthy();
     expect(document.querySelector(".peek")).toBeTruthy();
   });
 
   it("lets a confirmation dialog consume Escape while keeping details and activity", async () => {
     app = await renderApp();
     await click(button("Show details for Lecture 4"));
-    const trigger = button("Activity actions");
-    trigger.focus();
-    await act(async () => { trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true })); });
-    await flushApp();
-    const clear = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((node) => node.textContent?.includes("Clear activity"))!;
-    await click(clear);
+    await click(button("Inbox display"));
+    await click(button("Dismiss all Inbox items…"));
     expect(document.querySelector('[role="alertdialog"], [role="dialog"]')).toBeTruthy();
     await escape();
     expect(document.querySelector('[role="alertdialog"], [role="dialog"]')).toBeNull();
@@ -204,16 +212,20 @@ describe("App details lifecycle", () => {
     app = await renderApp();
     await click(button("Show details for Lecture 4"));
     expect(appApi.openExternal).not.toHaveBeenCalled();
-    await click(button("Open file", document.querySelector(".peek")!));
-    expect(appApi.openExternal).toHaveBeenCalledWith(resource().url);
+    appApi.ensureLocal.mockResolvedValue({ resourceId: 1, relPath: "lecture.pdf", path: "/files/lecture.pdf", sizeBytes: 42, mime: null, sha256: null, status: "ok", error: null });
+    await click(button("Download and open", document.querySelector(".peek")!));
+    expect(appApi.ensureLocal).toHaveBeenCalledWith(1);
+    expect(appApi.openLocalFile).toHaveBeenCalledWith(1);
+    expect(appApi.openExternal).not.toHaveBeenCalled();
     expect(appApi.markRead).not.toHaveBeenCalled();
     await escape();
+    expect(document.querySelector(".peek")).toBeNull();
     expect(document.activeElement).toBe(button("Show details for Lecture 4"));
   });
 
   it("clears a completed local lookup when another resource is selected", async () => {
-    appApi.listDashboardResources.mockResolvedValue([resource(), resource({ id: 2, title: "Lecture 5" })]);
-    appApi.listDashboardEvents.mockResolvedValue([change(), change({ id: 11, resourceId: 2 })]);
+    appApi.listResources.mockResolvedValue([resource(), resource({ id: 2, externalResourceId: "r2", title: "Lecture 5" })]);
+    appApi.listDashboardEvents.mockResolvedValue([change(), change({ id: 11, resourceId: 2, resourceTitle: "Lecture 5" })]);
     appApi.mirrorLocalFile.mockResolvedValueOnce({ resourceId: 1, relPath: "a.pdf", path: "/files/a.pdf", sizeBytes: 42, mime: null, sha256: null, status: "ok", error: null });
     appApi.mirrorLocalFile.mockReturnValueOnce(deferred<LocalFile | null>().promise);
     app = await renderApp();
@@ -233,9 +245,9 @@ describe("App details lifecycle", () => {
     await click(button("Show details for Lecture 4"));
     expect(document.querySelector(".peek")?.textContent).toContain("Local copy unavailable");
     expect(document.body.textContent).toContain("Could not load local copy");
-    await click(button("Download now", document.querySelector(".peek")!));
+    await click(button("Download and open", document.querySelector(".peek")!));
     expect(document.querySelector(".peek")?.textContent).toContain("/files/recovered.pdf");
-    expect(button("Open local copy", document.querySelector(".peek")!)).toBeTruthy();
+    expect(button("Open saved copy", document.querySelector(".peek")!)).toBeTruthy();
   });
 
   it("reports failed copying from a local path property through the existing notification surface", async () => {
@@ -243,7 +255,7 @@ describe("App details lifecycle", () => {
     appClipboard.writeText.mockRejectedValue("Clipboard unavailable");
     app = await renderApp();
     await click(button("Show details for Lecture 4"));
-    await click(button("Copy path", document.querySelector(".peek")!));
+    await clickInspectorAction("Copy path", document.querySelector(".peek")!);
     expect(document.body.textContent).toContain("Could not copy to the clipboard");
     expect(document.querySelector(".peek")).toBeTruthy();
   });
@@ -254,7 +266,7 @@ describe("App details lifecycle", () => {
     appApi.ensureLocal.mockResolvedValue({ resourceId: 1, relPath: "new.pdf", path: "/files/new.pdf", sizeBytes: 42, mime: null, sha256: null, status: "ok", error: null });
     app = await renderApp();
     await click(button("Show details for Lecture 4"));
-    await click(button("Download now", document.querySelector(".peek")!));
+    await click(button("Download and open", document.querySelector(".peek")!));
     await act(async () => lookup.resolve(null));
     expect(document.querySelector(".peek")?.textContent).toContain("/files/new.pdf");
   });
@@ -265,10 +277,10 @@ describe("App details lifecycle", () => {
     app = await renderApp();
     await click(button("Show details for Lecture 4"));
     await emitAppEvent("mirror:file", { resourceId: 1, status: "ok", error: null });
-    expect(button("Open local copy", document.querySelector(".peek")!)).toBeTruthy();
+    expect(button("Open saved copy", document.querySelector(".peek")!)).toBeTruthy();
     await act(async () => snapshot.resolve([{ resourceId: 1, status: "failed", error: "Old failure" }]));
     await flushApp();
-    expect(button("Open local copy", document.querySelector(".peek")!)).toBeTruthy();
+    expect(button("Open saved copy", document.querySelector(".peek")!)).toBeTruthy();
     expect(document.querySelector(".peek")?.textContent).not.toContain("Old failure");
   });
 
@@ -277,7 +289,7 @@ describe("App details lifecycle", () => {
     appApi.mirrorLocalFile.mockResolvedValue({ resourceId: 1, relPath: "a.pdf", path: "/files/a.pdf", sizeBytes: 42, mime: null, sha256: null, status: "ok", error: null });
     app = await renderApp();
     await click(button("Show details for Lecture 4"));
-    expect(button("Open local copy", document.querySelector(".peek")!)).toBeTruthy();
+    expect(button("Open saved copy", document.querySelector(".peek")!)).toBeTruthy();
     expect(document.querySelector(".peek")?.textContent).toContain("/files/a.pdf");
   });
 
@@ -289,7 +301,7 @@ describe("App details lifecycle", () => {
     await emitAppEvent("mirror:file", { resourceId: 1, status: "failed", error: "New failure" });
     await act(async () => lookup.resolve({ resourceId: 1, relPath: "a.pdf", path: "/files/a.pdf", sizeBytes: 42, mime: null, sha256: null, status: "ok", error: null }));
     expect(document.querySelector(".peek")?.textContent).toContain("New failure");
-    expect(button("Download now", document.querySelector(".peek")!)).toBeTruthy();
+    expect(button("Retry", document.querySelector(".peek")!)).toBeTruthy();
   });
 
   it("uses a completed download before the mirror refresh finishes", async () => {
@@ -298,8 +310,8 @@ describe("App details lifecycle", () => {
     appApi.mirrorLocalFiles.mockResolvedValueOnce([]).mockReturnValueOnce(deferred<LocalFileStatus[]>().promise);
     app = await renderApp();
     await click(button("Show details for Lecture 4"));
-    await click(button("Download now", document.querySelector(".peek")!));
-    expect(button("Open local copy", document.querySelector(".peek")!)).toBeTruthy();
+    await click(button("Download and open", document.querySelector(".peek")!));
+    expect(button("Open saved copy", document.querySelector(".peek")!)).toBeTruthy();
     expect(document.querySelector(".peek")?.textContent).toContain("/files/a.pdf");
   });
 
@@ -313,7 +325,7 @@ describe("App details lifecycle", () => {
     await click(row);
     await act(async () => old.resolve({ resourceId: 1, relPath: "a.pdf", path: "/files/a.pdf", sizeBytes: 0, mime: null, sha256: null, status: "failed", error: "Old failure" }));
     await act(async () => current.resolve({ resourceId: 1, relPath: "a.pdf", path: "/files/a.pdf", sizeBytes: 42, mime: null, sha256: null, status: "ok", error: null }));
-    expect(button("Open local copy", document.querySelector(".peek")!)).toBeTruthy();
+    expect(button("Open saved copy", document.querySelector(".peek")!)).toBeTruthy();
     expect(document.querySelector(".peek")?.textContent).not.toContain("Old failure");
   });
 

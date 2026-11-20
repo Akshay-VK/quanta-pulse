@@ -10,6 +10,7 @@ export interface MenuItemSpec {
   shortcut?: string;
   danger?: boolean;
   disabled?: boolean;
+  divider?: boolean;
   onSelect?: () => void;
 }
 
@@ -38,7 +39,9 @@ export function Menu({
           collisionPadding={8}
           aria-label={label}
         >
-          {items.map((item) => (
+          {items.map((item) => item.divider ? (
+            <DropdownMenuPrimitive.Separator key={item.id} className="menu-separator" />
+          ) : (
             <DropdownMenuPrimitive.Item
               key={item.id}
               className={cx("menu-item", item.danger && "danger")}

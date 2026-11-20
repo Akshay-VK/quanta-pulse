@@ -8,6 +8,7 @@ vi.mock("../src/lib/api", () => ({
     checkUpdate: vi.fn().mockResolvedValue(null),
     prepareForUpdate: vi.fn().mockResolvedValue(undefined),
     downloadAndInstallUpdate: vi.fn().mockResolvedValue(undefined),
+    relaunchApp: vi.fn().mockResolvedValue(undefined),
     openAppFolder: vi.fn().mockResolvedValue(undefined),
     mirrorStats: vi.fn().mockResolvedValue({
       queued: 0, downloading: 0, done: 0, failed: 0, skipped: 0, kept: 0,
@@ -25,7 +26,7 @@ vi.mock("../src/lib/api", () => ({
 
 import { api } from "../src/lib/api";
 import SettingsView from "../src/views/SettingsView";
-import type { Settings } from "../src/lib/types";
+import type { AuthStatus, Settings } from "../src/lib/types";
 
 const SETTINGS: Settings = {
   syncIntervalMinutes: 30,
@@ -39,6 +40,7 @@ const SETTINGS: Settings = {
   notifyDeadlines: true,
   notifyAvailability: true,
   notifyAuth: true,
+  notifyScanFailures: true,
   quietHoursStart: null,
   quietHoursEnd: null,
   deadlineReminderHours: 48,
@@ -79,18 +81,20 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-function render(settings = SETTINGS) {
+function render(
+  settings = SETTINGS,
+  auth: AuthStatus | null = null,
+) {
   act(() => {
     root.render(
       <SettingsView
         settings={settings}
-        auth={null}
+        auth={auth}
         dbInfo={null}
         onSave={vi.fn().mockResolvedValue(settings)}
         onLogout={vi.fn()}
         onRefresh={vi.fn()}
-        themeMode="system"
-        onThemeMode={vi.fn()}
+        appearance={<p>Appearance controls</p>}
       />,
     );
   });
@@ -104,7 +108,7 @@ async function tick() {
 
 async function clickCheck() {
   const buttons = Array.from(container.querySelectorAll("button"));
-  const check = buttons.find((b) => /Check now/i.test(b.textContent ?? ""));
+  const check = buttons.find((b) => /Check for updates/i.test(b.textContent ?? ""));
   expect(check).not.toBeNull();
   await act(async () => {
     check!.click();
@@ -113,9 +117,9 @@ async function clickCheck() {
 }
 
 describe("Settings > About states", () => {
-  it("starts idle", () => {
+  it("shows the version and last-check row without a redundant idle state", () => {
     render();
-    expect(container.textContent).toContain("Idle");
+    expect(container.textContent).toContain("Never checked.");
   });
 
   it("shows Up to date after a check finds nothing", async () => {
@@ -126,7 +130,7 @@ describe("Settings > About states", () => {
     expect(container.textContent).toContain("Up to date");
   });
 
-  it("shows the available version and release notes/restart when one exists", async () => {
+  it("shows the available version and download action when one exists", async () => {
     vi.mocked(api.checkUpdate).mockResolvedValue({
       version: "9.9.9",
       body: "notes",
@@ -134,8 +138,43 @@ describe("Settings > About states", () => {
     render();
     await clickCheck();
     await tick();
-    expect(container.textContent).toContain("Update 9.9.9 available");
-    expect(container.textContent).toContain("Restart to update");
+    expect(container.textContent).toContain("Version 9.9.9 is available.");
+    expect(container.textContent).toContain("Download");
+  });
+
+  it("keeps the update action available after prepare or install fails, without claiming success", async () => {
+    vi.mocked(api.checkUpdate).mockResolvedValue({ version: "9.9.9", body: "notes" } as never);
+    vi.mocked(api.prepareForUpdate).mockRejectedValueOnce(new Error("busy"));
+    render();
+    await clickCheck();
+    const install = [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Download");
+    expect(install).toBeTruthy();
+    await act(async () => { install!.click(); await new Promise((resolve) => setTimeout(resolve, 50)); });
+    await tick();
+    expect(container.textContent).toContain("Update failed");
+    expect(container.textContent).not.toContain("Check failed");
+    expect(container.textContent).not.toContain("Up to date");
+    expect(container.textContent).toContain("busy");
+    const retry = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Check for updates"));
+    expect(retry).toBeTruthy();
+  });
+
+  it("disables manual checks while one bounded request is pending", async () => {
+    let resolveFn: (value: null) => void = () => {};
+    vi.mocked(api.checkUpdate).mockReturnValue(new Promise((resolve) => { resolveFn = resolve; }) as never);
+    render();
+    const check = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Check for updates"))!;
+    await act(async () => { check.click(); });
+    expect(check.disabled).toBe(true);
+    expect(api.checkUpdate).toHaveBeenCalledTimes(1);
+    await act(async () => resolveFn(null));
+  });
+
+  it("keeps stored files accessible and points to the single reconnect action", async () => {
+    render(SETTINGS, { authenticated: false, attemptId: null, email: null, fullName: null, method: null, acquiredAt: null, sessionExpired: true });
+    expect(container.textContent).toContain("Your saved files remain available.");
+    expect(container.textContent).toContain("Use Reconnect in the session notice");
+    expect([...container.querySelectorAll("button")].filter((button) => button.textContent?.trim() === "Reconnect")).toHaveLength(0);
   });
 
   it("shows the error state with the message when the check fails", async () => {
@@ -153,7 +192,7 @@ describe("Settings > About states", () => {
     );
     render();
     const buttons = Array.from(container.querySelectorAll("button"));
-    const check = buttons.find((b) => /Check now|Checking/i.test(b.textContent ?? ""));
+    const check = buttons.find((b) => /Check for updates|Checking/i.test(b.textContent ?? ""));
     expect(check).not.toBeNull();
     // synchronous start
     void clickCheck();

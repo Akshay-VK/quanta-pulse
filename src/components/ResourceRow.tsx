@@ -1,8 +1,10 @@
+import { useMaterialActions } from "../hooks/useMaterialActions";
+import { MaterialButtons } from "./MaterialButtons";
 import { ExternalLink, Eye, MoreHorizontal } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cx } from "../lib/cx";
 import { isLocal, mirrorTip } from "../lib/mirrorState";
-import type { LocalFileStatus } from "../lib/types";
+import type { ChangeEvent, Resource, LocalFileStatus } from "../lib/types";
 import { CoursePill } from "./ui/CoursePill";
 import { FileTypeIcon } from "./ui/FileTypeIcon";
 import { IconButton } from "./ui/IconButton";
@@ -15,7 +17,7 @@ export type RowDensity = "comfortable" | "compact";
 
 /** Below this width the row flips to its two-line compact layout. Container
  *  queries are unavailable on our minimum webview, so it is measured instead. */
-const COMPACT_MAX_WIDTH = 560;
+const COMPACT_MAX_WIDTH = 800;
 
 /**
  * Watches the row's own box and reports whether it is narrower than the compact
@@ -52,17 +54,23 @@ function useAutoCompact() {
  * the row is measured below `COMPACT_MAX_WIDTH`.
  */
 export default function ResourceRow({
+  resource,
+  recorded,
   title,
   type,
   courseId,
   courseCode,
   courseName,
+  sectionLabel,
+  workspaceVariant,
+  leadingIcon,
+  timeSuffix,
   unread,
   selected,
   unavailable,
   status,
   timeLabel,
-  openLabel,
+  openLabel = "Open in Quanta",
   showOpen = true,
   previewAvailable = false,
   density = "comfortable",
@@ -73,18 +81,33 @@ export default function ResourceRow({
   onPreview,
   onCourse,
   menu,
+  keyboardFocused = false,
+  multiSelected = false,
+  showFocusHint = false,
+  tabStop,
+  selectRef,
+  onKeyboardFocus,
 }: {
+  /** Pass identity to use the App-owned policy; null plus recorded is an orphan. */
+  resource?: Resource | null;
+  recorded?: ChangeEvent;
   title: string;
   type: string | null;
   courseId: number | null;
   courseCode?: string | null;
   courseName?: string | null;
+  /** Optional mono section label, shown between the course and time slots. */
+  sectionLabel?: string | null;
+  workspaceVariant?: "inbox" | "agenda" | "history";
+  leadingIcon?: ReactNode;
+  timeSuffix?: ReactNode;
   unread: boolean;
   selected: boolean;
   unavailable: boolean;
   status?: { kind: StatusKind; label: string } | null;
   timeLabel: string;
-  openLabel: string;
+  openLabel?: string;
+  /** Legacy standalone control only. Identity-based rows derive all destinations from policy. */
   showOpen?: boolean;
   previewAvailable?: boolean;
   density?: RowDensity;
@@ -94,7 +117,7 @@ export default function ResourceRow({
    * link). Drives the status icon and the open/download label.
    */
   local?: LocalFileStatus | null;
-  /** Opens the local copy through the Shell ('Open local copy'). */
+  /** Legacy standalone saved-file callback. */
   onOpenLocal?: () => void;
   onSelect: (origin: HTMLButtonElement) => void;
   onOpen?: () => void;
@@ -102,7 +125,19 @@ export default function ResourceRow({
   /** Opens the course this row belongs to; the course pill becomes a button. */
   onCourse?: () => void;
   menu: MenuItemSpec[];
+  /** Surface-owned roving focus marker; does not imply inspection. */
+  keyboardFocused?: boolean;
+  /** Surface-owned bulk selection marker; does not imply inspection. */
+  multiSelected?: boolean;
+  /** Show the surface keyboard hint in the time slot. */
+  showFocusHint?: boolean;
+  /** Keep this row in the tab order without implying that it is focused. */
+  tabStop?: boolean;
+  selectRef?: (node: HTMLButtonElement | null) => void;
+  onKeyboardFocus?: () => void;
 }) {
+  const destinations = useMaterialActions();
+  const actions = destinations && (resource !== undefined || recorded) ? destinations(resource ?? null, recorded) : null;
   const { ref, narrow } = useAutoCompact();
   const compact = density === "compact" || narrow;
   const saved = isLocal(local);
@@ -115,20 +150,27 @@ export default function ResourceRow({
       ref={ref}
       className={cx(
         "resource-row",
+        actions !== null && "row-material",
+        workspaceVariant && `row-workspace row-workspace-${workspaceVariant}`,
         compact && "row-compact",
         selected && "selected",
+        keyboardFocused && "keyboard-focused",
+        multiSelected && "multi-selected",
         unread && "row-unread",
         unavailable && "row-unavailable",
       )}
     >
       <button
+        ref={selectRef}
+        onFocus={onKeyboardFocus}
         type="button"
         className="row-select"
+        tabIndex={tabStop === undefined ? undefined : tabStop ? 0 : -1}
         aria-label={`Show details for ${title}`}
         onClick={(event) => onSelect(event.currentTarget)}
       >
         <UnreadDot unread={unread} />
-        <FileTypeIcon type={type} />
+        {leadingIcon ?? <FileTypeIcon type={type} />}
         <span className="row-title-wrap">
           <span className="row-title" title={title}>
             {title}
@@ -140,6 +182,7 @@ export default function ResourceRow({
           inside a button is invalid and fails the a11y check. */}
       {(courseCode || status) && (
         <span className="row-meta">
+          {status && <StatusTag kind={status.kind} label={status.label} />}
           {courseCode && (
             <CoursePill
               courseId={courseId}
@@ -148,9 +191,10 @@ export default function ResourceRow({
               onOpen={onCourse}
             />
           )}
-          {status && <StatusTag kind={status.kind} label={status.label} />}
         </span>
       )}
+
+      {sectionLabel && <span className="row-section">{sectionLabel}</span>}
 
       {local && (
         <span className="row-mirror" title={mirrorTip(local) ?? undefined}>
@@ -158,9 +202,10 @@ export default function ResourceRow({
         </span>
       )}
 
-      <span className="row-time">{timeLabel}</span>
+      <span className={cx("row-time", showFocusHint && "row-time-focused")} title={timeLabel}>{timeLabel}{timeSuffix}{showFocusHint && <kbd className="row-focus-hint">E</kbd>}</span>
 
       <span className="row-actions">
+        {actions ? <MaterialButtons actions={actions} menu={menu} /> : <>
         {previewAvailable && onPreview && (
           <IconButton label="Preview" size={28} onClick={onPreview}>
             <Eye aria-hidden="true" />
@@ -168,7 +213,7 @@ export default function ResourceRow({
         )}
         {showOpen && (saved ? onOpenLocal : onOpen) && (
           <IconButton
-            label={saved ? "Open local copy" : resolvedOpenLabel}
+            label={saved ? "Open saved copy" : resolvedOpenLabel}
             size={28}
             onClick={() => (saved ? onOpenLocal?.() : onOpen?.())}
           >
@@ -184,6 +229,7 @@ export default function ResourceRow({
             </IconButton>
           }
         />
+        </>}
       </span>
     </div>
   );

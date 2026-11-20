@@ -4,6 +4,7 @@ import {
   formatBytes,
   formatCompact,
   formatDate,
+  formatListDate,
   isDateOnly,
   parseTimestamp,
   relativeLabel,
@@ -84,6 +85,18 @@ describe("formatCompact", () => {
   it("renders a dash for missing values", () => {
     expect(formatCompact(null)).toBe("\u2014");
     expect(formatDate(undefined)).toBe("\u2014");
+  });
+});
+
+describe("formatListDate", () => {
+  it("uses a short local date and shows the time on detections from today", () => {
+    const now = new Date(2026, 10, 16, 12);
+    expect(formatListDate("2026-11-16T04:12:00Z", now)).toBe("Today 09:42");
+    expect(formatListDate("2026-11-16", now)).toBe("Today");
+    expect(formatListDate("2026-11-15", now)).toBe("Yesterday");
+    expect(formatListDate("2026-11-12", now)).toBe("12 Nov");
+    expect(formatListDate("2025-11-12", now)).toBe("12 Nov 2025");
+    expect(formatListDate(null, now)).toBe("—");
   });
 });
 

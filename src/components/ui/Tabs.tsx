@@ -1,10 +1,10 @@
-import { useRef, type KeyboardEvent, type RefObject } from "react";
+import { useId, useRef, type KeyboardEvent, type RefObject } from "react";
 import { cx } from "../../lib/cx";
 
 export interface TabItem {
   id: string;
   label: string;
-  count?: number;
+  count?: number | string;
 }
 
 function rovingKey(
@@ -51,6 +51,7 @@ export function FilterTabs({
   className?: string;
 }) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  const countPrefix = useId();
   return (
     <div
       className={cx("filter-tabs", className)}
@@ -59,6 +60,7 @@ export function FilterTabs({
     >
       {items.map((item, index) => {
         const selected = item.id === value;
+        const countId = item.count === undefined ? undefined : `${countPrefix}-${item.id}`;
         return (
           <button
             key={item.id}
@@ -68,6 +70,8 @@ export function FilterTabs({
             type="button"
             className={cx("filter-tab", selected && "is-selected")}
             aria-pressed={selected}
+            aria-label={item.label}
+            aria-describedby={countId}
             tabIndex={selected ? 0 : -1}
             onClick={() => onChange(item.id)}
             onKeyDown={(event) =>
@@ -76,7 +80,7 @@ export function FilterTabs({
           >
             {item.label}
             {item.count !== undefined && (
-              <span className="filter-tab-count">{item.count}</span>
+              <span className="filter-tab-count" id={countId}>{item.count}</span>
             )}
           </button>
         );
@@ -93,7 +97,7 @@ export function ViewTabs({
   ariaLabel,
   className,
 }: {
-  items: { id: string; label: string }[];
+  items: { id: string; label: string; accessibleLabel?: string }[];
   value: string;
   onChange: (id: string) => void;
   ariaLabel: string;
@@ -116,6 +120,7 @@ export function ViewTabs({
             }}
             type="button"
             role="tab"
+            aria-label={item.accessibleLabel}
             className={cx("filter-tab", selected && "is-selected")}
             aria-selected={selected}
             tabIndex={selected ? 0 : -1}

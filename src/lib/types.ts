@@ -8,6 +8,7 @@ export interface Course {
   externalCourseId: string;
   name: string;
   shortName: string | null;
+  displayName: string | null;
   url: string;
   firstSeenAt: string;
   lastScannedAt: string | null;
@@ -78,6 +79,78 @@ export interface ScanRun {
   isBaseline: boolean;
 }
 
+export type HistoryChangeType =
+  | "new"
+  | "updated"
+  | "announcement"
+  | "deadline"
+  | "unavailable"
+  | "restored"
+  | "baseline";
+
+/** History date bounds are RFC 3339 instants; since is inclusive, until exclusive. */
+export interface HistoryFilter {
+  offset: number;
+  limit: number;
+  changeType?: HistoryChangeType;
+  courseId?: number;
+  since?: string;
+  until?: string;
+  search?: string;
+}
+
+export interface ScanFilter {
+  offset: number;
+  limit: number;
+}
+
+export interface HistoryPage {
+  items: ChangeEvent[];
+  total: number;
+}
+
+export interface ScanPage {
+  items: ScanRun[];
+  total: number;
+}
+
+/** Exact History IDs frozen for a destructive confirmation. */
+export interface HistoryDeletionScope {
+  eventIds: number[];
+  scanIds: number[];
+}
+
+/** Number of rows removed from a previously confirmed History scope. */
+export interface HistoryDeletionResult {
+  eventsDeleted: number;
+  scansDeleted: number;
+}
+
+export type ScanCourseStatus = "success" | "partial" | "failed" | "cancelled";
+
+export interface ScanDetails {
+  scanId: number;
+  courses: ScanCourseDetail[];
+}
+
+export interface ScanCourseDetail {
+  courseId: number | null;
+  courseName: string;
+  status: ScanCourseStatus;
+  startedAt: string;
+  completedAt: string | null;
+  steps: ScanStep[];
+  error: string | null;
+}
+
+export interface ScanStep {
+  label: string;
+  status: ScanCourseStatus;
+  startedAt: string;
+  completedAt: string | null;
+  error: string | null;
+}
+
 export interface SyncStatus {
   running: boolean;
   phase: string;
@@ -92,6 +165,7 @@ export interface SyncStatus {
 
 export interface AuthStatus {
   authenticated: boolean;
+  attemptId: string | null;
   email: string | null;
   fullName: string | null;
   method: string | null;
@@ -122,6 +196,7 @@ export interface Settings {
   notifyDeadlines: boolean;
   notifyAvailability: boolean;
   notifyAuth: boolean;
+  notifyScanFailures: boolean;
   quietHoursStart: string | null;
   quietHoursEnd: string | null;
   deadlineReminderHours: number;
@@ -210,6 +285,16 @@ export interface LocalFileStatus {
   error: string | null;
 }
 
+/** Byte progress for one uniquely identified mirror attempt. */
+export interface MirrorDownloadProgress {
+  resourceId: number;
+  attemptId: string;
+  state: "queued" | "downloading" | "failed" | "cancelled" | "saved";
+  bytesDone: number;
+  bytesTotal: number | null;
+  error: string | null;
+}
+
 /** One resource's permanent local copy, resolved to an absolute path. */
 export interface LocalFile {
   resourceId: number;
@@ -240,6 +325,25 @@ export interface MirrorStats {
   state: string;
   root: string;
   freeBytes: number;
+}
+
+/** Frozen mirror files captured for one destructive confirmation. */
+export interface MirrorDeleteScope {
+  scopeId: string;
+  count: number;
+}
+
+/** One saved-file entry still needing cleanup in a frozen deletion scope. */
+export interface MirrorDeleteFailure {
+  resourceId: number;
+  path: string;
+  error: string;
+}
+
+/** Work completed and outstanding failures from one scoped deletion attempt. */
+export interface MirrorDeleteResult {
+  removed: number;
+  failed: MirrorDeleteFailure[];
 }
 
 export interface ResourceFilter {
@@ -290,3 +394,54 @@ export type ResourcePreview =
       limitBytes: number;
       sourceUrl: string;
     };
+
+/** Type/search selects entire groups; pagination never limits counts or snapshots. */
+export interface InboxFilter {
+  courseId?: number;
+  changeType?: "new" | "updated" | "announcement" | "deadline" | "unavailable" | "restored";
+  attention?: "all" | "unread";
+  search?: string;
+  offset?: number;
+  limit?: number;
+}
+export interface InboxItem {
+  key: string;
+  resourceId: number | null;
+  courseId: number | null;
+  latestEvent: ChangeEvent;
+  eventIds: number[];
+  changeTypes: string[];
+  unread: boolean;
+}
+export interface InboxCourseCount {
+  courseId: number | null;
+  total: number;
+  unreadTotal: number;
+}
+export interface InboxPage {
+  items: InboxItem[];
+  total: number;
+  unreadTotal: number;
+  courseCounts: InboxCourseCount[];
+}
+/** Range is [from, until), RFC 3339 or YYYY-MM-DD (midnight UTC).
+ * Date-only source values remain dates; local agenda grouping belongs to the UI.
+ */
+export interface DueFilter {
+  courseId?: number;
+  resourceType?: string;
+  search?: string;
+  from?: string;
+  until?: string;
+  /** YYYY-MM-DD bounds for date-only sources; override instant range for them. */
+  dateFrom?: string;
+  dateUntil?: string;
+  offset?: number;
+  limit?: number;
+}
+export interface DueResource {
+  resource: Resource;
+  dateKind: "date" | "instant";
+  coursePaused: boolean;
+}
+export interface DuePage { items: DueResource[]; total: number }

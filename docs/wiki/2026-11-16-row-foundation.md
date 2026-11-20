@@ -1,0 +1,5 @@
+# 2026-11-16: Row foundation acceptance
+
+On 2026-11-16, the coordinator accepted 04A at `Akshay-VK/quanta-pulse@4124e2e` after fixing a view-specific grid override. The [consumer handoff](../research/redesign/implementation-plan/contracts/04A-handoff.md) preserves existing row callbacks and adds only optional `sectionLabel`. The [independent review](../research/redesign/implementation-plan/contracts/04A-review.md) exposed the override; [fresh rendered proof](../research/redesign/implementation-plan/contracts/04A-browser-proof.md) verifies composed Inbox/Agenda rows, real table/header dimensions, and virtual scrolling.
+
+At that commit, material rows measure 36/30px, tables 34px, and headers 28px. Browser evidence covers local deterministic fixtures, fonts and overflow; it does not certify a native packaged app. [Issue #31](https://github.com/Akshay-VK/quanta-pulse/issues/31) remains open with ready-for-human. Umbrella #30 remains incomplete until pure policy 04B and serialized wiring 04C are accepted. I01 subsequently changes acknowledgement behavior; focus movement remains independent.

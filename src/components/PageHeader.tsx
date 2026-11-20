@@ -1,5 +1,14 @@
 import type { ReactNode } from "react";
 
+export interface PageHeaderProps {
+  title: ReactNode;
+  caption?: ReactNode;
+  summary?: ReactNode;
+  actions?: ReactNode;
+  subtitle?: string;
+  children?: ReactNode;
+}
+
 /**
  * The page heading block: caption, title, optional summary and actions.
  * `subtitle`/`children` are accepted for the pre-redesign call sites.
@@ -11,14 +20,7 @@ export default function PageHeader({
   actions,
   subtitle,
   children,
-}: {
-  title: ReactNode;
-  caption?: ReactNode;
-  summary?: ReactNode;
-  actions?: ReactNode;
-  subtitle?: string;
-  children?: ReactNode;
-}) {
+}: PageHeaderProps) {
   const summaryText = summary ?? subtitle;
   const actionNode = actions ?? children;
   return (

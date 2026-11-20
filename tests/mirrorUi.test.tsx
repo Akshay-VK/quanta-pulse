@@ -1,6 +1,6 @@
 // B8: the mirror surfaces in the UI. Every per-resource state gets its own
 // icon, tone and announced tooltip, and the resource actions follow the local
-// copy: 'Open local copy' when one exists, 'Download and open' when it does not,
+// copy: 'Open saved copy' when one exists, 'Download and open' when it does not,
 // the plain external label when the resource cannot have one.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -121,7 +121,7 @@ describe("ResourceRow local copy actions", () => {
   it("opens the local copy when one is saved", async () => {
     await row(local("ok"));
     expect(container.querySelector(".row-actions button")?.getAttribute("aria-label")).toBe(
-      "Open local copy",
+      "Open saved copy",
     );
   });
 
@@ -169,22 +169,22 @@ describe("PeekPanel local copy group", () => {
       path: "CS F222/Lecture 1.pdf",
     });
     expect(container.querySelector(".peek-group-title")?.textContent).toBe("Local copy");
-    const text = container.querySelector(".peek-properties:last-of-type")?.textContent ?? "";
+    const text = container.querySelector(".peek")?.textContent ?? "";
     expect(text).toContain("Saved");
     expect(text).toContain("2.0 KB");
     expect(text).toContain("CS F222/Lecture 1.pdf");
   });
 
-  it("offers 'Open local copy' only when the copy can be opened", async () => {
+  it("offers 'Open saved copy' only when the copy can be opened", async () => {
     await panel({ status: "ok", error: null, sizeBytes: 10, path: "a.pdf" }, () => {});
     expect(
       [...container.querySelectorAll(".peek-local-actions button")].map((b) => b.textContent),
-    ).toContain("Open local copy");
+    ).toContain("Open saved copy");
 
     await panel({ status: "downloading", error: null, sizeBytes: null, path: null }, () => {});
     expect(
       [...container.querySelectorAll(".peek-local-actions button")].map((b) => b.textContent),
-    ).not.toContain("Open local copy");
+    ).not.toContain("Open saved copy");
   });
 
   it("names the failure reason in the Why row", async () => {

@@ -55,6 +55,7 @@ const COURSE: Course = {
   externalCourseId: "1124",
   name: "1124_MATH_INSTR_MATH F111",
   shortName: "MATH F111",
+  displayName: null,
   url: "https://quanta.bits-pilani.ac.in/course/view.php?id=1",
   firstSeenAt: "2026-09-01T00:00:00Z",
   lastScannedAt: null,
@@ -172,5 +173,12 @@ describe("Today lists change events only", () => {
     // A button inside a button is invalid HTML and fails the a11y check.
     expect(container.querySelector(".row-select .course-pill")).toBeNull();
     expect(container.querySelector(".row-meta .course-pill")).toBeTruthy();
+  });
+
+  it("never surfaces baseline-only state as new change rows", async () => {
+    await render([resource(), resource({ id: 2, title: "Syllabus", externalResourceId: "r2" })]);
+    // Only resource id 1 is in the live change set; baseline entries must not appear as rows.
+    expect(titles()).toEqual(["Lecture 4"]);
+    expect(container.querySelector(".baseline-note")?.textContent).toContain("1 file");
   });
 });

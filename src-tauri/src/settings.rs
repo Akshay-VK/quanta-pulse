@@ -23,6 +23,9 @@ pub struct Settings {
     pub notify_deadlines: bool,
     pub notify_availability: bool,
     pub notify_auth: bool,
+    /// Notify once for each finalized scan with an incomplete outcome.
+    #[serde(default = "default_true")]
+    pub notify_scan_failures: bool,
     pub quiet_hours_start: Option<String>,
     pub quiet_hours_end: Option<String>,
     pub deadline_reminder_hours: i64,
@@ -89,6 +92,7 @@ impl Default for Settings {
             notify_deadlines: true,
             notify_availability: true,
             notify_auth: true,
+            notify_scan_failures: true,
             quiet_hours_start: None,
             quiet_hours_end: None,
             deadline_reminder_hours: 48,
@@ -117,8 +121,10 @@ impl Settings {
     pub fn sanitize(&mut self) {
         // Floor at 64 MB so eviction cannot thrash, ceiling at 64 GB so a typo
         // cannot promise more disk than a machine has.
-        self.cache_limit_bytes = self.cache_limit_bytes.clamp(64 * 1024 * 1024, 64 * 1024 * 1024 * 1024);
-        self.sync_interval_minutes = self.sync_interval_minutes.clamp(15, 24 * 60);
+        self.cache_limit_bytes = self
+            .cache_limit_bytes
+            .clamp(64 * 1024 * 1024, 64 * 1024 * 1024 * 1024);
+        self.sync_interval_minutes = self.sync_interval_minutes.clamp(5, 24 * 60);
         self.max_courses = self.max_courses.clamp(1, 500);
         self.max_resources_per_course = self.max_resources_per_course.clamp(1, 5000);
         self.max_detail_fetches = self.max_detail_fetches.clamp(0, 10_000);
@@ -128,11 +134,13 @@ impl Settings {
 
         // Mirror. 0 is the "no limit" choice and must survive the clamp.
         if self.mirror_max_bytes != 0 {
-            self.mirror_max_bytes =
-                self.mirror_max_bytes.clamp(16 * 1024 * 1024, 64 * 1024 * 1024 * 1024);
+            self.mirror_max_bytes = self
+                .mirror_max_bytes
+                .clamp(16 * 1024 * 1024, 64 * 1024 * 1024 * 1024);
         }
-        self.mirror_min_free_bytes =
-            self.mirror_min_free_bytes.clamp(512 * 1024 * 1024, 1024 * 1024 * 1024 * 1024);
+        self.mirror_min_free_bytes = self
+            .mirror_min_free_bytes
+            .clamp(512 * 1024 * 1024, 1024 * 1024 * 1024 * 1024);
         self.mirror_keep_versions = self.mirror_keep_versions.min(10);
         if self
             .mirror_root
@@ -232,7 +240,9 @@ fn is_bot_token(s: &str) -> bool {
 fn is_chat_id(s: &str) -> bool {
     if let Some(handle) = s.strip_prefix('@') {
         return !handle.is_empty()
-            && handle.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+            && handle
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_');
     }
     let digits = s.strip_prefix('-').unwrap_or(s);
     !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
@@ -244,9 +254,15 @@ mod tests {
 
     #[test]
     fn cache_limit_defaults_to_two_gigabytes_and_clamps() {
-        assert_eq!(Settings::default().cache_limit_bytes, 2 * 1024 * 1024 * 1024);
+        assert_eq!(
+            Settings::default().cache_limit_bytes,
+            2 * 1024 * 1024 * 1024
+        );
 
-        let mut s = Settings { cache_limit_bytes: 0, ..Settings::default() };
+        let mut s = Settings {
+            cache_limit_bytes: 0,
+            ..Settings::default()
+        };
         s.sanitize();
         assert_eq!(s.cache_limit_bytes, 64 * 1024 * 1024);
     }
@@ -257,7 +273,25 @@ mod tests {
         let mut json = serde_json::to_value(Settings::default()).unwrap();
         json.as_object_mut().unwrap().remove("cacheLimitBytes");
         let parsed: Settings = serde_json::from_value(json).unwrap();
-        assert_eq!(parsed.cache_limit_bytes, Settings::default().cache_limit_bytes);
+        assert_eq!(
+            parsed.cache_limit_bytes,
+            Settings::default().cache_limit_bytes
+        );
+    }
+
+    #[test]
+    fn missing_scan_failure_preference_preserves_other_saved_settings() {
+        let mut json = serde_json::to_value(Settings {
+            sync_interval_minutes: 30,
+            notify_new: false,
+            ..Settings::default()
+        })
+        .unwrap();
+        json.as_object_mut().unwrap().remove("notifyScanFailures");
+        let parsed: Settings = serde_json::from_value(json).unwrap();
+        assert!(parsed.notify_scan_failures);
+        assert_eq!(parsed.sync_interval_minutes, 30);
+        assert!(!parsed.notify_new);
     }
 
     #[test]
@@ -322,13 +356,61 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_clamps_intervals() {
+    fn sanitize_preserves_offered_and_legacy_intervals() {
+        for interval in [5, 10, 15, 30, 60, 61, 120, 1440] {
+            let mut s = Settings {
+                sync_interval_minutes: interval,
+                ..Settings::default()
+            };
+            s.sanitize();
+            assert_eq!(s.sync_interval_minutes, interval);
+        }
+    }
+
+    #[test]
+    fn sanitize_clamps_invalid_interval_bounds() {
         let mut s = Settings::default();
-        s.sync_interval_minutes = 1;
+        s.sync_interval_minutes = 0;
         s.concurrency = 99;
         s.sanitize();
-        assert_eq!(s.sync_interval_minutes, 15);
+        assert_eq!(s.sync_interval_minutes, 5);
         assert_eq!(s.concurrency, 8);
+
+        let mut s = Settings {
+            sync_interval_minutes: 1441,
+            ..Settings::default()
+        };
+        s.sanitize();
+        assert_eq!(s.sync_interval_minutes, 1440);
+    }
+
+    #[test]
+    fn unsigned_interval_rejects_negative_and_fractional_wire_values() {
+        for invalid in ["-1", "5.5"] {
+            let mut json = serde_json::to_value(Settings::default()).unwrap();
+            json["syncIntervalMinutes"] = serde_json::from_str(invalid).unwrap();
+            assert!(serde_json::from_value::<Settings>(json).is_err());
+        }
+    }
+
+    #[test]
+    fn save_reload_preserves_five_and_ten_minute_intervals() {
+        for interval in [5, 10] {
+            let conn = rusqlite::Connection::open_in_memory().unwrap();
+            conn.execute_batch(
+                "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+            )
+            .unwrap();
+            let mut settings = Settings {
+                sync_interval_minutes: interval,
+                ..Settings::default()
+            };
+            settings.sanitize();
+            crate::db::save_settings(&conn, &settings).unwrap();
+            let mut reloaded = crate::db::load_settings(&conn);
+            reloaded.sanitize();
+            assert_eq!(reloaded.sync_interval_minutes, interval);
+        }
     }
 
     #[test]

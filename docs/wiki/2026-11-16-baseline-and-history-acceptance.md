@@ -1,0 +1,7 @@
+# 2026-11-16: Baseline and History acceptance checkpoint
+
+On 2026-11-16, B06 was accepted at `Akshay-VK/quanta-pulse@4badbb9`, after separate course and global generation guards resolved partial-scan and repeated-reset races. [Integration proof](../research/redesign/implementation-plan/contracts/B06-integration-proof.md) records 228 passing native Rust tests. [Issue #32](https://github.com/Akshay-VK/quanta-pulse/issues/32) remains open ready-for-human. Native AppHandle scan proof remains outside that helper/HTTP evidence.
+
+B05A/B05B were accepted at `c8d4683`/`d4438ef`; [History contract record](2026-11-16-history-read-contract.md) covers complete pages, resource unread snapshots and frozen deletion scopes. 04A/04B were accepted at `4124e2e`/`cb8ac50`; [row record](2026-11-16-row-foundation.md) covers geometry and the policy handoff. The coordinator’s full frontend policy run passed 562 tests across 60 files.
+
+At this dated checkpoint, Inbox surface wiring 04C1 and Settings structure13 remained under final browser verification. B07A recovery lifetime corrections passed 13 focused native deletion tests; final Rust gates and acceptance remained pending. B07B API exposure stays gated on accepted B07A. The coordinator corrected B07A’s task/issue dependency mapping and validated 46 acyclic packets and 98 unique screen assignments. Additional 04C surfaces remain outstanding. These are historical dispatch facts, not a live completion tracker.

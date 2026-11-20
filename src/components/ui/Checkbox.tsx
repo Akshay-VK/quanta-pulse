@@ -1,7 +1,7 @@
 import * as CheckboxPrimitive from "@radix-ui/react-checkbox";
-import { Check } from "lucide-react";
+import { Check, Minus } from "lucide-react";
 
-/** A tri-state-free checkbox with a check indicator. */
+/** A controlled checkbox with checked, unchecked, and mixed states. */
 export function Checkbox({
   checked,
   onCheckedChange,
@@ -9,7 +9,7 @@ export function Checkbox({
   disabled,
   ariaLabel,
 }: {
-  checked: boolean;
+  checked: boolean | "indeterminate";
   onCheckedChange: (checked: boolean) => void;
   id?: string;
   disabled?: boolean;
@@ -25,7 +25,11 @@ export function Checkbox({
       className="checkbox"
     >
       <CheckboxPrimitive.Indicator className="checkbox-indicator">
-        <Check aria-hidden="true" />
+        {checked === "indeterminate" ? (
+          <Minus aria-hidden="true" />
+        ) : (
+          <Check aria-hidden="true" />
+        )}
       </CheckboxPrimitive.Indicator>
     </CheckboxPrimitive.Root>
   );

@@ -6,6 +6,7 @@ import {
   isBaselineResource,
   matchesKind,
   sortByRecency,
+  splitLiteralMatches,
   statusLabel,
 } from "../src/lib/filter";
 import type { Resource } from "../src/lib/types";
@@ -200,6 +201,17 @@ describe("groupByDate", () => {
     const groups = groupByDate(list, now);
     expect(groups).toHaveLength(1);
     expect(groups[0].items.map((r) => r.id)).toEqual([2, 1]);
+  });
+});
+
+describe("literal search highlighting", () => {
+  it("splits on literal matches case-insensitively without regex injection", () => {
+    expect(splitLiteralMatches("a+b A+B", "a+b")).toEqual([
+      { text: "a+b", match: true },
+      { text: " ", match: false },
+      { text: "A+B", match: true },
+    ]);
+    expect(splitLiteralMatches("Lecture 04", "")).toEqual([{ text: "Lecture 04", match: false }]);
   });
 });
 
