@@ -8,6 +8,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Before 1.0.0 the policy is: **minor** for features, redesigns and migrations,
 **patch** for fixes. A version is never reused or lowered, and tags are `vX.Y.Z`.
 
+## [0.4.0] - 2026-11-20
+
+### Added
+
+- An Inbox with unread and due-soon views, filters, grouped changes, and bulk
+  read and dismiss actions.
+- A deadline Agenda, a month view for course activity, and per-course scan
+  diagnostics in History.
+- Course Materials with a folder rail and file table, an All files view, and
+  local course renaming and monitoring controls.
+- Quick Look PDF thumbnails and text search, plus dedicated image, text, audio,
+  and video preview controls.
+- Per-file download progress, cancellation, and retry, and a five-minute
+  monitoring interval option.
+
+### Changed
+
+- Revamped the workspace, file inspector, and Settings with responsive
+  navigation, updated light and dark layouts, and more appearance controls.
+- Expanded command search with course, type, read, saved, and due-date filters,
+  and added keyboard navigation and a shortcut reference.
+- Added first-run progress and clearer session reconnect and update states.
+
+### Fixed
+
+- Failed updater installs leave background monitoring running, and successful
+  installs follow the platform's restart flow.
+- Improved focus restoration and layout at narrow widths and 200% zoom.
+- Inbox count failures show unknown totals while preserving available rows.
+
 ## [0.3.0] - 2026-11-13
 
 ### Changed
