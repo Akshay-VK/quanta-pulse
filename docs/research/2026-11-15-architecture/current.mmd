@@ -1,0 +1,56 @@
+flowchart TB
+  subgraph UI[React webview]
+    APP[App: navigation, refresh, status, action execution]
+    VIEWS[Today / Inbox / Agenda / Library / History / Settings]
+    HOOKS[Attention / mirror / appearance / session-view hooks]
+    PURE[Pure logic: dates, actions, course trees, appearance]
+    BRIDGE[src/lib/api.ts: invoke and event listening]
+    VIEWS --> APP
+    APP --> HOOKS
+    APP --> PURE
+    APP --> BRIDGE
+    HOOKS --> BRIDGE
+  end
+  subgraph DESKTOP[Tauri desktop process]
+    CMD[Registered command handlers]
+    STATE[AppState: connection, settings, session client, workers]
+    AUTH[Password / SSO / session refresh]
+    SCHED[Scheduler: checks due time every 30 seconds]
+    SCAN[Scan engine: discovery + persistence + events + baseline]
+    DISC[Discovery: courses + traversal + kind-specific details + merge]
+    PARSE[HTML parsing + URL identity]
+    HTTP[Authenticated HTTP client]
+    DIFF[Pure resource change detection]
+    DB[db.rs + attention queries + SQLite]
+    WORKERS[Mirror worker]
+    TELEGRAM[Telegram worker and independent HTTP client]
+    NOTIFY[Native notifications / optional Telegram forwarding]
+    PREVIEW[Preview / cached and saved file actions]
+  end
+  BRIDGE --> CMD
+  CMD --> STATE
+  CMD --> AUTH
+  CMD --> SCAN
+  CMD --> DB
+  CMD --> PREVIEW
+  SCHED --> SCAN
+  AUTH --> STATE
+  SCAN --> DISC
+  DISC --> PARSE
+  DISC --> HTTP
+  SCAN --> DIFF
+  SCAN --> DB
+  SCAN --> NOTIFY
+  SCAN --> WORKERS
+  PREVIEW --> HTTP
+  PREVIEW --> DB
+  WORKERS --> DB
+  WORKERS --> HTTP
+  NOTIFY --> TELEGRAM
+  HTTP <-->|Session requests| QUANTA[Quanta Moodle]
+  WORKERS --> DISK[Local cache / mirror / retained versions]
+  TELEGRAM --> TG[Telegram: optional external transport]
+  UPDATER[Frontend updater lifecycle and Rust background checks] --> RELEASE[Release feed / signed update artifacts]
+  BRIDGE -->|Updater/process plugins| UPDATER
+  CMD --> PREP[Update preparation]
+  DESKTOP -.->|Status and progress events| BRIDGE

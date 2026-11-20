@@ -1,0 +1,38 @@
+flowchart TB
+  UI[Shell + existing material workflows + academic views]
+  QUERIES[Domain query modules: materials / assignments / grades / attendance]
+  TAURI[Tauri command and event adapter]
+  SCAN[Scan coordinator: shared request budget and per-domain coverage]
+  GATE[Verified student identity + source capability + route/policy checks]
+  subgraph COLLECT[Concrete collection modules; introduced as each feature ships]
+    MATERIALS[Existing materials and announcements]
+    ASSIGN[Assignments: effective dates + submission observations]
+    GRADES[Grades: student-visible items + reported totals]
+    ATT[Attendance: supported own report only; conditional]
+  end
+  HTTP[Authenticated request adapter]
+  QUANTA[Quanta Moodle]
+  subgraph RECON[Domain reconciliation modules]
+    R1[Resource reconciliation]
+    R2[Assignment reconciliation + deadline projection]
+    R3[Grade reconciliation]
+    R4[Attendance reconciliation]
+  end
+  STORE[SQLite: student-owned records, source facts, freshness,
+  per-domain successful baselines and migration ledger]
+  CHANGES[Committed domain changes]
+  POLICY[Notification content/transport policy]
+  MIRROR[Material-eligible mirror only]
+  UI --> QUERIES --> TAURI
+  TAURI --> SCAN --> GATE --> COLLECT
+  COLLECT --> HTTP <--> QUANTA
+  MATERIALS --> R1
+  ASSIGN --> R2
+  GRADES --> R3
+  ATT --> R4
+  RECON --> STORE
+  STORE --> QUERIES
+  STORE --> CHANGES --> POLICY
+  CHANGES --> MIRROR
+  NOTE[Phase B: new behavior, gated by live source evidence.
+  No universal resource record, runtime plugin registry, or new server.]

@@ -1,0 +1,28 @@
+flowchart TB
+  UI[Existing views and intentional App action owner]
+  QUERY[Focused query/refresh ownership]
+  TAURI[Tauri command and event adapter]
+  COORD[Scan coordinator: lifecycle, cancellation, progress]
+  INVENTORY[Course inventory and bounded traversal]
+  subgraph COLLECT[Deep collection modules]
+    ANN[Announcement collection: request + parse + interpret]
+    MAT[Material collection: request + parse + expand + enrich]
+  end
+  REQUEST[Existing authenticated HTTP adapter and read interpretation]
+  OBS[Resource observations + explicit collection coverage]
+  RECON[Deep resource reconciliation: writes + diff + baseline + misses + dedup]
+  DB[Existing SQLite connection and persistence]
+  COMMIT[Committed scan result]
+  DELIVERY[Existing notification and mirror workers]
+  UI --> QUERY --> TAURI --> COORD
+  COORD --> INVENTORY
+  INVENTORY --> COLLECT
+  COLLECT --> REQUEST
+  REQUEST <-->|Allowlisted reads| QUANTA[Quanta Moodle]
+  COLLECT --> OBS --> RECON --> DB
+  DB --> COMMIT --> DELIVERY
+  COMMIT --> TAURI
+  FIXTURE[Loopback HTTP fixtures] -.-> REQUEST
+  TMPDB[Temporary SQLite tests] -.-> RECON
+  NOTE[Phase A: preserve behavior during extraction.
+  Correctness fixes and request-denial semantics are separate changes.]
