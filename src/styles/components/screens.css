@@ -422,47 +422,55 @@
 
   /* --------------------------------------------------------------- Settings */
 
-  /* Settings is one scroll surface with a fixed-width section rail. */
   .settings-page {
-    max-width: 888px;
-    width: 100%;
-    margin-inline: auto;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
   }
 
   .settings-layout {
     display: grid;
-    grid-template-columns: 216px minmax(0, 640px);
-    gap: var(--sp-6);
-    align-items: start;
+    grid-template-columns: 216px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .settings-sticky {
     position: sticky;
-    top: var(--sp-6);
+    top: 0;
+    align-self: start;
+    height: 100%;
+    padding: var(--sp-3) var(--sp-2);
+    border-right: 1px solid var(--line);
+  }
+
+  .settings-sticky nav {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 1px;
   }
 
   .settings-section-select {
     display: none;
-    width: 100%;
-    max-width: 100%;
-    appearance: auto;
   }
 
   .settings-link {
     display: flex;
     align-items: center;
-    width: 100%;
-    height: 32px;
+    gap: var(--sp-2);
+    height: 28px;
     padding: 0 var(--sp-2);
     border-radius: var(--radius-sm);
-    text-align: left;
+    color: var(--muted);
     text-decoration: none;
     white-space: nowrap;
-    font: 14px/20px var(--type-ui);
-    color: var(--muted);
+  }
+
+  .settings-link svg {
+    color: var(--faint);
   }
 
   .settings-link:hover {
@@ -473,40 +481,75 @@
   .settings-link[aria-current="true"] {
     background: var(--selected);
     color: var(--ink);
-    font-weight: 600;
+    font-weight: var(--weight-label);
+  }
+
+  .settings-link[aria-current="true"] svg {
+    color: var(--ink);
+  }
+
+  .settings-scroll {
+    min-height: 0;
+    min-width: 0;
+    overflow: auto;
   }
 
   .settings-content {
-    width: 100%;
+    box-sizing: content-box;
+    width: auto;
+    max-width: 640px;
     min-width: 0;
+    padding: var(--sp-8) var(--sp-12) var(--sp-10);
+  }
+
+  .settings-section + .settings-section {
+    margin-top: var(--sp-8);
   }
 
   .settings-section {
-    scroll-margin-top: var(--sp-6);
+    scroll-margin-top: var(--sp-8);
+  }
+
+  .settings-title {
+    font-size: var(--fs-title);
+    font-weight: var(--weight-heading);
   }
 
   .settings-group-title {
-    padding: var(--sp-10) 0 var(--sp-2);
-    font: 600 16px/24px var(--type-dialog);
-    color: var(--ink);
+    font-size: var(--fs-section);
+    font-weight: var(--weight-heading);
+  }
+
+  .settings-content > .settings-section-description {
+    margin-bottom: var(--sp-6);
+  }
+
+  .settings-section-description {
+    margin: var(--sp-1) 0 var(--sp-5);
+    color: var(--muted);
   }
 
   .settings-subgroup-title {
     padding: var(--sp-5) 0 var(--sp-1);
-    font: 600 13px/20px var(--type-ui);
     color: var(--muted);
+    font-size: var(--fs-ui);
   }
 
-  /* Only the first section loses the 40px lead-in. The old rule matched every
-     heading, because each <h2> is the first child of its own <section>. */
-  .settings-section:first-child .settings-group-title {
-    padding-top: 0;
+  .settings-section .setting-row {
+    gap: var(--sp-4);
+    padding: 14px 0;
+    border-top: 1px solid var(--line);
+    border-bottom: none;
   }
 
-  /* Separators come from the rows alone, so no line is ever doubled and the
-     last row in a section ends without one. */
-  .settings-section .setting-row:last-child {
-    border-bottom: 0;
+  .settings-section .setting-desc {
+    color: var(--faint);
+  }
+
+  .settings-section .select-trigger {
+    min-height: 28px;
+    height: 28px;
+    border-color: var(--control-line);
   }
 
   /* Small inline arrangements inside a settings control: status dot plus its
@@ -544,85 +587,124 @@
   }
 
   .settings-download-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: var(--sp-1) var(--sp-2);
+    display: flex;
     align-items: center;
-    font: 12px/16px var(--type-caption);
+    gap: var(--sp-2);
+    min-height: 34px;
+    padding: 0 var(--sp-2);
+    border-radius: var(--radius-chip);
+    background: var(--hover);
+    font-size: var(--fs-label);
   }
 
-  .settings-download-row progress {
-    grid-column: 1 / -1;
-    width: 100%;
+  .settings-download-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .settings-download-row progress,
+  .settings-banner progress {
+    width: min(128px, 25%);
     height: 4px;
+    accent-color: var(--accent);
   }
 
-  .settings-download-row .muted {
-    grid-column: 1 / -1;
-    overflow-wrap: anywhere;
+  .settings-banner {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--sp-2);
+    min-height: 40px;
+    padding: var(--sp-2) var(--sp-3);
+    margin-bottom: var(--sp-3);
+    border: 1px solid var(--control-line);
+    border-radius: var(--radius-md);
+    background: var(--floating);
+  }
+
+  .settings-banner.is-info { background: var(--t-upd-bg); }
+  .settings-banner.is-error { background: var(--t-red-bg); }
+  .settings-banner.is-success { background: var(--t-ok-bg); }
+
+  .settings-banner .settings-inline,
+  .settings-banner > .btn {
+    margin-inline-start: auto;
   }
 
   .save-bar {
-    position: sticky;
-    bottom: var(--sp-3);
-    margin-top: var(--sp-6);
     display: flex;
+    flex: 0 0 auto;
     align-items: center;
+    justify-content: space-between;
     gap: var(--sp-3);
-    justify-content: flex-end;
-    background: var(--raised);
-    box-shadow: var(--shadow-pop);
-    border-radius: var(--radius-md);
-    box-sizing: border-box;
-    height: 48px;
-    min-height: 48px;
-    padding: 0 var(--sp-3);
-    animation: savebar-in var(--dur-base) var(--ease-out);
+    min-height: 52px;
+    padding: var(--sp-2) var(--sp-4);
+    border-top: 1px solid var(--control-line);
+    background: var(--floating);
   }
 
   .save-bar .save-copy {
-    margin-right: auto;
-    font: 13px/18px var(--type-small);
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
     color: var(--muted);
   }
 
-  @keyframes savebar-in {
-    from {
-      opacity: 0;
-      transform: translateY(12px);
-    }
-    to {
-      opacity: 1;
-      transform: none;
-    }
+  .save-copy strong {
+    color: var(--ink);
+    font-weight: var(--weight-label);
+  }
+
+  .save-copy .settings-dot {
+    background: var(--dot-warn);
+  }
+
+  .save-copy .settings-dot.ok {
+    background: var(--dot-ok);
+  }
+
+  .save-bar.is-error .save-copy svg {
+    flex: none;
+    color: var(--danger);
   }
 
   @media (max-width: 959px) {
-    .settings-page {
-      max-width: none;
-    }
-
     .settings-layout {
-      grid-template-columns: minmax(0, 1fr);
-      gap: var(--sp-3);
+      display: block;
+      overflow: auto;
     }
 
     .settings-sticky {
-      position: static;
-      width: 100%;
+      z-index: var(--z-sticky);
+      height: auto;
+      padding: var(--sp-3) var(--sp-3) var(--sp-2);
+      border: none;
+      background: var(--raised);
     }
 
     .settings-section-select {
-      display: block;
+      display: inline-flex;
+      min-height: 28px;
+      height: 28px;
     }
 
     .settings-sticky nav {
       display: none;
     }
 
-    .settings-link {
-      flex: 0 0 auto;
-      width: auto;
+    .settings-scroll {
+      overflow: visible;
+    }
+
+    .settings-content {
+      padding: var(--sp-2) var(--sp-3) var(--sp-6);
+    }
+
+    .settings-section {
+      scroll-margin-top: 56px;
     }
   }
 

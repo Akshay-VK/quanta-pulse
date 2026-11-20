@@ -1,8 +1,9 @@
-import { MoreHorizontal, X } from "lucide-react";
+import { ChevronRight, CircleAlert, Download, ExternalLink, Eye, File, FolderOpen, Info, MoreHorizontal, RotateCcw, X } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { Button } from "./ui/Button";
 import { IconButton } from "./ui/IconButton";
 import { Kbd } from "./ui/Kbd";
+import { StatusTag } from "./ui/StatusTag";
 import { Menu, type MenuItemSpec } from "./ui/Menu";
 import PropertyList from "./PropertyList";
 import { formatBytes } from "../lib/format";
@@ -49,6 +50,8 @@ export interface PeekDetails {
   title: string;
   /** Optional type badge shown above the title (e.g. "PDF"). */
   typeLabel?: string | null;
+  headerLabel?: string;
+  propertyStatus?: { label: string; tone: "saved" | "failed" | "muted" } | null;
   properties: DetailProperty[];
   note?: string | null;
   banner?: PeekBanner | null;
@@ -114,7 +117,7 @@ export default function PeekPanel({
   const wasOpen = useRef(false);
   const previousKey = useRef(selectionKey);
 
-  const initialOpen = details?.technicalOpen ?? details?.fileInfoOpen ?? (details?.technical != null);
+  const initialOpen = details?.technicalOpen ?? details?.fileInfoOpen ?? false;
   const [fileInfoOpen, setFileInfoOpen] = useState<boolean>(Boolean(initialOpen));
 
   useEffect(() => {
@@ -126,9 +129,8 @@ export default function PeekPanel({
   }, [open, details, selectionKey, focusOnOpen]);
 
   useEffect(() => {
-    const next = details?.technicalOpen ?? details?.fileInfoOpen;
-    if (next !== undefined) setFileInfoOpen(Boolean(next));
-  }, [details?.technicalOpen, details?.fileInfoOpen]);
+    setFileInfoOpen(details?.technicalOpen ?? details?.fileInfoOpen ?? false);
+  }, [details?.technicalOpen, details?.fileInfoOpen, selectionKey]);
 
   if (!open || !details) return null;
 
@@ -167,12 +169,54 @@ export default function PeekPanel({
   const cancelLabel = details.cancelAction?.label ?? "Cancel download";
 
   const disabledAll = Boolean(progress);
+  const showActions = details.primaryAction || details.secondaryAction || cancelOnClick || details.menu?.length;
+  const BannerIcon = banner?.kind === "danger" || banner?.kind === "warning" ? CircleAlert : Info;
+  const renderAction = (action: NonNullable<PeekDetails["primaryAction"]>, primary: boolean) => {
+    const actionIcons = {
+      Preview: Eye,
+      "Open saved copy": FolderOpen,
+      "Open in Quanta": ExternalLink,
+      "Download and open": Download,
+      Download,
+      Retry: RotateCcw,
+    } as const;
+    const ActionIcon = actionIcons[action.label as keyof typeof actionIcons];
+    const shortKey = action.label === "Preview" ? "Space" : action.label === "Open saved copy" ? "Mod+O" : null;
+    return (
+      <Button
+        variant={primary ? "primary" : "secondary"}
+        leadingIcon={ActionIcon && <ActionIcon aria-hidden="true" />}
+        trailingIcon={shortKey && <span aria-hidden="true"><Kbd keys={shortKey} /></span>}
+        aria-label={action.label}
+        onClick={action.onClick}
+        disabled={action.disabled || disabledAll}
+      >
+        {action.label}
+      </Button>
+    );
+  };
 
   return (
-    <aside className="peek open" aria-labelledby={titleId}>
+    <aside className="peek open" aria-labelledby={titleId} onKeyDown={(event) => {
+      if (event.defaultPrevented || disabledAll) return;
+      const actions = [details.primaryAction, details.secondaryAction].filter((action) => action && !action.disabled);
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "o") {
+        const action = actions.find((item) => item?.label === "Open saved copy");
+        if (!action) return;
+        event.preventDefault();
+        action.onClick();
+      } else if (event.key === " " && event.target === titleRef.current) {
+        const action = actions.find((item) => item?.label === "Preview");
+        const menuAction = details.menu?.find((item) => item.id === "preview" && !item.disabled);
+        if (!action && !menuAction?.onSelect) return;
+        event.preventDefault();
+        if (action) action.onClick();
+        else menuAction?.onSelect?.();
+      }
+    }}>
       <div className="peek-inner peek-enter">
         <div className="peek-header">
-          <span className="peek-header-label">Material</span>
+          <span className="peek-header-label">{details.headerLabel ?? "Material"}</span>
           <span className="peek-header-spacer" />
           <Kbd keys="Esc" />
           <IconButton label="Close details" size={28} onClick={onClose}>
@@ -182,6 +226,7 @@ export default function PeekPanel({
 
         {details.typeLabel && (
           <div className="peek-type">
+            {!["ANNOUNCEMENT", "HISTORICAL EVENT", "EXTERNAL LINK", "DEADLINE"].includes(details.typeLabel) && <File aria-hidden="true" />}
             <span>{details.typeLabel}</span>
           </div>
         )}
@@ -192,21 +237,14 @@ export default function PeekPanel({
 
         {banner && (
           <div className={`peek-banner peek-banner--${banner.kind ?? "info"}`} role="status">
+            <BannerIcon aria-hidden="true" />
             {banner.text}
           </div>
         )}
 
-        <div className="peek-actions-row">
-          {details.primaryAction && (
-            <Button variant="primary" onClick={details.primaryAction.onClick} disabled={details.primaryAction.disabled || disabledAll}>
-              {details.primaryAction.label}
-            </Button>
-          )}
-          {details.secondaryAction && (
-            <Button variant="secondary" onClick={details.secondaryAction.onClick} disabled={details.secondaryAction.disabled || disabledAll}>
-              {details.secondaryAction.label}
-            </Button>
-          )}
+        {Boolean(showActions) && <div className="peek-actions-row">
+          {details.primaryAction && renderAction(details.primaryAction, true)}
+          {details.secondaryAction && renderAction(details.secondaryAction, false)}
           {cancelOnClick && (
             <Button variant="ghost" onClick={cancelOnClick}>
               {cancelLabel}
@@ -218,25 +256,29 @@ export default function PeekPanel({
                 label="More actions"
                 items={details.menu}
                 trigger={
-                  <IconButton label="More actions" size={28} tooltip={false}>
+                  <IconButton label="More actions" size={28} tooltip={false} disabled={disabledAll}>
                     <MoreHorizontal aria-hidden="true" />
                   </IconButton>
                 }
               />
             </div>
           )}
-        </div>
+        </div>}
 
-        <div className="peek-divider" />
-
+        {(showActions || banner) && (details.properties.length > 0 || details.propertyStatus || progress) && <div className="peek-divider" />}
+        {details.statusTag && !details.typeLabel && <StatusTag kind={details.statusTag.kind} label={details.statusTag.label} />}
         {progress && (
           <div className="peek-progress-row">
             <span className="peek-progress-label">Status</span>
-            <span className="peek-progress-bar">
-              <i style={{ width: `${Math.max(0, Math.min(100, percent ?? 0))}%` }} />
-            </span>
+            <progress className="peek-progress-bar" aria-label="Download progress" value={percent ?? undefined} max={100} />
             {percent != null && <span className="peek-progress-percent">{percent}%</span>}
             {progressSize && <span className="peek-progress-size">{progressSize}</span>}
+          </div>
+        )}
+        {details.propertyStatus && !progress && (
+          <div className="peek-progress-row">
+            <span className="peek-progress-label">Status</span>
+            <span className={`peek-property-status peek-property-status--${details.propertyStatus.tone}`}>{details.propertyStatus.label}</span>
           </div>
         )}
 
@@ -262,7 +304,7 @@ export default function PeekPanel({
               details.onFileInfoOpenChange?.(o);
             }}
           >
-            <summary>File information</summary>
+            <summary><ChevronRight size={14} aria-hidden="true" /> File information</summary>
             {technicalRows.length > 0 && (
               <PropertyList className="peek-properties" properties={technicalRows} onCopy={onCopy} />
             )}

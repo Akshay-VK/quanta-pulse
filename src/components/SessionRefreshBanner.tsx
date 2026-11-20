@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { CircleAlert, CircleCheck } from "lucide-react";
 import { Banner } from "./ui/Banner";
 import { Button } from "./ui/Button";
 import type { SessionResetResult } from "../lib/types";
@@ -7,171 +8,120 @@ interface Props {
   sessionExpired: boolean;
   onRestart: () => Promise<SessionResetResult>;
   onSignInAgain?: () => void;
-  /** Abort an in-flight SSO window. Omitted in tests that only assert UI. */
   onCancel?: () => void | Promise<void>;
-  /** Called when the user dismisses a terminal banner. */
   onDismiss?: () => void;
 }
 
-type State = "connected" | "expired" | "reconnecting" | "succeeded" | "failed";
+type State = "idle" | "reconnecting" | "succeeded" | "failed" | "dismissed";
 
-const RECONNECTING_MESSAGE = "Waiting for sign-in…";
-const SUCCEEDED_MESSAGE = "Reconnected. Monitoring resumed.";
-const FAILED_MESSAGE = "Couldn't reconnect.";
-const FAILED_DETAIL = "Sign-in was cancelled or failed.";
-
-export default function SessionRefreshBanner({
+export function useSessionRefreshBanner({
   sessionExpired,
   onRestart,
   onSignInAgain,
   onCancel,
   onDismiss,
 }: Props) {
-  const [state, setState] = useState<State>(sessionExpired ? "expired" : "connected");
+  const [state, setState] = useState<State>("idle");
   const [detail, setDetail] = useState("");
-  const request = useRef(false);
+  const [canSignInAgain, setCanSignInAgain] = useState(false);
+  const request = useRef<Promise<SessionResetResult> | null>(null);
   const cancelled = useRef(false);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (sessionExpired) {
-      if (state === "connected") {
-        setState("expired");
-        setDetail("");
-      }
-    } else if (
-      state === "expired" ||
-      state === "reconnecting" ||
-      state === "failed"
-    ) {
-      // Only settle back to connected when the backend agrees the session
-      // is healthy again; a succeeded banner keeps its own 4s timer.
-      setState("connected");
-      setDetail("");
-    }
+    setState((current) => (
+      (sessionExpired && current === "succeeded") ||
+      (!sessionExpired && (current === "dismissed" || current === "failed"))
+    ) ? "idle" : current);
   }, [sessionExpired]);
 
   useEffect(() => {
-    return () => {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    };
-  }, []);
+    if (state !== "succeeded") return;
+    const timer = setTimeout(() => setState("idle"), 4000);
+    return () => clearTimeout(timer);
+  }, [state]);
 
   async function restart() {
     if (request.current) return;
-    request.current = true;
     cancelled.current = false;
     setState("reconnecting");
-    setDetail("");
+    setCanSignInAgain(false);
+    const work = Promise.resolve().then(onRestart);
+    request.current = work;
     try {
-      const result = await onRestart();
-      if (cancelled.current) {
-        setState("failed");
-        setDetail(FAILED_DETAIL);
-        return;
-      }
+      const result = await work;
+      if (cancelled.current) return;
       if (result.status === "connected") {
         setState("succeeded");
-        setDetail(result.message || "");
-        if (timeoutRef.current) clearTimeout(timeoutRef.current);
-        timeoutRef.current = setTimeout(() => {
-          setState("connected");
-          setDetail("");
-        }, 4000);
       } else {
         setState("failed");
-        setDetail(result.message || FAILED_DETAIL);
+        setDetail(result.message || "Sign-in was cancelled or failed.");
+        setCanSignInAgain(result.status === "login_required");
       }
     } catch (error) {
-      if (cancelled.current) {
+      if (!cancelled.current) {
         setState("failed");
-        setDetail(FAILED_DETAIL);
-        return;
+        setDetail(error instanceof Error ? error.message : String(error));
       }
-      setState("failed");
-      setDetail(String(error));
     } finally {
-      request.current = false;
+      request.current = null;
     }
   }
 
   async function cancel() {
-    if (!request.current) return;
+    if (!request.current || cancelled.current) return;
     cancelled.current = true;
-    request.current = false;
     try {
       await onCancel?.();
     } catch {
-      // Cancel is best-effort; the banner still reports failure.
+      // A window can disappear before cancellation reaches it.
     }
+    setDetail("Sign-in was cancelled or failed.");
     setState("failed");
-    setDetail(FAILED_DETAIL);
   }
 
   function dismiss() {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
-    setState("connected");
-    setDetail("");
+    setState(sessionExpired ? "dismissed" : "idle");
     onDismiss?.();
   }
 
-  if (state === "connected") return null;
-
-  if (state === "expired") {
-    return (
-      <Banner
-        kind="error"
-        action={{ label: "Reconnect", onClick: () => void restart() }}
-      >
-        <strong>Session expired.</strong> Sign in again to keep monitoring.
-      </Banner>
-    );
-  }
+  const className = "session-recovery-banner";
+  const warning = <CircleAlert aria-hidden="true" />;
 
   if (state === "reconnecting") {
     return (
-      <Banner kind="info" action={{ label: "Cancel", onClick: () => void cancel() }}>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-          <span className="spinner" aria-hidden="true" />
-          <strong>{RECONNECTING_MESSAGE}</strong>
-        </span>
-        <div>Complete sign-in in the Quanta window. Close that window to cancel. Your saved files remain available.</div>
+      <Banner className={`${className} session-reconnecting`} icon={<span className="spinner" aria-hidden="true" />}>
+        <span>Waiting for sign-in in your browser…</span>
+        <Button variant="ghost" size="sm" onClick={() => void cancel()}>Cancel</Button>
       </Banner>
     );
   }
-
   if (state === "succeeded") {
     return (
-      <Banner kind="ok" action={{ label: "Dismiss", onClick: dismiss }}>
-        <strong>Reconnected.</strong> Monitoring resumed.
-        {detail && detail !== SUCCEEDED_MESSAGE && <div>{detail}</div>}
+      <Banner className={className} kind="ok" icon={<CircleCheck aria-hidden="true" />}>
+        <span><strong>Reconnected.</strong> Monitoring resumed.</span>
+        <Button variant="ghost" size="sm" onClick={dismiss}>Dismiss</Button>
       </Banner>
     );
   }
-
-  // failed
+  if (state === "failed") {
+    return (
+      <Banner className={className} kind="error" icon={warning}>
+        <span><strong>Couldn't reconnect.</strong> {detail}</span>
+        <Button variant="secondary" size="sm" onClick={() => void restart()}>Try again</Button>
+        {canSignInAgain && onSignInAgain && <Button variant="ghost" size="sm" onClick={onSignInAgain}>Sign in again</Button>}
+        <Button variant="ghost" size="sm" onClick={dismiss}>Dismiss</Button>
+      </Banner>
+    );
+  }
+  if (state === "dismissed" || !sessionExpired) return null;
   return (
-    <Banner
-      kind="error"
-      action={{ label: "Try again", onClick: () => void restart() }}
-    >
-      <strong>{FAILED_MESSAGE}</strong>
-      {detail && <div>{detail}</div>}
-      <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-        <Button variant="ghost" size="sm" onClick={dismiss}>
-          Dismiss
-        </Button>
-      </div>
-      {onSignInAgain && (
-        <div style={{ marginTop: 8 }}>
-          <Button variant="ghost" size="sm" onClick={onSignInAgain}>
-            Sign in again
-          </Button>
-        </div>
-      )}
+    <Banner className={className} kind="error" icon={warning}>
+      <span><strong>Session expired.</strong> Sign in again to keep monitoring.</span>
+      <Button variant="secondary" size="sm" onClick={() => void restart()}>Reconnect</Button>
     </Banner>
   );
+}
+
+export default function SessionRefreshBanner(props: Props) {
+  return useSessionRefreshBanner(props);
 }

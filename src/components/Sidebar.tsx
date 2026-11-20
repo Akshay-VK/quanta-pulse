@@ -1,14 +1,13 @@
 import {
-  Activity,
+  ChevronDown,
+  Clock,
   Calendar,
-  History,
-  Library,
-  PanelLeft,
+  Folder,
+  Inbox,
   PanelLeftOpen,
   Pause,
   Search,
-  Settings,
-  Sun,
+  SlidersHorizontal,
 } from "lucide-react";
 import type { KeyboardEvent, ReactNode } from "react";
 import { useEffect, useRef } from "react";
@@ -17,7 +16,6 @@ import { NAV, type ViewId } from "../lib/nav";
 import { courseDotClass } from "./ui/CoursePill";
 import { IconButton } from "./ui/IconButton";
 import { courseLabel } from "../lib/courseName";
-import { Kbd } from "./ui/Kbd";
 import { formatShortcut } from "../lib/platform";
 import { Tooltip } from "./ui/Tooltip";
 import SyncStatus from "./SyncStatus";
@@ -25,11 +23,11 @@ import SyncButton from "./SyncButton";
 import type { Course, SyncStatus as SyncStatusModel } from "../lib/types";
 
 const NAV_ICON: Record<ViewId, ReactNode> = {
-  today: <Sun aria-hidden="true" />,
+  today: <Inbox aria-hidden="true" />,
   calendar: <Calendar aria-hidden="true" />,
-  library: <Library aria-hidden="true" />,
-  history: <History aria-hidden="true" />,
-  settings: <Settings aria-hidden="true" />,
+  library: <Folder aria-hidden="true" />,
+  history: <Clock aria-hidden="true" />,
+  settings: <SlidersHorizontal aria-hidden="true" />,
 };
 
 function NavItem({
@@ -43,7 +41,7 @@ function NavItem({
   icon: ReactNode;
   label: string;
   active: boolean;
-  badge?: number;
+  badge?: number | "–";
   collapsed: boolean;
   onClick: () => void;
 }) {
@@ -57,8 +55,8 @@ function NavItem({
     >
       <span className="icon">{icon}</span>
       <span className="nav-label">{label}</span>
-      {badge !== undefined && badge > 0 && (
-        <span className="nav-badge">{badge > 99 ? "99+" : badge}</span>
+      {(badge === "–" || (badge ?? 0) > 0) && (
+        <span className="nav-badge">{typeof badge === "number" && badge > 99 ? "99+" : badge}</span>
       )}
     </button>
   );
@@ -83,7 +81,7 @@ function CourseNavItem({
   onSelect,
 }: {
   course: Course;
-  unread: number;
+  unread: number | "–";
   active: boolean;
   collapsed: boolean;
   onSelect: () => void;
@@ -105,7 +103,7 @@ function CourseNavItem({
         <span className={cx("course-dot", courseDotClass(course.id))} aria-hidden="true" />
       )}
       <span className="course-nav-code">{text}</span>
-      {unread > 0 && <span className="course-nav-count">{unread}</span>}
+      {(unread === "–" || unread > 0) && <span className="course-nav-count">{unread}</span>}
     </button>
   );
   return collapsed ? (
@@ -133,12 +131,14 @@ export default function Sidebar({
   collapsed,
   onToggle,
   overlay = false,
+  sessionExpired,
+  appearanceActions,
 }: {
   view: ViewId;
   onView: (id: ViewId) => void;
   courses: Course[];
   unreadByCourse: Map<number, number>;
-  unreadTotal: number;
+  unreadTotal: number | "–";
   activeCourseId: number | null;
   onCourse: (id: number | null) => void;
   sync: SyncStatusModel | null;
@@ -151,6 +151,8 @@ export default function Sidebar({
   onToggle: () => void;
   /** The narrow-width drawer is open over the content. */
   overlay?: boolean;
+  sessionExpired?: boolean;
+  appearanceActions?: ReactNode;
 }) {
   const sidebarRef = useRef<HTMLDivElement>(null);
   const wasOverlay = useRef(false);
@@ -213,26 +215,24 @@ export default function Sidebar({
       aria-label={overlay ? "Primary navigation" : undefined}
       onKeyDown={trapDrawerFocus}
     >
-      {/* The logo doubles as the expand affordance in the rail. */}
-      <button
-        type="button"
-        className="sidebar-brand"
-        data-tauri-drag-region
-        onClick={collapsed ? onToggle : undefined}
-        aria-label={collapsed ? (overlay ? "Close navigation" : `Expand sidebar (${formatShortcut("Mod+\\")})`) : undefined}
-        tabIndex={collapsed ? 0 : -1}
-      >
-        <Activity className="brand-mark" aria-hidden="true" />
-        <span className="brand-name">Quanta Pulse</span>
-      </button>
+      <div className="sidebar-header">
+        <button
+          type="button"
+          className={cx("sidebar-brand", !collapsed && "sidebar-collapse")}
+          onClick={onToggle}
+          aria-label={overlay ? "Close navigation" : `${collapsed ? "Expand" : "Collapse"} sidebar (${formatShortcut("Mod+\\")})`}
+        >
+          <span className="brand-mark" aria-hidden="true">P</span>
+          <span className="brand-name">Pulse</span>
+          <span className="sr-only">{collapsed ? "Expand" : "Collapse"}</span>
+          <ChevronDown className="brand-chevron" aria-hidden="true" />
+        </button>
+        <IconButton label="Open command palette" className="search-trigger" onClick={onOpenPalette}>
+          <Search aria-hidden="true" />
+        </IconButton>
+      </div>
 
       <div className="sidebar-scroll">
-        <button type="button" className="search-trigger" onClick={onOpenPalette}>
-          <Search aria-hidden="true" />
-          <span className="st-hint">Search</span>
-          <Kbd keys="Mod+K" />
-        </button>
-
         <nav aria-label="Primary">
           {NAV.map((item) => (
             <NavItem
@@ -256,41 +256,33 @@ export default function Sidebar({
                 <CourseNavItem
                   key={course.id}
                   course={course}
-                  unread={unreadByCourse.get(course.id) ?? 0}
+                  unread={unreadTotal === "–" ? "–" : unreadByCourse.get(course.id) ?? 0}
                   active={view === "library" && activeCourseId === course.id}
                   collapsed={collapsed && !overlay}
                   onSelect={() => onCourse(course.id)}
                 />
               ))}
             </div>
-            <button
-              type="button"
-              className="all-courses-link"
-              onClick={() => onCourse(null)}
-            >
-              All courses
-            </button>
+            {courses.length > topCourses.length && (
+              <button type="button" className="all-courses-link" onClick={() => onCourse(null)}>
+                All courses
+              </button>
+            )}
           </div>
         )}
       </div>
 
       <div className="sidebar-footer">
-        <SyncStatus sync={sync} onOpenScans={onOpenScans} />
-        <SyncButton running={Boolean(sync?.running)} onSync={onSync} collapsed={collapsed && !overlay} />
-
-        {collapsed ? (
-          // Always visible: the rail must always offer a way back out.
-          <Tooltip content="Expand sidebar (Ctrl+\\)" side="right">
-            <IconButton label={overlay ? "Close navigation" : "Expand sidebar (Ctrl+\\)"} size={28} tooltip={false} onClick={onToggle}>
+        <SyncStatus sync={sync} onOpenScans={onOpenScans} sessionExpired={sessionExpired} />
+        <div className="sidebar-footer-actions">
+          <SyncButton running={Boolean(sync?.running)} onSync={onSync} collapsed />
+          {appearanceActions}
+          {collapsed && (
+            <IconButton label={overlay ? "Close navigation" : `Expand sidebar (${formatShortcut("Mod+\\")})`} onClick={onToggle}>
               <PanelLeftOpen aria-hidden="true" />
             </IconButton>
-          </Tooltip>
-        ) : (
-          <button type="button" className="sidebar-collapse" onClick={onToggle}>
-            <PanelLeft aria-hidden="true" />
-            Collapse
-          </button>
-        )}
+          )}
+        </div>
       </div>
     </div>
   );

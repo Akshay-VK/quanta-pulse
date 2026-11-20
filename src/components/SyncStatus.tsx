@@ -1,16 +1,9 @@
-import { useEffect, useState } from "react";
-import { formatCompact, relativeLabel } from "../lib/format";
+import { formatCompact, formatTimeOfDay } from "../lib/format";
 import { cx } from "../lib/cx";
 import { Tooltip } from "./ui/Tooltip";
 import type { SyncStatus as SyncStatusModel } from "../lib/types";
-import { useMirror } from "../hooks/useMirror";
-import DownloadsPopover from "./DownloadsPopover";
-import { formatBytes } from "../lib/format";
 
-/**
- * The sidebar sync line: a coloured dot plus a short status. `onOpenScans` is
- * called when the status is an error, so the failure can be inspected.
- */
+/** Sidebar monitoring status and the time of the last successful scan. */
 export default function SyncStatus({
   sync,
   onOpenScans,
@@ -20,73 +13,32 @@ export default function SyncStatus({
   onOpenScans?: () => void;
   sessionExpired?: boolean;
 }) {
-  const [, setTick] = useState(0);
-  const mirror = useMirror();
+  const expired = sessionExpired || sync?.authState === "expired";
+  const failed = Boolean(sync?.lastError);
+  const running = Boolean(sync?.running);
+  const dot = expired || failed ? "danger" : running ? "warn" : "ok";
+  const copy = expired ? "Session expired" : running ? "Scanning" : failed ? "Scan failed" : sync ? "Monitoring" : "Checking…";
+  const tooltip = [
+    copy,
+    sync?.lastSuccessAt ? `Last scan: ${formatCompact(sync.lastSuccessAt)}` : null,
+    sync?.nextScheduledAt ? `Next scan: ${formatCompact(sync.nextScheduledAt)}` : null,
+  ].filter(Boolean).join("\n");
 
-  // Keep the relative time honest without a re-fetch.
-  useEffect(() => {
-    const timer = window.setInterval(() => setTick((n) => n + 1), 30_000);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  let dot = "ok";
-  let copy: string;
-  let clickable = false;
-
-  if (sessionExpired || sync?.authState === "expired") {
-    dot = "danger";
-    copy = "Session expired";
-  } else if (!sync) {
-    copy = "Checking…";
-  } else if (sync.running) {
-    dot = "warn";
-    copy = sync.phase && sync.phase !== "Starting" ? sync.phase : "Scanning";
-  } else if (sync.lastError) {
-    dot = "danger";
-    copy = "Last scan failed";
-    clickable = Boolean(onOpenScans);
-  } else {
-    copy = sync.lastSuccessAt
-      ? `Synced ${relativeLabel(sync.lastSuccessAt)}`
-      : "Not synced yet";
-  }
-
-  const tooltip = sync
-    ? [
-        sync.lastSuccessAt ? `Last sync: ${formatCompact(sync.lastSuccessAt)}` : null,
-        sync.nextScheduledAt ? `Next scan: ${formatCompact(sync.nextScheduledAt)}` : null,
-      ]
-        .filter(Boolean)
-        .join("\n")
-    : "";
-
-  // Second line while the mirror has work. A finished scan does not stop the
-  // queue, so this reads the queue state and not `sync.running`.
-  const stats = mirror?.stats;
-  const active = stats ? stats.queued + stats.downloading : 0;
-  const downloadLine =
-    stats && active > 0
-      ? `Downloading ${stats.downloading} of ${active} · ${formatBytes(Math.max(0, stats.bytesTotal - stats.bytesDone))} remaining`
-      : null;
-
-  const body = (
-    <div
-      className="sync-status"
-      onClick={clickable ? onOpenScans : undefined}
-      style={clickable ? { cursor: "pointer" } : undefined}
-    >
-      <span className={cx("sync-dot", dot, sync?.running && "pulsing")} aria-hidden="true" />
+  const content = (
+    <>
+      <span className={cx("sync-dot", dot, running && "pulsing")} aria-hidden="true" />
       <span className="sync-copy">{copy}</span>
-      {downloadLine && (
-        <>
-          <span className="sync-copy sync-downloading" aria-live="polite">
-            {downloadLine}
-          </span>
-          <DownloadsPopover />
-        </>
-      )}
-    </div>
+      {sync?.lastSuccessAt && <span className="sync-time">{formatTimeOfDay(sync.lastSuccessAt)}</span>}
+    </>
   );
 
-  return <Tooltip content={tooltip}>{body}</Tooltip>;
+  return (
+    <Tooltip content={tooltip}>
+      {failed && onOpenScans ? (
+        <button type="button" className="sync-status" aria-label={copy} onClick={onOpenScans}>{content}</button>
+      ) : (
+        <div className="sync-status" role="status" aria-label={copy}>{content}</div>
+      )}
+    </Tooltip>
+  );
 }

@@ -23,6 +23,7 @@
     --faint: #606571;
     --line: #d5d8df;
     --line-strong: #727986;
+    --control-line: var(--line-strong);
     --accent: #285bd4;
     --link: #214fbb;
     --overlay: rgba(25, 24, 22, 0.4);

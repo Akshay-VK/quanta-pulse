@@ -1,6 +1,6 @@
 import * as ToastPrimitive from "@radix-ui/react-toast";
-import { X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Check, CircleAlert, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { cx } from "../../lib/cx";
 
 export interface ToastItem {
@@ -10,11 +10,41 @@ export interface ToastItem {
   action?: { label: string; onClick: () => void };
 }
 
-/**
- * Shows one toast at a time from the head of `toasts`; the rest stay queued.
- * Auto-dismisses after six seconds, pauses during interaction, and supports
- * swipe / Escape dismissal.
- */
+function ToastEntry({ toast, onDismiss }: { toast: ToastItem; onDismiss: (id: number) => void }) {
+  const [open, setOpen] = useState(true);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  const ToastIcon = toast.error ? CircleAlert : Check;
+
+  return (
+    <ToastPrimitive.Root
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next && !timer.current) {
+          timer.current = setTimeout(() => onDismiss(toast.id), 140);
+        }
+      }}
+      type={toast.error ? "foreground" : "background"}
+      role={toast.error ? "alert" : "status"}
+      aria-live={toast.error ? "assertive" : "polite"}
+      className={cx("toast", toast.error && "toast-error")}
+    >
+      <ToastIcon size={16} className="toast-icon" aria-hidden="true" />
+      <ToastPrimitive.Description className="toast-message">{toast.message}</ToastPrimitive.Description>
+      {toast.action && (
+        <ToastPrimitive.Action asChild altText={toast.action.label}>
+          <button type="button" className="toast-action" onClick={toast.action.onClick}>{toast.action.label}</button>
+        </ToastPrimitive.Action>
+      )}
+      <ToastPrimitive.Close asChild>
+        <button type="button" className="toast-close" aria-label="Dismiss"><X size={14} aria-hidden="true" /></button>
+      </ToastPrimitive.Close>
+    </ToastPrimitive.Root>
+  );
+}
+
+/** Stack active feedback in the lower-right. Each notice pauses while the stack is in use. */
 export function Toaster({
   toasts,
   onDismiss,
@@ -22,67 +52,9 @@ export function Toaster({
   toasts: ToastItem[];
   onDismiss: (id: number) => void;
 }) {
-  const head = toasts[0] ?? null;
-  const [rendered, setRendered] = useState<ToastItem | null>(head);
-  const [open, setOpen] = useState(Boolean(head));
-
-  useEffect(() => {
-    if (head && (!rendered || head.id !== rendered.id)) {
-      setRendered(head);
-      setOpen(true);
-    } else if (!head && rendered) {
-      setOpen(false);
-    }
-  }, [head, rendered]);
-
-  const handleOpenChange = (next: boolean) => {
-    setOpen(next);
-    if (!next && rendered) {
-      const id = rendered.id;
-      // Hold the node briefly so the exit fade plays before unmounting.
-      window.setTimeout(() => {
-        onDismiss(id);
-        setRendered(null);
-      }, 140);
-    }
-  };
-
   return (
-    <ToastPrimitive.Provider
-      swipeDirection="down"
-      duration={6000}
-    >
-      {rendered && (
-        <ToastPrimitive.Root
-          key={rendered.id}
-          open={open}
-          onOpenChange={handleOpenChange}
-          type={rendered.error ? "foreground" : "background"}
-          role={rendered.error ? "alert" : "status"}
-          aria-live={rendered.error ? "assertive" : "polite"}
-          className={cx("toast", rendered.error && "toast-error")}
-        >
-          <ToastPrimitive.Description className="toast-message">
-            {rendered.message}
-          </ToastPrimitive.Description>
-          {rendered.action && (
-            <ToastPrimitive.Action asChild altText={rendered.action.label}>
-              <button
-                type="button"
-                className="toast-action"
-                onClick={rendered.action.onClick}
-              >
-                {rendered.action.label}
-              </button>
-            </ToastPrimitive.Action>
-          )}
-          <ToastPrimitive.Close asChild>
-            <button type="button" className="toast-close" aria-label="Dismiss">
-              <X aria-hidden="true" />
-            </button>
-          </ToastPrimitive.Close>
-        </ToastPrimitive.Root>
-      )}
+    <ToastPrimitive.Provider swipeDirection="down" duration={6000}>
+      {toasts.slice(0, 3).map((toast) => <ToastEntry key={toast.id} toast={toast} onDismiss={onDismiss} />)}
       <ToastPrimitive.Viewport className="toast-viewport" />
     </ToastPrimitive.Provider>
   );

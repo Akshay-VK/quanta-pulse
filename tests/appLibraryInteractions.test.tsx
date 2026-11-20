@@ -100,6 +100,10 @@ describe("App Library interactions", () => {
     await click(button("Show details for Recorded without a resource"));
     expect(document.querySelector(".peek-title")?.textContent).toBe("Recorded without a resource");
     expect(document.querySelector(".peek")?.textContent).toContain("Upload date unavailable");
-    expect(document.querySelector(".peek")?.textContent).toContain("Open in Quanta");
+    const tombstone = document.querySelector(".peek")!;
+    expect(tombstone.textContent).toContain("The original resource no longer exists on Quanta.");
+    const trigger = button("More actions", tombstone);
+    await act(async () => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true })));
+    expect(document.querySelector('[role="menu"]')?.textContent).toContain("Open in Quanta");
   });
 });

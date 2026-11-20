@@ -1,95 +1,184 @@
 import type { CSSProperties } from "react";
-import { Palette, X } from "lucide-react";
+import { Check, Monitor, Moon, Palette, Sun, X } from "lucide-react";
 import { Close } from "@radix-ui/react-popover";
-import { ACCENTS, PALETTES, resolveAppearance } from "../lib/appearance";
+import { ACCENTS, PALETTES, resolveAppearance, type AppearancePreference } from "../lib/appearance";
 import type { AppearanceController } from "../hooks/useTheme";
 import { Popover } from "./ui/Popover";
 import { IconButton } from "./ui/IconButton";
+import { Select } from "./ui/Select";
 import { ToggleGroup } from "./ui/ToggleGroup";
 import { Button } from "./ui/Button";
 import { Switch } from "./ui/Switch";
 import SettingRow from "./SettingRow";
 
-/** Identical immediate controls in Settings and the topbar. No operational draft. */
-export function AppearanceControls({ appearance }: { appearance: AppearanceController }) {
-  const { preference, changeAppearance, resolved, resetAppearance, persistence } = appearance;
-  const lightTokens = resolveAppearance({ ...preference, mode: "light" }, false).tokens;
-  const darkTokens = resolveAppearance({ ...preference, mode: "dark" }, true).tokens;
-  return <div className="appearance-controls">
-    <p className="appearance-description">Choose a workspace that feels comfortable. Changes apply immediately.</p>
-    <fieldset className="appearance-field"><legend>Theme</legend><div className="appearance-modes" role="radiogroup" aria-label="Appearance mode">
-      {([{ value: "system", label: "System" }, { value: "light", label: "Light" }, { value: "dark", label: "Dark" }] as const).map(mode =>
-        <button key={mode.value} type="button" role="radio" className="appearance-mode-tile"
-          aria-checked={preference.mode === mode.value} tabIndex={preference.mode === mode.value ? 0 : -1}
-          onClick={() => appearance.setThemeMode(mode.value)}
-          onKeyDown={event => {
-            if (!["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"].includes(event.key)) return;
-            event.preventDefault();
-            const modes = ["system", "light", "dark"] as const;
-            const direction = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : -1;
-            const index = modes.findIndex(value => value === mode.value);
-            const next = modes[(index + direction + modes.length) % modes.length];
-            appearance.setThemeMode(next);
-            event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`.appearance-mode-tile[data-mode-value="${next}"]`)?.focus();
-          }} data-mode-value={mode.value}>
-          <span className="appearance-mode-preview" data-mode={mode.value} aria-hidden="true" style={{
-            "--appearance-mode-bg": mode.value === "dark" ? darkTokens.bg : lightTokens.bg,
-            "--appearance-mode-side": mode.value === "dark" ? darkTokens.side : lightTokens.side,
-            "--appearance-mode-line": mode.value === "dark" ? darkTokens["line-strong"] : lightTokens["line-strong"],
-            "--appearance-mode-light": lightTokens.bg,
-            "--appearance-mode-dark": darkTokens.bg,
-          } as CSSProperties}><span /><i /><i /><i /></span>
-          <span>{mode.value === "system" ? "Follow system" : mode.label}</span>
-        </button>)}
-    </div></fieldset>
-    <fieldset className="appearance-field"><legend>Palette</legend><div className="appearance-palettes">
-      {PALETTES.map(palette => {
-        const { tokens } = resolveAppearance({ ...preference, palette: palette.value, mode: resolved }, false);
-        const style = Object.fromEntries(Object.entries(tokens).map(([name, value]) => [`--${name}`, value])) as CSSProperties;
-        return <button key={palette.value} type="button" className="appearance-palette" aria-label={palette.label}
-          aria-pressed={preference.palette === palette.value} onClick={() => changeAppearance({ palette: palette.value })}>
-          <span className="appearance-sample" style={style} aria-hidden="true">
-            <span className="appearance-sample-side" /><span className="appearance-sample-content"><span className="appearance-sample-heading">Course materials</span><span className="appearance-sample-row">Lecture notes <span>PDF</span></span><span className="appearance-sample-link">View material</span></span>
-          </span>
-          <span className="appearance-palette-name">{palette.label}<span aria-hidden="true">{preference.palette === palette.value ? "✓" : ""}</span></span>
-        </button>;
+const MODES = [
+  { value: "system", label: "System", icon: Monitor },
+  { value: "light", label: "Light", icon: Sun },
+  { value: "dark", label: "Dark", icon: Moon },
+] as const;
+
+function ModeTiles({ appearance }: { appearance: AppearanceController }) {
+  const { preference, setThemeMode } = appearance;
+  const light = resolveAppearance({ ...preference, mode: "light" }, false).tokens;
+  const dark = resolveAppearance({ ...preference, mode: "dark" }, true).tokens;
+  return (
+    <div className="appearance-modes" role="radiogroup" aria-label="Appearance mode">
+      {MODES.map((mode, index) => {
+        const tones = mode.value === "light" ? light : dark;
+        return (
+          <button
+            key={mode.value}
+            type="button"
+            role="radio"
+            className="appearance-mode-tile"
+            aria-checked={preference.mode === mode.value}
+            tabIndex={preference.mode === mode.value ? 0 : -1}
+            onClick={() => setThemeMode(mode.value)}
+            onKeyDown={(event) => {
+              if (!["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"].includes(event.key)) return;
+              event.preventDefault();
+              const direction = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : -1;
+              const next = (index + direction + MODES.length) % MODES.length;
+              setThemeMode(MODES[next].value);
+              event.currentTarget.parentElement?.querySelectorAll("button")[next]?.focus();
+            }}
+          >
+            <span className="appearance-mode-preview" data-mode={mode.value} aria-hidden="true" style={{
+              "--appearance-mode-bg": tones.raised,
+              "--appearance-mode-side": tones.side,
+              "--appearance-mode-line": tones["control-line"],
+              "--appearance-mode-accent": tones.accent,
+              "--appearance-mode-light": light.raised,
+            } as CSSProperties}><span /><i /><i /><i /><i /></span>
+            <mode.icon className="appearance-mode-icon" aria-hidden="true" />
+            <span className="appearance-mode-name">{mode.label}</span>
+            {preference.mode === mode.value && <Check className="appearance-mode-icon" aria-hidden="true" />}
+          </button>
+        );
       })}
-    </div><p className="appearance-caption">Examples of this workspace in {resolved} mode.</p></fieldset>
-    <fieldset className="appearance-field"><legend>Accent</legend><div className="appearance-accents" role="radiogroup" aria-label="Appearance accent">
-      {ACCENTS.map(accent => {
+    </div>
+  );
+}
+
+function PaletteSelect({ appearance }: { appearance: AppearanceController }) {
+  return (
+    <Select
+      ariaLabel="Palette"
+      value={appearance.preference.palette}
+      options={[...PALETTES]}
+      onValueChange={(value) => appearance.changeAppearance({ palette: value as AppearancePreference["palette"] })}
+    />
+  );
+}
+
+function AccentPicker({ appearance }: { appearance: AppearanceController }) {
+  const { preference, resolved, changeAppearance } = appearance;
+  return (
+    <div className="appearance-accents" role="radiogroup" aria-label="Appearance accent">
+      {ACCENTS.map((accent, index) => {
         const { tokens } = resolveAppearance({ ...preference, accent: accent.value }, resolved === "dark");
-        return <button key={accent.value} type="button" role="radio" aria-label={accent.label}
-          aria-checked={preference.accent === accent.value} tabIndex={preference.accent === accent.value ? 0 : -1}
-          className="appearance-accent-radio" onClick={() => changeAppearance({ accent: accent.value })}
-          onKeyDown={event => {
-            if (!["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"].includes(event.key)) return;
-            event.preventDefault();
-            const direction = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : -1;
-            const index = ACCENTS.findIndex(option => option.value === accent.value);
-            const next = ACCENTS[(index + direction + ACCENTS.length) % ACCENTS.length];
-            changeAppearance({ accent: next.value });
-            event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(`.appearance-accent-radio[aria-label="${next.label}"]`)?.focus();
-          }}
-          style={{ "--appearance-accent-swatch": tokens.accent } as CSSProperties}>
-          <span className="sr-only">{accent.label}</span>
-        </button>;
+        return (
+          <button
+            key={accent.value}
+            type="button"
+            role="radio"
+            aria-label={accent.label}
+            aria-checked={preference.accent === accent.value}
+            tabIndex={preference.accent === accent.value ? 0 : -1}
+            className="appearance-accent-radio"
+            onClick={() => changeAppearance({ accent: accent.value })}
+            onKeyDown={(event) => {
+              if (!["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp"].includes(event.key)) return;
+              event.preventDefault();
+              const direction = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : -1;
+              const next = (index + direction + ACCENTS.length) % ACCENTS.length;
+              changeAppearance({ accent: ACCENTS[next].value });
+              event.currentTarget.parentElement?.querySelectorAll("button")[next]?.focus();
+            }}
+            style={{ "--appearance-accent-swatch": tokens.accent } as CSSProperties}
+          />
+        );
       })}
-    </div></fieldset>
-    <div className="appearance-field"><h3>Row density</h3><ToggleGroup ariaLabel="Row density" value={preference.density}
-      onValueChange={value => changeAppearance({ density: value as typeof preference.density })}
-      options={[{ value: "comfortable", label: "Comfortable" }, { value: "compact", label: "Compact" }]} /></div>
-    <SettingRow title="Monospace UI text" description="Use Geist Mono for all interface text.">
-      <Switch checked={preference.monospace} onCheckedChange={monospace => changeAppearance({ monospace })} ariaLabel="Use Geist Mono for all UI text" />
-    </SettingRow>
-    <div className="appearance-reset"><Button variant="secondary" onClick={resetAppearance}>Reset appearance</Button><span>System · Soft Graphite · Comfortable</span></div>
-    {persistence !== "saved" && <p className="appearance-feedback" role="status">{persistence === "future"
-      ? "Appearance is saved by a newer version. Changes apply for this session; the original preference is preserved."
-      : "Appearance cannot be remembered on this device. Changes still apply for this session."}</p>}
-  </div>;
+    </div>
+  );
+}
+
+function DensityControl({ appearance }: { appearance: AppearanceController }) {
+  return (
+    <ToggleGroup
+      ariaLabel="Row density"
+      value={appearance.preference.density}
+      onValueChange={(value) => appearance.changeAppearance({ density: value as AppearancePreference["density"] })}
+      options={[{ value: "compact", label: "Compact" }, { value: "comfortable", label: "Comfortable" }]}
+    />
+  );
+}
+
+function PersistenceNotice({ persistence }: Pick<AppearanceController, "persistence">) {
+  if (persistence === "saved") return null;
+  return (
+    <p className="appearance-feedback" role="status">{persistence === "future"
+      ? "Appearance is saved by a newer version. Changes apply for this session and the original preference is preserved."
+      : "Appearance cannot be remembered on this device. Changes still apply for this session."}</p>
+  );
+}
+
+/** Full appearance controls for the Settings page. Changes apply immediately. */
+export function AppearanceControls({ appearance }: { appearance: AppearanceController }) {
+  return (
+    <div className="appearance-controls">
+      <h3 className="appearance-mode-label">Theme</h3>
+      <ModeTiles appearance={appearance} />
+      <SettingRow title="Palette" description="Neutral surfaces, borders and text tones.">
+        <PaletteSelect appearance={appearance} />
+      </SettingRow>
+      <SettingRow title="Accent" description="Focus rings, unread markers and primary actions.">
+        <AccentPicker appearance={appearance} />
+      </SettingRow>
+      <SettingRow title="Density" description="Row height and spacing in lists.">
+        <DensityControl appearance={appearance} />
+      </SettingRow>
+      <SettingRow title="Monospace UI text" description="Use Geist Mono for all interface text.">
+        <Switch checked={appearance.preference.monospace}
+          onCheckedChange={(monospace) => appearance.changeAppearance({ monospace })}
+          ariaLabel="Use Geist Mono for all UI text" />
+      </SettingRow>
+      <SettingRow title="Reset appearance" description="Restore the default workspace appearance.">
+        <Button variant="secondary" size="sm" onClick={appearance.resetAppearance}>Reset appearance</Button>
+      </SettingRow>
+      <PersistenceNotice persistence={appearance.persistence} />
+    </div>
+  );
 }
 
 export function AppearancePopover({ appearance }: { appearance: AppearanceController }) {
-  return <Popover label="Appearance" trigger={<IconButton label="Appearance" tooltip={false}><Palette aria-hidden="true" /></IconButton>}>
-    <div className="appearance-popover"><div className="appearance-popover-header"><h2>Appearance</h2><Close asChild><IconButton label="Close appearance" tooltip={false}><X aria-hidden="true" /></IconButton></Close></div><AppearanceControls appearance={appearance} /></div>
-  </Popover>;
+  return (
+    <Popover label="Appearance" side="top" align="start" className="appearance-popover"
+      trigger={<IconButton label="Appearance" tooltip={false}><Palette aria-hidden="true" /></IconButton>}>
+      <div className="appearance-popover-header">
+        <h2>Appearance</h2>
+        <Close asChild><IconButton label="Close appearance" tooltip={false}><X aria-hidden="true" /></IconButton></Close>
+      </div>
+      <div className="appearance-popover-fields">
+        <div>
+          <p className="appearance-popover-label">Mode</p>
+          <ToggleGroup ariaLabel="Appearance mode" value={appearance.preference.mode} options={[...MODES]}
+            onValueChange={(value) => appearance.setThemeMode(value as AppearancePreference["mode"])} />
+        </div>
+        <div>
+          <p className="appearance-popover-label">Palette</p>
+          <PaletteSelect appearance={appearance} />
+        </div>
+        <div>
+          <p className="appearance-popover-label">Accent</p>
+          <AccentPicker appearance={appearance} />
+        </div>
+        <div>
+          <p className="appearance-popover-label">Density</p>
+          <DensityControl appearance={appearance} />
+        </div>
+      </div>
+      <PersistenceNotice persistence={appearance.persistence} />
+    </Popover>
+  );
 }

@@ -193,7 +193,7 @@ describe("tree keyboard model", () => {
     expect(selectedIndex()).toBe(0);
 
     await press("ArrowRight", 0);
-    expect(selectedIndex()).toBe(1);
+    expect(document.activeElement?.textContent).toContain("Notice");
   });
 
   it("ArrowLeft collapses an expanded folder, else moves to the parent", async () => {

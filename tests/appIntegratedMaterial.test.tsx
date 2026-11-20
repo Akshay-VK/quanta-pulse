@@ -39,13 +39,19 @@ describe('integrated attention material destinations', () => {
     expect(appApi.openExternal).not.toHaveBeenCalledWith(item.url);
     expect(appApi.setEventReadState).not.toHaveBeenCalled();
   });
-  it('retains current section, preview and availability facts beside recorded change and due facts', async () => {
-    appApi.listResources.mockResolvedValue([resource({ sectionPath: ['Week 4', 'Lectures'], dueAt: '2026-11-15', availabilityStatus: 'unavailable' })]);
+  it('shows the current section and unavailable source in the material inspector, with a separate deadline variant', async () => {
+    const material = resource({ sectionPath: ['Week 4', 'Lectures'], dueAt: '2026-11-15', availabilityStatus: 'unavailable' });
+    appApi.listResources.mockResolvedValue([material]);
+    appApi.queryDueResources.mockResolvedValue({ items: [{ resource: material, dateKind: 'date', coursePaused: false }], total: 1 });
     app = await renderApp();
     await click(button('Show details for Lecture 4'));
     const panel = document.querySelector('.peek')!;
-    for (const fact of ['Section', 'Week 4', 'Lectures', 'Preview', 'Availability', 'Change', '2026-11-15', 'date only']) expect(panel.textContent).toContain(fact);
+    for (const fact of ['Section', 'Week 4 / Lectures', 'No longer on Quanta', 'Not saved']) expect(panel.textContent).toContain(fact);
     expect(appApi.setEventReadState).toHaveBeenCalledWith([10], true);
+    await click(button('Calendar'));
+    await click(button('Show details for Lecture 4'));
+    const deadline = document.querySelector('.peek')!;
+    for (const fact of ['Due', '2026-11-15', 'date only', 'As stored on Quanta', 'Countdown']) expect(deadline.textContent).toContain(fact);
   });
   it('previews an Inbox resource without acknowledging grouped attention or opening a source', async () => {
     app = await renderApp();
@@ -60,6 +66,7 @@ describe('integrated attention material destinations', () => {
     appApi.dailyDigest.mockResolvedValue({ date: '2026-11-14', newCount: 1, updatedCount: 0, announcementCount: 0, deadlineCount: 0, unavailableCount: 0, coursesFailed: 0, lastSuccessAt: null, items: [event] });
     app = await renderApp();
     await click(button('Calendar')); await click(button('Activity calendar'));
+    await click(document.querySelector<HTMLButtonElement>('.cal-day[aria-current="date"]')!);
     const row = document.querySelector('.resource-row')!;
     await click(button('Open in Quanta', row));
     expect(appApi.openExternal).toHaveBeenCalledWith(event.sourcePageUrl);

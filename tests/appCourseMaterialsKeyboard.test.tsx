@@ -211,6 +211,17 @@ describe('Course Materials keyboard in the real App', () => {
     expect(document.body.textContent).toContain('0 materials selected');
     expect(document.querySelector('.peek')).toBeNull();
   });
+  it('captures only the selected folder scope without requiring its descendants to be expanded', async () => {
+    appApi.listResources.mockResolvedValue([
+      resource({ sectionPath: ['Unit', 'Lecture notes'] }),
+      resource({ id: 2, externalResourceId: 'r2', sectionPath: ['Other'] }),
+    ]);
+    await open();
+    await click(button('Unit'));
+    act(() => row().focus());
+    await key('A', { shiftKey: true });
+    expect(appApi.snapshotResourceEventIds).toHaveBeenCalledWith([1]);
+  });
   for(const outcome of ['success','rejection'] as const) it('invalidates a pending capture on Activity: '+outcome,async()=>{
     const snapshot=deferred<number[]>();appApi.snapshotResourceEventIds.mockReturnValue(snapshot.promise);
     await open();act(()=>row().focus());await key('Delete');await click(button('Activity'));

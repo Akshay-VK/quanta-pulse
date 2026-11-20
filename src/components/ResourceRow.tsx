@@ -1,7 +1,7 @@
 import { useMaterialActions } from "../hooks/useMaterialActions";
 import { MaterialButtons } from "./MaterialButtons";
 import { ExternalLink, Eye, MoreHorizontal } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cx } from "../lib/cx";
 import { isLocal, mirrorTip } from "../lib/mirrorState";
 import type { ChangeEvent, Resource, LocalFileStatus } from "../lib/types";
@@ -62,6 +62,9 @@ export default function ResourceRow({
   courseCode,
   courseName,
   sectionLabel,
+  workspaceVariant,
+  leadingIcon,
+  timeSuffix,
   unread,
   selected,
   unavailable,
@@ -95,6 +98,9 @@ export default function ResourceRow({
   courseName?: string | null;
   /** Optional mono section label, shown between the course and time slots. */
   sectionLabel?: string | null;
+  workspaceVariant?: "inbox" | "agenda" | "history";
+  leadingIcon?: ReactNode;
+  timeSuffix?: ReactNode;
   unread: boolean;
   selected: boolean;
   unavailable: boolean;
@@ -145,6 +151,7 @@ export default function ResourceRow({
       className={cx(
         "resource-row",
         actions !== null && "row-material",
+        workspaceVariant && `row-workspace row-workspace-${workspaceVariant}`,
         compact && "row-compact",
         selected && "selected",
         keyboardFocused && "keyboard-focused",
@@ -163,7 +170,7 @@ export default function ResourceRow({
         onClick={(event) => onSelect(event.currentTarget)}
       >
         <UnreadDot unread={unread} />
-        <FileTypeIcon type={type} />
+        {leadingIcon ?? <FileTypeIcon type={type} />}
         <span className="row-title-wrap">
           <span className="row-title" title={title}>
             {title}
@@ -195,7 +202,7 @@ export default function ResourceRow({
         </span>
       )}
 
-      <span className={cx("row-time", showFocusHint && "row-time-focused")} title={timeLabel}>{timeLabel}{showFocusHint && <kbd className="row-focus-hint">E</kbd>}</span>
+      <span className={cx("row-time", showFocusHint && "row-time-focused")} title={timeLabel}>{timeLabel}{timeSuffix}{showFocusHint && <kbd className="row-focus-hint">E</kbd>}</span>
 
       <span className="row-actions">
         {actions ? <MaterialButtons actions={actions} menu={menu} /> : <>

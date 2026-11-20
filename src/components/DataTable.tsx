@@ -40,6 +40,8 @@ interface DataTableProps<T> {
   navigationRef?: Ref<DataTableNavigationHandle>;
   empty?: ReactNode;
   ariaLabel?: string;
+  groupHeader?: ReactNode;
+  rowHeight?: number;
   /** Windowed rendering above 200 rows. */
   virtual?: boolean;
   /** Viewport height of the scroll box when virtual. */
@@ -70,6 +72,8 @@ export default function DataTable<T>({
   navigationRef,
   empty,
   ariaLabel,
+  groupHeader,
+  rowHeight = ROW_H,
   virtual = false,
   height = 560,
   sessionKey,
@@ -84,7 +88,7 @@ export default function DataTable<T>({
   const virtualizer = useVirtualizer({
     count: active ? rows.length : 0,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => ROW_H,
+    estimateSize: () => rowHeight,
     overscan: OVERSCAN,
     getItemKey: useCallback((index: number) => getKey(rows[index]), [rows, getKey]),
   });
@@ -199,6 +203,7 @@ export default function DataTable<T>({
               );
             })}
           </tr>
+          {groupHeader && rows.length > 0 && <tr className="data-table-group"><td colSpan={columns.length}>{groupHeader}</td></tr>}
         </thead>
         <tbody>
           {active && padTop > 0 && <SpacerRow span={columns.length} height={padTop} />}

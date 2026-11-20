@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AGENDA_GROUPS, agendaEntries } from '../lib/agenda';
+import { CalendarDays, ChevronDown, ChevronRight, Clock, ListFilter, SlidersHorizontal } from 'lucide-react';
+import { AGENDA_GROUPS, agendaEntries, localDateKey } from '../lib/agenda';
 import type { DueState } from '../hooks/useAttention';
 import type { DetailsAdapter } from '../lib/details';
 import type { Course } from '../lib/types';
 import { courseTitle } from '../lib/courseName';
 import type { MaterialRowHandlers } from '../lib/materialHandlers';
-import PageHeader from '../components/PageHeader';
+import GroupHeader from '../components/GroupHeader';
+import { AGENDA_HINTS, WorkspaceViewStatus } from '../components/WorkspaceViewChrome';
+import { formatTimeOfDay } from '../lib/format';
 import ResourceRow from '../components/ResourceRow';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { Button } from '../components/ui/Button';
@@ -27,11 +30,17 @@ type AgendaCapture = {
   generation: number;
 };
 
-export default function AgendaView({ due, filter, setFilter, courses, now, timeZone, details, onOpenCourse, onChanged }: MaterialRowHandlers & {
+export default function AgendaView({ due, filter, setFilter, courses, now, timeZone, details, onOpenCourse, onChanged, onLibrary, lastScan }: MaterialRowHandlers & {
   due: DueState; filter: DueFilter; setFilter: (filter: DueFilter) => void; courses: Course[];
   now: Date; timeZone: string; details: DetailsAdapter; onOpen: (url: string) => void; onOpenLocal?: (id: number) => void; onOpenCourse?: (id: number) => void;
-  onChanged?: () => Promise<void>;
+  onChanged?: () => Promise<void>; onLibrary?: () => void; lastScan?: string | null;
 }) {
+  const today = localDateKey(now, timeZone);
+  const weekStart = Date.parse(`${today}T12:00:00Z`);
+  const dayFormatter = new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', day: 'numeric', month: 'short' });
+  const weekdayFormatter = new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', weekday: 'short' });
+  const timeFormatter = new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
+  const scanLabel = lastScan ? formatTimeOfDay(lastScan) : null;
   const entries = agendaEntries(due.items ?? [], now, timeZone);
   const [expanded, setExpanded] = useState(false);
   const [limits, setLimits] = useState<Record<string, number>>({});
@@ -39,6 +48,7 @@ export default function AgendaView({ due, filter, setFilter, courses, now, timeZ
   const [multiSelected, setMultiSelected] = useState<Set<string>>(() => new Set());
   const [capture, setCapture] = useState<AgendaCapture | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [resuming, setResuming] = useState(false);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const lock = useRef(false);
   const mounted = useRef(true);
@@ -227,33 +237,96 @@ export default function AgendaView({ due, filter, setFilter, courses, now, timeZ
   }
 
   const filtered = Boolean(filter.courseId || filter.resourceType || filter.search);
-  return <div ref={rootRef} className="agenda-view" onKeyDown={handleListKeyDown}>
-    <PageHeader title="Agenda" summary={`Actual course due dates · ${timeZone}`} />
-    <div className="filter-bar"><div className="filter-bar-left">
-      <Select ariaLabel="Agenda course" value={String(filter.courseId ?? 'all')} options={[{ value: 'all', label: 'Monitored courses' }, ...courses.map(c => ({ value: String(c.id), label: `${courseTitle(c.id, c.name)}${c.monitoringStatus === 'paused' ? ' (paused)' : ''}` }))]} onValueChange={value => { details.clear(); setFilter({ ...filter, courseId: value === 'all' ? undefined : Number(value) }); }} />
-      <Select ariaLabel="Agenda resource type" value={filter.resourceType ?? 'all'} options={[{ value: 'all', label: 'All resource types' }, ...['assignment', 'quiz', 'event', 'page', 'pdf', 'url'].map(value => ({ value, label: value }))]} onValueChange={value => { details.clear(); setFilter({ ...filter, resourceType: value === 'all' ? undefined : value }); }} />
-    </div><div className="filter-bar-right"><SearchField inputRef={searchRef} label="Search Agenda" value={filter.search ?? ''} onChange={search => { details.clear(); setFilter({ ...filter, search: search || undefined }); }} placeholder="Search due dates…" />{filtered && <Button size="sm" variant="ghost" onClick={() => { details.clear(); setFilter({}); }}>Clear Agenda filters</Button>}</div></div>
-    <p className="result-count">{due.items ? `${entries.length} dated resources` : 'Loading due dates…'} · Dates do not indicate submission status. Confirm status in Quanta.</p>
-    {due.pending && due.items && <p role="status" className="result-count">Refreshing Agenda…</p>}
-    {due.error && <Banner kind="error" action={{ label: 'Retry Agenda', onClick: () => void due.refresh() }}>{due.items ? 'Showing saved dates. Agenda could not refresh.' : 'Could not load Agenda.'} {due.error}</Banner>}
+  const paused = courses.find(course => course.id === filter.courseId && course.monitoringStatus === 'paused');
+  function jumpToToday() {
+    const item = displayedByGroup.get('Today')?.[0] ?? displayedEntries[0];
+    if (item) focusRow(item.item.resource.externalResourceId);
+    else rootRef.current?.querySelector<HTMLElement>('.agenda-week [aria-current="date"]')?.focus();
+  }
+  async function resumeMonitoring(courseId: number) {
+    if (resuming) return;
+    setResuming(true);
+    setActionError(null);
+    try {
+      await api.setMonitoring(courseId, 'monitored');
+      await onChanged?.();
+      await due.refresh();
+    } catch (error) {
+      setActionError(`Could not resume monitoring: ${String(error)}`);
+    } finally {
+      setResuming(false);
+    }
+  }
+  return <div ref={rootRef} className="agenda-view workspace-view-body" onKeyDown={event => {
+    const guards = eventGuards(event);
+    if (!guards.editableTarget && !guards.modalOpen && !event.altKey && !event.metaKey && !event.ctrlKey) {
+      if (event.key === '/') {
+        event.preventDefault();
+        searchRef.current?.focus();
+        return;
+      }
+      if (event.key.toLowerCase() === 't') {
+        event.preventDefault();
+        jumpToToday();
+        return;
+      }
+    }
+    handleListKeyDown(event);
+  }}>
+    <div className="filter-bar workspace-view-toolbar"><div className="filter-bar-left">
+      <Button variant="ghost" size="sm" leadingIcon={<ListFilter aria-hidden="true" />} onClick={() => searchRef.current?.focus()}>Filter</Button>
+      <div className="workspace-filter-selector"><span>Course</span><Select ariaLabel="Agenda course" value={String(filter.courseId ?? 'all')} options={[{ value: 'all', label: 'All courses' }, ...courses.map(c => ({ value: String(c.id), label: `${courseTitle(c.id, c.shortName ?? c.name)}${c.monitoringStatus === 'paused' ? ' (paused)' : ''}` }))]} onValueChange={value => { details.clear(); setFilter({ ...filter, courseId: value === 'all' ? undefined : Number(value) }); }} /></div>
+      <SearchField className="workspace-local-search" inputRef={searchRef} label="Search Agenda" value={filter.search ?? ''} onChange={search => { details.clear(); setFilter({ ...filter, search: search || undefined }); }} placeholder="Search due dates…" />
+      {filtered && <Button size="sm" variant="ghost" onClick={() => { details.clear(); setFilter({}); }}>Clear Agenda filters</Button>}
+    </div><div className="filter-bar-right">
+      <div className="workspace-filter-selector workspace-view-selector"><SlidersHorizontal aria-hidden="true" />
+      <Select ariaLabel="Agenda resource type" value={filter.resourceType ?? 'all'} options={[{ value: 'all', label: 'View' }, ...['assignment', 'quiz', 'event', 'page', 'pdf', 'url'].map(value => ({ value, label: value }))]} onValueChange={value => { details.clear(); setFilter({ ...filter, resourceType: value === 'all' ? undefined : value }); }} /></div>
+    </div></div>
+    {due.pending && due.items && <span role="status" className="sr-only">Refreshing Agenda…</span>}
+    {paused && <Banner kind="warning" action={{ label: resuming ? 'Resuming…' : 'Resume monitoring', onClick: () => void resumeMonitoring(paused.id) }}>Monitoring is paused for {courseTitle(paused.id, paused.shortName ?? paused.name)}. Dates shown may be out of date.</Banner>}
+    {due.error && <Banner kind="warning" action={{ label: 'Retry Agenda', onClick: () => void due.refresh() }}>{due.items ? `Showing saved dates${scanLabel ? ` from ${scanLabel}` : ''}. Couldn’t refresh.` : 'Could not load Agenda.'} {due.error}</Banner>}
     {actionError && !capture && <Banner kind="error">{actionError}</Banner>}
     {actionNotice && <Banner kind="info">{actionNotice}</Banner>}
-    {!due.items && due.pending ? <Skeleton rows={5} /> : due.items && !entries.length ? <EmptyState title={filtered ? 'No matching due dates' : 'No due dates recorded'} body={filtered ? 'Try another filter.' : 'Only actual due dates from monitored courses appear here. Detection dates are in Activity calendar.'} /> : AGENDA_GROUPS.map(group => {
+    <div className="agenda-week" aria-label="Upcoming seven days">
+      {Array.from({ length: 7 }, (_, index) => {
+        const date = new Date(weekStart + index * 86_400_000);
+        const day = date.toISOString().slice(0, 10);
+        const count = entries.filter(entry => entry.day === day && entry.group !== 'Past due dates').length;
+        return <button key={day} type="button" className="agenda-week-day" aria-current={index === 0 ? 'date' : undefined}
+          aria-label={`${weekdayFormatter.format(date)} ${dayFormatter.format(date)}, ${count} deadlines`}
+          onClick={() => {
+            const item = displayedEntries.find(entry => entry.day === day && entry.group !== 'Past due dates');
+            if (item) focusRow(item.item.resource.externalResourceId);
+          }}>
+          <span>{weekdayFormatter.format(date).toUpperCase()}</span><strong>{date.getUTCDate()}</strong>
+          <span className="agenda-week-dot" aria-hidden="true" data-deadline={count > 0 || undefined} />
+        </button>;
+      })}
+    </div>
+    <div className="workspace-view-list">
+    {!due.items && due.pending ? <Skeleton rows={5} /> : due.items && !entries.length ? <div className="workspace-view-empty"><span className="workspace-empty-icon" aria-hidden="true"><CalendarDays /></span><EmptyState title={filtered ? 'No matching due dates' : 'No known deadlines'} body={filtered ? 'Try another filter.' : 'Pulse shows due dates found on Quanta. Check Quanta directly if you expect one.'} action={!filtered && onLibrary ? { label: 'Open Library', onClick: onLibrary } : undefined} /></div> : AGENDA_GROUPS.map(group => {
       const items = entries.filter(entry => entry.group === group);
       if (!items.length) return null;
       const limit = limits[group] ?? 20;
       const past = group === 'Past due dates';
       const shownItems = displayedByGroup.get(group) ?? [];
+      const day = items[0].day;
+      const groupTitle = group === 'Today' || group === 'Tomorrow' ? `${group} · ${dayFormatter.format(new Date(`${day}T12:00:00Z`))}` : past ? 'Past dates' : group;
       return <section key={group} className="agenda-group" aria-label={group}>
-        <div className="attention-section-title">{past ? <button className="agenda-collapse" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{expanded ? '▾' : '▸'} {group} <span className="result-count">{items.length}</span></button> : <h2>{group} <span className="result-count">{items.length}</span></h2>}</div>
+        {past ? <button className="agenda-collapse" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{expanded ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />} {groupTitle} <span>{items.length}</span></button> : <GroupHeader label={groupTitle} count={items.length} />}
         {(!past || expanded) && <>{shownItems.map(entry => {
           const resource = entry.item.resource;
           const id = resource.externalResourceId;
           const isFocused = currentFocusedId === id;
-          return <div key={id} className="agenda-entry"><ResourceRow title={resource.title} type={resource.resourceType} courseId={resource.courseId} courseCode={courseTitle(resource.courseId, resource.courseName)} courseName={resource.courseName}
+          const hours = Math.ceil((entry.sort - now.getTime()) / 3_600_000);
+          const countdown = entry.item.dateKind === 'date' || entry.group === 'Past due dates' ? null : hours < 24 ? `in ${hours}h` : `in ${Math.floor(hours / 24)}d`;
+          const dueTime = entry.item.dateKind === 'date' ? entry.label : group === 'Today' || group === 'Tomorrow'
+            ? timeFormatter.format(new Date(entry.sort))
+            : `${dayFormatter.format(new Date(`${entry.day}T12:00:00Z`))}, ${timeFormatter.format(new Date(entry.sort))}`;
+          return <div key={id} className="agenda-entry"><ResourceRow workspaceVariant="agenda" leadingIcon={<Clock className={countdown && hours < 24 ? "agenda-due-soon-icon" : undefined} aria-hidden="true" />} title={resource.title} type={resource.resourceType} courseId={resource.courseId} courseCode={courseTitle(resource.courseId, resource.courseName)} courseName={resource.courseName}
             unread={false} selected={selected?.kind === 'resource' && selected.resource.externalResourceId === id}
             unavailable={resource.availabilityStatus !== 'available'} status={resource.availabilityStatus !== 'available' ? { kind: 'unavailable', label: 'Source unavailable' } : entry.item.coursePaused ? { kind: 'note', label: 'Course paused' } : null}
-            timeLabel={`${entry.label}${entry.item.dateKind === 'date' ? ' (date only)' : ''}`}
+            timeLabel={dueTime} timeSuffix={countdown && <span className="agenda-countdown" data-soon={hours < 24 || undefined}>{countdown}</span>}
             resource={resource} onSelect={origin => details.selectResource(resource, origin)}
             keyboardFocused={isFocused} multiSelected={multiSelected.has(id)} showFocusHint={isFocused}
             tabStop={isFocused || (!currentFocusedId && ids[0] === id)} selectRef={node => setRowRef(id, node)}
@@ -263,6 +336,8 @@ export default function AgendaView({ due, filter, setFilter, courses, now, timeZ
         })}{items.length > limit && <Button size="sm" variant="ghost" onClick={() => { setLimits(current => ({ ...current, [group]: limit + 20 })); if (currentFocusedId) requestAnimationFrame(() => rowRefs.current.get(currentFocusedId)?.focus()); }}>Show more {group.toLowerCase()}</Button>}</>}
       </section>;
     })}
+    </div>
+    <WorkspaceViewStatus hints={AGENDA_HINTS}>{due.items && `${entries.length} dated resources · `}{due.error && scanLabel && `Dates from ${scanLabel} · stale · `}Submission status is not tracked.</WorkspaceViewStatus>
     <ConfirmDialog open={capture !== null} onOpenChange={open => {
       if (!open && capture?.generation === requestGeneration.current) { setCapture(null); lock.current = false; setActionError(null); setTimeout(() => { if (mounted.current) returnFocus(); }, 0); }
     }} title={capture?.action === 'dismiss' ? 'Dismiss captured Agenda resources?' : capture?.action === 'unread' ? 'Mark captured Agenda resources unread?' : 'Mark captured Agenda resources read?'}

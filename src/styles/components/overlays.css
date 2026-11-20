@@ -37,6 +37,7 @@
   .dialog-content.dialog-confirm {
     width: min(480px, calc(100vw - 32px));
     padding: 20px;
+    border: 1px solid var(--control-line);
     border-radius: var(--radius-dialog);
   }
 
@@ -77,18 +78,18 @@
   }
 
   .dialog-title {
-    font: 600 16px/24px var(--type-dialog);
+    font: 600 15px/21px var(--type-dialog);
     color: var(--ink);
   }
 
   .dialog-body {
-    margin-top: var(--sp-2);
-    font: 14px/20px var(--type-ui);
+    margin-top: 6px;
+    font: 13px/20px var(--type-ui);
     color: var(--muted);
   }
 
   .dialog-footer {
-    margin-top: var(--sp-6);
+    margin-top: 18px;
     display: flex;
     align-items: center;
     justify-content: flex-end;
@@ -233,6 +234,7 @@
     box-shadow: var(--shadow-pop);
     border-radius: var(--radius-md);
     padding: var(--sp-1);
+    border: 1px solid var(--control-line);
     width: 240px;
     max-width: calc(100vw - 16px);
     z-index: var(--z-popover);
@@ -260,7 +262,7 @@
     height: 34px;
     padding: 0 var(--sp-2);
     border-radius: var(--radius-xs);
-    font: 14px/20px var(--type-ui);
+    font: 13px/18px var(--type-ui);
     color: var(--ink);
     cursor: pointer;
     outline: none;
@@ -269,9 +271,9 @@
   }
 
   .menu-item[data-highlighted] {
-    background: var(--hover);
+    background: var(--selected);
     outline: 2px solid var(--focus);
-    outline-offset: 2px;
+    outline-offset: -2px;
   }
 
   .menu-item[data-disabled] {
@@ -307,13 +309,9 @@
     border-radius: var(--radius-md);
     padding: var(--sp-3);
     width: 320px;
+    border: 1px solid var(--control-line);
     max-width: calc(100vw - 16px);
     z-index: var(--z-popover);
-  }
-
-  .popover > .appearance-popover {
-    width: 100%;
-    box-sizing: border-box;
   }
 
   .popover[data-state="open"] {

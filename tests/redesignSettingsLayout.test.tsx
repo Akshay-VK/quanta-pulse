@@ -10,9 +10,9 @@ afterEach(() => app?.unmount());
 
 describe("redesigned Settings layout", () => {
   it("uses a 216px sticky section nav beside a 640px content column", () => {
-    expect(screensCss).toContain("grid-template-columns: 216px minmax(0, 640px)");
+    expect(screensCss).toContain("grid-template-columns: 216px minmax(0, 1fr)");
     expect(screensCss).toContain("position: sticky");
-    expect(screensCss).toContain("max-width: 888px");
+    expect(screensCss).toContain("max-width: 640px");
   });
 
   it("scrolls to named sections and switches to a section select at narrow width", async () => {

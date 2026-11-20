@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Check, CircleAlert, ExternalLink, Globe, Lock } from "lucide-react";
 import { api } from "../lib/api";
 import { Banner } from "./ui/Banner";
 import { Button } from "./ui/Button";
@@ -28,6 +29,7 @@ export type OnboardingState = OnboardingScan | OnboardingComplete;
 
 interface Props {
   onAuthenticated: (status: AuthStatus) => void;
+  onSignInStart?: () => void;
   onCancel?: () => void;
   /** First-run baseline scan states shown on the same auth card (spec §5.1). */
   onboarding?: OnboardingState | null;
@@ -35,14 +37,14 @@ interface Props {
 
 type AuthPhase = "idle" | "loading" | "sso" | "success" | "error";
 
-export default function LoginScreen({ onAuthenticated, onCancel, onboarding }: Props) {
+export default function LoginScreen({ onAuthenticated, onSignInStart, onCancel, onboarding }: Props) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [phase, setPhase] = useState<AuthPhase>("idle");
   const [message, setMessage] = useState<string | null>(null);
   const [ssoAttemptId, setSsoAttemptId] = useState<string | null>(null);
   const usernameRef = useRef<HTMLInputElement>(null);
-  const ssoPromiseRef = useRef<Promise<AuthStatus> | null>(null);
+  const cancelSsoRequested = useRef(false);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -68,6 +70,10 @@ export default function LoginScreen({ onAuthenticated, onCancel, onboarding }: P
         const status = await api.authStatus();
         if (!cancelled && mountedRef.current && status.attemptId) {
           setSsoAttemptId(status.attemptId);
+          if (cancelSsoRequested.current) {
+            cancelSsoRequested.current = false;
+            await api.cancelSsoLogin(status.attemptId);
+          }
         }
       } catch {
         // best effort; keep polling while pending
@@ -85,6 +91,8 @@ export default function LoginScreen({ onAuthenticated, onCancel, onboarding }: P
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    if (busy) return;
+    onSignInStart?.();
     setPhase("loading");
     setMessage(null);
     try {
@@ -95,30 +103,28 @@ export default function LoginScreen({ onAuthenticated, onCancel, onboarding }: P
       onAuthenticated(status);
     } catch (err) {
       if (!mountedRef.current) return;
-      setPassword("");
       setPhase("error");
-      setMessage(String(err));
+      setMessage(err instanceof Error ? err.message : String(err));
     }
   }
 
   async function startSso() {
+    if (busy) return;
+    onSignInStart?.();
+    cancelSsoRequested.current = false;
     setPhase("sso");
     setMessage(null);
     setSsoAttemptId(null);
-    const promise = api.startSsoLogin();
-    ssoPromiseRef.current = promise;
     try {
-      const status = await promise;
+      const status = await api.startSsoLogin();
       if (!mountedRef.current) return;
-      ssoPromiseRef.current = null;
       setPhase("success");
       onAuthenticated(status);
     } catch (err) {
       if (!mountedRef.current) return;
-      ssoPromiseRef.current = null;
       setSsoAttemptId(null);
       setPhase("error");
-      setMessage(String(err));
+      setMessage(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -132,6 +138,10 @@ export default function LoginScreen({ onAuthenticated, onCancel, onboarding }: P
   }
 
   async function cancelSso() {
+    if (!ssoAttemptId) {
+      cancelSsoRequested.current = true;
+      return;
+    }
     if (ssoAttemptId) {
       try {
         await api.cancelSsoLogin(ssoAttemptId);
@@ -187,7 +197,7 @@ export default function LoginScreen({ onAuthenticated, onCancel, onboarding }: P
               fontWeight: 700,
             }}
           >
-            ✓
+            <Check size={20} />
           </div>
           <h1 className="login-title">Baseline recorded</h1>
           <p className="login-copy">
@@ -217,9 +227,6 @@ export default function LoginScreen({ onAuthenticated, onCancel, onboarding }: P
     <div className="login-wrap">
       <div className="login-card">
         <Brand />
-        <h1 className="login-title">Sign in</h1>
-        <p className="login-copy">Use your BITS account to start monitoring Quanta.</p>
-
         {phase === "sso" ? (
           <>
             <div style={{ textAlign: "center", marginTop: 10 }}>
@@ -228,7 +235,7 @@ export default function LoginScreen({ onAuthenticated, onCancel, onboarding }: P
                 aria-hidden="true"
                 style={{ width: 40, height: 40, margin: "0 auto 18px" }}
               />
-              <h2 className="login-title" style={{ fontSize: 18 }}>Waiting for your browser</h2>
+              <h1 className="login-title">Waiting for your browser</h1>
               <p className="login-copy">
                 Finish signing in with BITS SSO in the window that just opened. Pulse continues automatically.
               </p>
@@ -236,6 +243,7 @@ export default function LoginScreen({ onAuthenticated, onCancel, onboarding }: P
             <Button
               size="lg"
               variant="secondary"
+              leadingIcon={<ExternalLink aria-hidden="true" />}
               style={{ width: "100%", justifyContent: "center", marginTop: 20 }}
               onClick={() => void reopenSso()}
             >
@@ -249,16 +257,17 @@ export default function LoginScreen({ onAuthenticated, onCancel, onboarding }: P
             >
               Cancel
             </Button>
-            <p className="login-copy" style={{ marginTop: "auto", paddingTop: 16 }}>
+            <p className="login-note">
               Closed the tab by mistake? Cancel and start again.
             </p>
           </>
         ) : (
           <>
+            <h1 className="login-title">Sign in</h1>
+            <p className="login-copy">Use your BITS account to start monitoring Quanta.</p>
             {signInError && (
-              <Banner kind="error">
-                <strong>Couldn’t sign in.</strong>
-                <div>{message}</div>
+              <Banner kind="error" className="login-error" icon={<CircleAlert aria-hidden="true" />}>
+                <strong>Couldn’t sign in.</strong> {message}
               </Banner>
             )}
             {phase === "success" && (
@@ -270,6 +279,7 @@ export default function LoginScreen({ onAuthenticated, onCancel, onboarding }: P
                 <Button
                   size="lg"
                   variant="secondary"
+                  leadingIcon={<Globe aria-hidden="true" />}
                   onClick={() => void startSso()}
                   disabled={busy}
                   style={{ width: "100%", justifyContent: "center", marginTop: 14 }}
@@ -288,6 +298,7 @@ export default function LoginScreen({ onAuthenticated, onCancel, onboarding }: P
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 autoComplete="username"
+                placeholder="Username"
                 disabled={busy}
                 required
               />
@@ -297,6 +308,7 @@ export default function LoginScreen({ onAuthenticated, onCancel, onboarding }: P
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 autoComplete="current-password"
+                placeholder="Password"
                 disabled={busy}
                 aria-invalid={signInError || undefined}
                 style={signInError ? { borderColor: "var(--danger)" } : undefined}
@@ -317,17 +329,16 @@ export default function LoginScreen({ onAuthenticated, onCancel, onboarding }: P
               )}
             </form>
 
-            <div style={{ marginTop: 12, display: "flex", justifyContent: "center" }}>
-              {onCancel && (
+            {onCancel && (
+              <div className="login-cancel">
                 <button type="button" className="settings-link" onClick={onCancel}>
                   Cancel
                 </button>
-              )}
-            </div>
-
-            <p className="login-copy" style={{ marginTop: "auto", paddingTop: 16 }}>
-              Credentials stay on this device
-            </p>
+              </div>
+            )}
+            {!signInError && (
+              <p className="login-note"><Lock size={12} aria-hidden="true" /> Credentials stay on this device</p>
+            )}
           </>
         )}
       </div>
@@ -372,8 +383,6 @@ function ScanProgress({ onboarding }: { onboarding: OnboardingScan }) {
   const discovered = typeof onboarding.coursesFound === "number";
   const recording = typeof onboarding.materialsRecorded === "number";
   const totalKnown = typeof onboarding.materialsTotal === "number";
-  // Derive 4 steps: signed in (done), discovering (done when courses known, active otherwise),
-  // recording (active once discovered), saving (pending until completion state handed off).
   const discoverDone = discovered;
   const recordingActive = discoverDone;
   const discoverMeta = discovered ? `${onboarding.coursesFound} found` : "";
@@ -388,7 +397,7 @@ function ScanProgress({ onboarding }: { onboarding: OnboardingScan }) {
       <Step done label="Signed in" />
       <Step done={discoverDone} active={!discoverDone} label="Discovering courses" meta={discoverMeta} />
       <Step active={recordingActive} label="Recording existing material" meta={recordMeta} spinner={recordingActive} />
-      <Step label="Saving the baseline" pending={!recordingActive} />
+      <Step label="Saving the baseline" pending />
     </div>
   );
 }
@@ -412,7 +421,7 @@ function Step({
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, height: 30 }}>
       {done ? (
-        <span aria-hidden="true" style={{ width: 16, color: "var(--ok)", fontWeight: 700 }}>✓</span>
+        <Check size={16} color="var(--ok)" aria-hidden="true" />
       ) : spinner || active ? (
         <span className="spinner" aria-hidden="true" style={{ width: 16, height: 16 }} />
       ) : (

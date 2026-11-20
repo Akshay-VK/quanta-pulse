@@ -158,9 +158,8 @@ describe("navigation to a course", () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    expect(container.querySelector(".course-title-text")?.textContent).toBe("ECOM F215");
-    // The raw Moodle name stays as the caption; no second 'Library' button and
-    // no leftover breadcrumb strip in the page body.
+    expect(container.querySelector("h1 .course-full-title")?.textContent).toBe("ECOM F215");
+    expect(container.querySelector("h1 [title]")?.getAttribute("title")).toBe("1166_ECE_INSTR_EEE_ECOM F215");
     const buttons = [...container.querySelectorAll("button")].map((el) => el.textContent);
     expect(buttons).not.toContain("Library");
     expect(container.querySelector(".course-page-topper")).toBeNull();
@@ -168,17 +167,15 @@ describe("navigation to a course", () => {
 });
 
 describe("Library course rows", () => {
-  it("is one button with a trailing chevron and a separate menu", async () => {
+  it("opens the listed course and keeps its actions in a separate menu", async () => {
     await renderLibrary(() => {}, null);
     const row = container.querySelector(".course-row") as HTMLElement;
     expect(row.querySelectorAll("button")).toHaveLength(2);
     expect(row.querySelector(".course-row-main")).toBeTruthy();
-    expect(row.querySelector(".course-row-chevron")).toBeTruthy();
-    // No leading chevron implying an inline expansion that never happens: the
-    // row starts with the colour dot and ends with the chevron.
+    expect(row.querySelector('button[aria-haspopup="menu"]')).toBeTruthy();
     const main = row.querySelector(".course-row-main") as HTMLElement;
     expect(main.firstElementChild?.classList.contains("course-dot")).toBe(true);
-    expect(main.lastElementChild?.classList.contains("course-row-chevron")).toBe(true);
+    expect(main.lastElementChild?.textContent).toBe("Active");
   });
 });
 

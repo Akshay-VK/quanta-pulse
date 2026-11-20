@@ -50,9 +50,11 @@ export default function WorkspacePanel({ status, toolbar, due, content, inspecto
           </Dialog>
         ) : inspector}
       </div>
-      <footer className="workspace-statusbar" data-shell-slot="status" aria-label="Workspace status">
-        {status}
-      </footer>
+      {status != null && (
+        <footer className="workspace-statusbar" data-shell-slot="status" aria-label="Workspace status">
+          {status}
+        </footer>
+      )}
     </>
   );
 }

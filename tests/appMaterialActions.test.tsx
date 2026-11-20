@@ -35,7 +35,7 @@ describe("App shared material destinations", () => {
       if (surface === "All files") { await click(button("Library")); await click(button("All files")); }
       if (surface === "Tree" || surface === "Activity") { await click(document.querySelector<HTMLButtonElement>(".course-nav-item")!); if (surface === "Activity") await click(button("Activity")); }
       if (surface === "History") await emitAppEvent("ui:navigate", "history");
-      if (surface === "Calendar") { await click(button(surface)); await click(button("Activity calendar")); }
+      if (surface === "Calendar") { await click(button(surface)); await click(button("Activity calendar")); await click(document.querySelector<HTMLButtonElement>('.cal-day[aria-current="date"]')!); }
       const row = document.querySelector<HTMLElement>(surface === "All files" ? "tbody tr" : surface === "Tree" ? '[role="treeitem"]:not([aria-expanded])' : ".resource-row")!;
       expect(row).toBeTruthy();
       await click(row.querySelector<HTMLButtonElement>('[aria-label^="Show details"]') ?? row);
@@ -164,7 +164,8 @@ it("keeps technical saved-file facts expandable without duplicating the primary 
   app = await renderApp();
   await click(button("Show details for Lecture 4"));
   const panel = document.querySelector(".peek")!;
-  expect([...panel.querySelectorAll("button")].filter((node) => node.textContent === "Open saved copy")).toHaveLength(1);
+  expect(panel.querySelectorAll('button[aria-label="Open saved copy"]')).toHaveLength(1);
+  expect(panel.querySelector('button[aria-label="Preview"]')?.classList.contains("btn-primary")).toBe(true);
   const technical = panel.querySelector<HTMLDetailsElement>("details")!;
   expect(technical).toBeTruthy();
   expect(technical.open).toBe(false);

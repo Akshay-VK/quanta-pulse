@@ -1,12 +1,12 @@
 import { useMirror } from "../hooks/useMirror";
-import { isLocal, mirrorTip } from "../lib/mirrorState";
-import { formatSectionPath } from "../lib/sectionPath";
+import { isLocal } from "../lib/mirrorState";
 import { Command } from "cmdk";
-import { Calendar, History, Library, Search, Settings, Sun } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { Calendar, History, Inbox, Library, Search, Settings } from "lucide-react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { NAV, type ViewId } from "../lib/nav";
 import { courseTitle } from "../lib/courseName";
 import { Kbd } from "./ui/Kbd";
+import { FileTypeIcon } from "./ui/FileTypeIcon";
 import { Dialog } from "./ui/Dialog";
 import type { Course, Resource } from "../lib/types";
 import { rankMaterialMatches } from "../lib/materialActions";
@@ -15,7 +15,7 @@ import { parseTimestamp } from "../lib/format";
 import { parsePaletteQuery, type PaletteQuery } from "../lib/paletteQuery";
 
 const VIEW_ICON: Record<ViewId, ReactNode> = {
-  today: <Sun aria-hidden="true" />,
+  today: <Inbox aria-hidden="true" />,
   calendar: <Calendar aria-hidden="true" />,
   library: <Library aria-hidden="true" />,
   history: <History aria-hidden="true" />,
@@ -29,6 +29,7 @@ export interface PaletteAction {
   label: string;
   icon?: ReactNode;
   shortcut?: string;
+  searchableOnly?: boolean;
   onSelect: () => void;
 }
 
@@ -45,10 +46,12 @@ function courseMatchesQuery(course: Course, parsed: PaletteQuery) {
   return `${course.name} ${course.shortName ?? ""} ${courseTitle(course.id, course.name)}`.toLowerCase().includes(needle);
 }
 
-function resourceMatchesQuery(resource: Resource, parsed: PaletteQuery, saved: boolean) {
+function resourceMatchesQuery(resource: Resource, parsed: PaletteQuery, saved: boolean, unread: boolean) {
+  if (parsed.hasKnownInvalid) return false;
   if (parsed.filters.courseIds && (resource.courseId === null || !parsed.filters.courseIds.includes(resource.courseId))) return false;
   if (parsed.filters.types && !parsed.filters.types.includes(resource.resourceType)) return false;
-  // ponytail: read/unread tokens parse but cannot filter — palette props carry no read state. Add a read-state prop when palette-level read filtering is required.
+  if (parsed.filters.is?.includes("read") && unread) return false;
+  if (parsed.filters.is?.includes("unread") && !unread) return false;
   if (parsed.filters.is?.includes("saved") && !saved) return false;
   if (parsed.filters.is?.includes("unsaved") && saved) return false;
   const dueValues = parsed.filters.due ?? [];
@@ -82,6 +85,7 @@ export default function CommandPalette({
   courses,
   onCourse,
   resources,
+  unreadResources,
   onInspectResource,
   onSeeAllFiles,
   actions,
@@ -92,12 +96,17 @@ export default function CommandPalette({
   courses: Course[];
   onCourse: (id: number) => void;
   resources: Resource[];
+  unreadResources?: ReadonlySet<number>;
   onInspectResource: (resource: Resource) => void;
-  onSeeAllFiles: (query: string) => void;
+  onSeeAllFiles: (query: string, filters?: { ids: ReadonlySet<number>; label: string }) => void;
   actions: PaletteAction[];
 }) {
   const mirror = useMirror();
-  const [query, setQuery] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [draft, setDraft] = useState("");
+  const [tokens, setTokens] = useState<string[]>([]);
+  const [recentId, setRecentId] = useState<number>();
+  const query = [...tokens, draft].filter(Boolean).join(" ");
   const parsed = useMemo(() => parsePaletteQuery(query, { courses, resources }), [query, courses, resources]);
   const needle = parsed.freeText.toLowerCase();
   const hasQuery = query.trim().length > 0;
@@ -105,16 +114,31 @@ export default function CommandPalette({
   const isSaved = (resource: Resource) => Boolean(
     !resource.isExternal && mirror && isLocal(mirror.statusOf(resource.id)),
   );
-  const navItems = NAV.filter((item) => !needle || item.label.toLowerCase().includes(needle));
-  const courseMatches = courses.filter((c) => courseMatchesQuery(c, parsed));
-  const scopedResources = resources.filter((r) => resourceMatchesQuery(r, parsed, isSaved(r)));
+  const navItems = NAV.filter((item) => (!hasQuery || needle) && (!needle || item.label.toLowerCase().includes(needle)));
+  const courseMatches = courses.filter((c) => !parsed.hasKnownInvalid && (needle || parsed.filters.courseIds?.length) && courseMatchesQuery(c, parsed));
+  const scopedResources = resources.filter((r) => resourceMatchesQuery(r, parsed, isSaved(r), unreadResources?.has(r.id) ?? false));
   const files = hasQuery
     ? (needle ? rankMaterialMatches(scopedResources, needle).slice(0, 8) : scopedResources.slice(0, 8))
     : [];
-  const actionMatches = actions.filter((a) => !needle || a.label.toLowerCase().includes(needle));
+  const actionMatches = actions.filter((action) => hasQuery
+    ? Boolean(needle && action.label.toLowerCase().includes(needle))
+    : !action.searchableOnly);
   const anyFileMatch = files.length > 0;
+  const viewAllFiles = () => {
+    const label = parsed.tokens.filter((token) => token.valid).map((token) => token.raw).join(" ");
+    const matchingFiles = needle ? rankMaterialMatches(scopedResources, needle) : scopedResources;
+    onSeeAllFiles(parsed.freeText, label ? { ids: new Set(matchingFiles.map(({ id }) => id)), label } : undefined);
+  };
+  const recent = resources.find((resource) => resource.id === recentId)
+    ?? resources.reduce<Resource | undefined>((latest, resource) => !latest || latest.firstSeenAt < resource.firstSeenAt ? resource : latest, undefined);
+
+  const resetQuery = () => {
+    setDraft("");
+    setTokens([]);
+  };
 
   const run = (fn: () => void) => {
+    resetQuery();
     onOpenChange(false);
     fn();
   };
@@ -126,7 +150,7 @@ export default function CommandPalette({
       open={open}
       onOpenChange={(next) => {
         onOpenChange(next);
-        if (!next) setQuery("");
+        if (!next) resetQuery();
       }}
       label="Command palette"
       className="palette"
@@ -134,22 +158,42 @@ export default function CommandPalette({
       <Command shouldFilter={false} label="Command palette">
         <div className="palette-input-row">
           <Search aria-hidden="true" />
-          {parsed.tokens.length > 0 && (
-            <span className="palette-tokens" aria-hidden="true">
-              {parsed.tokens.map((token, i) => (
-                <span key={`${token.raw}-${i}`} className={`palette-token${token.valid ? "" : " is-invalid"}`}>{token.raw}</span>
+          {tokens.length > 0 && (
+            <span className="palette-tokens">
+              {tokens.map((token, i) => (
+                <button key={`${token}-${i}`} type="button" className="palette-token" aria-label={`Remove ${token} filter`}
+                  onClick={() => {
+                    setTokens((current) => current.filter((_, index) => index !== i));
+                    inputRef.current?.focus();
+                  }}>{token}</button>
               ))}
             </span>
           )}
           <Command.Input
+            ref={inputRef}
             className="palette-input"
-            value={parsed.tokens.length ? parsed.freeText : query}
+            value={draft}
             onValueChange={(value) => {
-              if (parsed.tokens.length) {
-                const prefix = parsed.tokens.map((t) => t.raw).join(" ");
-                setQuery((prefix + (value ? ` ${value}` : "")).trim());
-              } else {
-                setQuery(value);
+              if (/\s$/.test(value)) {
+                const token = parsePaletteQuery(value, { courses, resources });
+                if (!token.freeText && token.tokens.length > 0 && token.tokens.every((entry) => entry.valid)) {
+                  setTokens((current) => [...current, ...token.tokens.map((entry) => entry.raw)]);
+                  setDraft("");
+                  return;
+                }
+              }
+              setDraft(value);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Backspace" && !draft && tokens.length) {
+                setTokens((current) => current.slice(0, -1));
+              } else if (event.key === "Tab" && !event.shiftKey && draft && !parsed.freeText) {
+                const token = parsed.tokens.at(-1);
+                if (token?.valid && token.raw === draft.trim()) {
+                  event.preventDefault();
+                  setTokens((current) => [...current, token.raw]);
+                  setDraft("");
+                }
               }
             }}
             placeholder={hasQuery ? "" : "Search commands, courses and files…"}
@@ -172,25 +216,23 @@ export default function CommandPalette({
                 <Command.Item key={item.id} className="palette-item" onSelect={() => run(() => onView(item.id))}>
                   <span className="icon">{VIEW_ICON[item.id]}</span>
                   <span>Go to {item.label}</span>
-                  <span className="palette-extra"><Kbd keys={GO_SHORTCUT[item.id]} /></span>
+                  <span className="palette-extra">{GO_SHORTCUT[item.id].split(" ").map((key) => <Kbd key={key} keys={key} />)}</span>
                 </Command.Item>
               ))}
             </Command.Group>
           )}
 
-          {hasQuery && navItems.length > 0 && (
+          {!hasQuery && recent && (
             <Command.Group className="palette-group">
-              <div className="palette-heading">Navigate</div>
-              {navItems.map((item) => (
-                <Command.Item key={item.id} className="palette-item" onSelect={() => run(() => onView(item.id))}>
-                  <span className="icon">{VIEW_ICON[item.id]}</span>
-                  <span>{item.label}</span>
-                  <span className="palette-extra"><Kbd keys={`Mod+${NAV.findIndex((view) => view.id === item.id) + 1}`} /></span>
-                </Command.Item>
-              ))}
+              <div className="palette-heading">Recent</div>
+              <Command.Item className="palette-item" value={`Recent ${recent.id} ${recent.title}`}
+                onSelect={() => run(() => { setRecentId(recent.id); onInspectResource(recent); })}>
+                <FileTypeIcon type={recent.resourceType} />
+                <span className="palette-main">{recent.title}</span>
+                {recent.courseName && <span className="palette-extra mono faint">{recent.courseName}</span>}
+              </Command.Item>
             </Command.Group>
           )}
-
           {hasQuery && files.length > 0 && (
             <Command.Group className="palette-group">
               <div className="palette-heading">Files</div>
@@ -198,14 +240,13 @@ export default function CommandPalette({
                 <Command.Item
                   key={resource.id}
                   className="palette-item"
-                  value={`${resource.title} ${resource.courseName ?? ""}`}
-                  onSelect={() => run(() => onInspectResource(resource))}
+                  value={`File ${resource.id} ${resource.title}`}
+                  onSelect={() => run(() => { setRecentId(resource.id); onInspectResource(resource); })}
                 >
-                  <span className="icon"><Search aria-hidden="true" /></span>
+                  <FileTypeIcon type={resource.resourceType} />
                   <span className="palette-main"><Highlight text={resource.title} query={needle || query.trim()} /></span>
                   <span className="palette-extra">
-                    <span className="faint">{resource.courseName}{formatSectionPath(resource) ? ` / ${formatSectionPath(resource)}` : ""}</span>
-                    {!resource.isExternal && mirror?.statusOf(resource.id) && <span className="faint">{isLocal(mirror.statusOf(resource.id)) ? "Saved copy" : mirrorTip(mirror.statusOf(resource.id))}</span>}
+                    <span className="mono faint">{resource.courseName}</span>
                   </span>
                 </Command.Item>
               ))}
@@ -225,20 +266,16 @@ export default function CommandPalette({
             </Command.Group>
           )}
 
-          {anyFileMatch && (
-            <Command.Group className="palette-group">
-              {!hasQuery ? null : <div className="palette-heading">Actions</div>}
-              <Command.Item className="palette-item" value={`See all results ${query.trim()}`} onSelect={() => run(() => onSeeAllFiles(query.trim()))}>
-                <span className="icon"><Search aria-hidden="true" /></span>
-                <span>See all results for “{query.trim()}”</span>
-                <span className="palette-extra"><Kbd keys="Enter" /></span>
-              </Command.Item>
-            </Command.Group>
-          )}
-
           {noResults && (
             <Command.Group className="palette-group">
-              <Command.Item className="palette-item" value={`Search all files ${query.trim()}`} onSelect={() => run(() => onSeeAllFiles(query.trim()))}>
+              {parsed.tokens.length > 0 && (
+                <Command.Item className="palette-item" value="Clear filters" onSelect={() => {
+                  setTokens([]);
+                  setDraft(parsed.freeText);
+                  inputRef.current?.focus();
+                }}>Clear filters</Command.Item>
+              )}
+              <Command.Item className="palette-item" value={`Search all files ${query.trim()}`} onSelect={() => run(() => onSeeAllFiles(parsed.freeText))}>
                 <span className="icon"><Search aria-hidden="true" /></span>
                 <span>Search all files</span>
                 <span className="palette-extra"><Kbd keys="Enter" /></span>
@@ -246,9 +283,16 @@ export default function CommandPalette({
             </Command.Group>
           )}
 
-          {actionMatches.length > 0 && (
+          {(actionMatches.length > 0 || (hasQuery && navItems.length > 0) || anyFileMatch) && (
             <Command.Group className="palette-group">
               <div className="palette-heading">Actions</div>
+              {hasQuery && navItems.map((item) => (
+                <Command.Item key={item.id} className="palette-item" onSelect={() => run(() => onView(item.id))}>
+                  <span className="icon">{VIEW_ICON[item.id]}</span>
+                  <span>{item.label}</span>
+                  <span className="palette-extra"><Kbd keys={`Mod+${NAV.findIndex((view) => view.id === item.id) + 1}`} /></span>
+                </Command.Item>
+              ))}
               {actionMatches.map((action) => (
                 <Command.Item key={action.id} className="palette-item" onSelect={() => run(action.onSelect)}>
                   {action.icon && <span className="icon">{action.icon}</span>}
@@ -256,13 +300,21 @@ export default function CommandPalette({
                   {action.shortcut && <span className="palette-extra"><Kbd keys={action.shortcut} /></span>}
                 </Command.Item>
               ))}
+              {anyFileMatch && (
+                <Command.Item className="palette-item" value={`See all results ${query.trim()}`} onSelect={() => run(viewAllFiles)}>
+                  <span className="icon"><Search aria-hidden="true" /></span>
+                  <span>See all results for “{query.trim()}”</span>
+                  <span className="palette-extra"><Kbd keys="Enter" /></span>
+                </Command.Item>
+              )}
             </Command.Group>
           )}
         </Command.List>
         <div className="palette-footer">
-          <span className="hint"><Kbd keys="Up" /><Kbd keys="Down" /> Navigate</span>
+          <span className="hint"><Kbd keys="↑↓" /> Navigate</span>
           <span className="hint"><Kbd keys="Enter" /> Open</span>
-          {hasQuery && <span className="palette-footer-note">Try course: type: is: due:</span>}
+          {parsed.tokens.length > 0 && <span className="hint"><Kbd keys="Tab" /> Add filter</span>}
+          <span className="palette-footer-note">{parsed.tokens.length > 0 ? "Try course: type: is: due:" : "Pulse command"}</span>
         </div>
       </Command>
     </Dialog>

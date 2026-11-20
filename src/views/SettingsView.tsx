@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { AlertCircle, Bell, Database, HardDrive, Info, Link2, Palette, User } from "lucide-react";
 import { isPermissionGranted, requestPermission } from "@tauri-apps/plugin-notification";
 import { api } from "../lib/api";
 import { cx } from "../lib/cx";
 import { formatBytes, formatCompact } from "../lib/format";
 import type { DetailProperty } from "../lib/details";
-import type { AuthStatus, CacheStats, DbInfo, Settings, MirrorStats, MirrorDeleteScope, MirrorDeleteResult, MirrorDownloadProgress, TelegramStatus } from "../lib/types";
+import type { AuthStatus, CacheStats, DbInfo, Settings, MirrorStats, MirrorDeleteScope, MirrorDeleteResult, MirrorDownloadProgress, Resource, TelegramStatus } from "../lib/types";
 import { useMirror } from "../hooks/useMirror";
-import PageHeader from "../components/PageHeader";
 import SettingRow from "../components/SettingRow";
 import { Switch } from "../components/ui/Switch";
 import { Select } from "../components/ui/Select";
@@ -29,6 +29,8 @@ interface Props {
   onLogout: () => Promise<void> | void;
   onRefresh: () => void | Promise<void>;
   appearance: ReactNode;
+  headerActions?: ReactNode;
+  resources?: Resource[];
   onController?: (controller: SettingsNavigationController | null) => void;
 }
 
@@ -40,6 +42,16 @@ export interface SettingsNavigationController {
   save: () => Promise<{ saved: boolean; error: string | null }>;
   discard: () => void;
 }
+
+const SECTION_ICONS = {
+  appearance: Palette,
+  account: User,
+  notifications: Bell,
+  files: HardDrive,
+  integrations: Link2,
+  data: Database,
+  about: Info,
+} as const;
 
 const SYNC_INTERVALS = [
   { value: "5", label: "5 min" },
@@ -69,7 +81,7 @@ const NAV_ITEMS = [
   { id: "integrations", label: "Integrations" },
   { id: "data", label: "Data & recovery" },
   { id: "about", label: "About" },
-];
+] as const;
 
 const GIB = 1024 * 1024 * 1024;
 
@@ -106,6 +118,8 @@ export default function SettingsView({
   onLogout,
   onRefresh,
   appearance,
+  headerActions,
+  resources = [],
   onController,
 }: Props) {
   const [draft, setDraft] = useState<Settings>(settings);
@@ -122,6 +136,9 @@ export default function SettingsView({
   const [cacheStats, setCacheStats] = useState<CacheStats | null>(null);
   const [clearingCache, setClearingCache] = useState(false);
   const [active, setActive] = useState<string>("appearance");
+  const layoutRef = useRef<HTMLDivElement>(null);
+  const contentScrollRef = useRef<HTMLDivElement>(null);
+  const navRef = useRef<HTMLElement>(null);
   const [mirrorStats, setMirrorStats] = useState<MirrorStats | null>(null);
   const [changingMirrorRoot, setChangingMirrorRoot] = useState(false);
   const [movingFiles, setMovingFiles] = useState(false);
@@ -136,12 +153,12 @@ export default function SettingsView({
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteResult, setDeleteResult] = useState<MirrorDeleteResult | null>(null);
   const [deletingFiles, setDeletingFiles] = useState(false);
+  const cancelDeleteRef = useRef<HTMLButtonElement>(null);
 
   // About / updates
   const [aboutVersion, setAboutVersion] = useState<string>("");
-  const [updateStatus, setUpdateStatus] = useState<"idle" | "checking" | "upToDate" | "available" | "downloading" | "installing" | "failed" | "restartRequired" | "checkError" | "installError">("idle");
+  const [updateStatus, setUpdateStatus] = useState<"idle" | "checking" | "upToDate" | "available" | "downloading" | "installing" | "failed" | "restartRequired" | "checkError">("idle");
   const [updateVersion, setUpdateVersion] = useState<string | null>(null);
-  const [updateNotes, setUpdateNotes] = useState<string | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [updateProgress, setUpdateProgress] = useState<{ downloaded: number; total: number | null } | null>(null);
   const [savingAutoUpdate, setSavingAutoUpdate] = useState(false);
@@ -196,20 +213,24 @@ export default function SettingsView({
   }, []);
 
   useEffect(() => {
-    // The page scrolls inside .app-main; scroll does not bubble, so listen in
-    // the capture phase to track which section is in view.
-    function onScroll() {
-      let best = NAV_ITEMS[0].id;
+    const layout = layoutRef.current;
+    if (!layout) return;
+    function onScroll(event: Event) {
+      const scroller = event.target;
+      if (!(scroller instanceof HTMLElement) || (scroller !== layout && scroller !== contentScrollRef.current)) return;
+      const stickyHeight = scroller === layout ? navRef.current?.offsetHeight ?? 0 : 0;
+      const threshold = (layout?.getBoundingClientRect().top ?? 0) + stickyHeight + 56;
+      let best: string = NAV_ITEMS[0].id;
       for (const item of NAV_ITEMS) {
-        const el = document.getElementById(item.id);
-        if (!el) continue;
-        const top = el.getBoundingClientRect().top;
-        if (top <= 240) best = item.id;
+        const section = document.getElementById(item.id);
+        if (section && section.getBoundingClientRect().top <= threshold) best = item.id;
       }
+      // Short final sections cannot always reach the scroll threshold.
+      if (scroller.scrollTop > 0 && scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 1) best = "about";
       setActive(best);
     }
-    document.addEventListener("scroll", onScroll, true);
-    return () => document.removeEventListener("scroll", onScroll, true);
+    layout.addEventListener("scroll", onScroll, true);
+    return () => layout.removeEventListener("scroll", onScroll, true);
   }, []);
 
   const errors = useMemo(() => validateSettingsDraft(draft), [draft]);
@@ -272,7 +293,6 @@ export default function SettingsView({
       try {
         if (u && u.version && u.version !== aboutVersion) {
           setUpdateVersion(u.version);
-          setUpdateNotes(u.body ?? null);
           setUpdateStatus("available");
         } else {
           setUpdateStatus("upToDate");
@@ -398,12 +418,6 @@ export default function SettingsView({
     { label: "Size", value: dbInfo ? formatBytes(dbInfo.sizeBytes) || "0 B" : "—" },
     { label: "Counts", value: `${dbInfo?.courseCount ?? 0} courses · ${dbInfo?.resourceCount ?? 0} resources · ${dbInfo?.eventCount ?? 0} events` },
     { label: "Logs folder", value: dbInfo?.logDir ?? "—", copy: dbInfo?.logDir },
-    {
-      label: "File cache",
-      value: cacheStats
-        ? `${formatBytes(cacheStats.totalBytes) || "0 B"} in ${cacheStats.fileCount} ${cacheStats.fileCount === 1 ? "file" : "files"}`
-        : "—",
-    },
   ];
 
   async function clearCache() {
@@ -530,9 +544,12 @@ export default function SettingsView({
 
   return (
     <div className="settings-page">
-      <PageHeader title="Settings" summary="Appearance, connection, notifications, files, integrations and recovery." />
-      <div className="settings-layout">
-      <aside className="settings-sticky">
+      <header className="workspace-view-header">
+        <strong>Settings</strong>
+        {headerActions && <div className="workspace-view-header-actions">{headerActions}</div>}
+      </header>
+      <div className="settings-layout" ref={layoutRef}>
+      <aside className="settings-sticky" ref={navRef}>
         <select
           className="settings-section-select select-trigger"
           aria-label="Settings section"
@@ -547,7 +564,9 @@ export default function SettingsView({
           {NAV_ITEMS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
         </select>
         <nav aria-label="Settings sections">
-          {NAV_ITEMS.map((item) => (
+          {NAV_ITEMS.map((item) => {
+            const Icon = SECTION_ICONS[item.id];
+            return (
             <a
               key={item.id}
               href={`#${item.id}`}
@@ -563,54 +582,43 @@ export default function SettingsView({
                   ?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
               }}
             >
+              <Icon aria-hidden="true" />
               {item.label}
             </a>
-          ))}
+            );
+          })}
         </nav>
       </aside>
+      <div className="settings-scroll" ref={contentScrollRef}>
       <div className="settings-content">
+        <h1 className="settings-title">Settings</h1>
+        <p className="settings-section-description">Make Pulse feel like your workspace.</p>
         <section id="appearance" className="settings-section">
           <h2 className="settings-group-title">Appearance</h2>
+          <p className="settings-section-description">How Pulse looks and feels.</p>
           {appearance}
         </section>
 
         <section id="account" className="settings-section">
           <h2 className="settings-group-title">Account &amp; connection</h2>
-          <SettingRow title="Account">
-            <span>{accountName(auth)}</span>
-          </SettingRow>
-          <SettingRow title="Status">
-            <span className="settings-inline">
-              <span
-                aria-hidden="true"
-                className={cx(
-                  "settings-dot",
-                  auth?.authenticated && !auth.sessionExpired && "ok",
-                )}
-              />
-              {auth?.sessionExpired ? "Session expired" : auth?.authenticated ? "Signed in" : "Signed out"}
+          <p className="settings-section-description">Your Quanta session and how Pulse monitors it.</p>
+          <SettingRow title="Account" description={
+            auth?.sessionExpired
+              ? "Your saved files remain available. Use Reconnect in the session notice."
+              : auth?.authenticated
+                ? `${accountName(auth)} · ${auth.method === "sso" ? "BITS SSO" : "Password"}`
+                : "Sign in to monitor Quanta."
+          }>
+            <span className={cx("tag", auth?.authenticated && !auth.sessionExpired ? "tag-restored" : "tag-deadline")}>
+              {auth?.sessionExpired ? "Session expired" : auth?.authenticated ? "Connected" : "Signed out"}
             </span>
           </SettingRow>
-          <SettingRow title="Sign-in method">
-            <span className="tag tag-note">{auth?.method === "sso" ? "BITS SSO" : auth?.method === "password" ? "Password" : "—"}</span>
-          </SettingRow>
-          <SettingRow title="Session acquired">
-            <span className="mono">{auth?.acquiredAt ? formatCompact(auth.acquiredAt) : "—"}</span>
-          </SettingRow>
-
-          {auth?.sessionExpired && (
-            <SettingRow title="Session expired" description="Your saved files remain available. Scroll to the top of Settings and use Reconnect in the session notice to verify Quanta access and resume monitoring.">
-              <span className="muted">Reconnect in session notice</span>
-            </SettingRow>
-          )}
-          <SettingRow title="Sign out" description="Ends your Quanta session on this computer.">
+          <SettingRow title="Session" description="Ends your Quanta session on this computer.">
             <Button variant="danger-ghost" size="sm" onClick={() => setShowSignOut(true)}>
-              Sign out…
+              Sign out
             </Button>
           </SettingRow>
-
-          <h3 className="settings-subgroup-title">Monitoring</h3>
-          <SettingRow title="Sync interval" description="How often Quanta is checked while the app is running.">
+          <SettingRow title="Monitoring interval" description="How often Pulse checks Quanta.">
             <Select
               value={String(draft.syncIntervalMinutes)}
               onValueChange={(v) => set("syncIntervalMinutes", Number(v))}
@@ -619,10 +627,10 @@ export default function SettingsView({
             />
           </SettingRow>
           {errors.syncIntervalMinutes && <Banner kind="error">{errors.syncIntervalMinutes}</Banner>}
-          <SettingRow title="Run in background" description="Monitoring continues when the window is closed.">
+          <SettingRow title="Keep running in the tray" description="Continue monitoring when the window is closed.">
             <Switch checked={draft.runInBackground} onCheckedChange={(v) => set("runInBackground", v)} ariaLabel="Run in background" />
           </SettingRow>
-          <SettingRow title="Launch at login">
+          <SettingRow title="Start at login" description="Open Pulse when you sign in to your computer.">
             <Switch checked={draft.launchAtLogin} onCheckedChange={(v) => set("launchAtLogin", v)} ariaLabel="Launch at login" />
           </SettingRow>
           <SettingRow title="Timezone" description="Dates are grouped by your local calendar days.">
@@ -633,12 +641,64 @@ export default function SettingsView({
 
         <section id="notifications" className="settings-section">
           <h2 className="settings-group-title">Notifications</h2>
-          <SettingRow title="Enable notifications" description="Requires permission from your system.">
-            <Switch checked={draft.notificationsEnabled} onCheckedChange={(v) => set("notificationsEnabled", v)} ariaLabel="Enable notifications" />
+          <p className="settings-section-description">Quiet by default. Choose what is worth interrupting you for.</p>
+          <SettingRow
+            title="New material"
+            controlClassName={notificationsDisabled ? "dimmed" : undefined}
+            description={
+              notificationsDisabled
+                ? "Turn on notifications to change these"
+                : "New files posted on Quanta."
+            }
+          >
+            <Switch
+              checked={draft.notifyNew}
+              onCheckedChange={(v) => set("notifyNew", v)}
+              disabled={notificationsDisabled}
+              ariaLabel="New files"
+            />
+          </SettingRow>
+          <SettingRow
+            title="Updated material"
+            controlClassName={notificationsDisabled ? "dimmed" : undefined}
+            description={notificationsDisabled ? undefined : "Files that changed after you saw them."}
+          >
+            <Switch
+              checked={draft.notifyUpdated}
+              onCheckedChange={(v) => set("notifyUpdated", v)}
+              disabled={notificationsDisabled}
+              ariaLabel="Updated files"
+            />
+          </SettingRow>
+          <SettingRow
+            title="Deadline reminders"
+            controlClassName={notificationsDisabled ? "dimmed" : undefined}
+            description={notificationsDisabled ? undefined : "Desktop notifications for upcoming deadlines."}
+          >
+            <Switch
+              checked={draft.notifyDeadlines}
+              onCheckedChange={(v) => set("notifyDeadlines", v)}
+              disabled={notificationsDisabled}
+              ariaLabel="Deadlines"
+            />
+          </SettingRow>
+          <SettingRow
+            title="Scan failures and incomplete scans"
+            controlClassName={notificationsDisabled ? "dimmed" : undefined}
+            description={notificationsDisabled
+              ? "Turn on notifications to change this"
+              : "Show a generic system alert when a scan finishes with incomplete results."}
+          >
+            <Switch
+              checked={draft.notifyScanFailures}
+              onCheckedChange={(v) => set("notifyScanFailures", v)}
+              disabled={notificationsDisabled}
+              ariaLabel="Scan failures and incomplete scans"
+            />
           </SettingRow>
           <SettingRow title="Notification permission">
             <div className="settings-inline">
-              <span className="muted">{permissionLabel(permission)}</span>
+              <span className={cx("tag", permission === "granted" ? "tag-restored" : "tag-note")}>{permissionLabel(permission)}</span>
               {permission === "denied" ? (
                 <Button variant="secondary" size="sm" onClick={() => void api.openNotificationSettings()}>
                   Open system settings
@@ -657,33 +717,27 @@ export default function SettingsView({
               )}
             </div>
           </SettingRow>
-          <SettingRow
-            title="New files"
-            controlClassName={notificationsDisabled ? "dimmed" : undefined}
-            description={
-              notificationsDisabled
-                ? "Turn on notifications to change these"
-                : "Notify when new resources appear."
-            }
-          >
-            <Switch
-              checked={draft.notifyNew}
-              onCheckedChange={(v) => set("notifyNew", v)}
-              disabled={notificationsDisabled}
-              ariaLabel="New files"
+          <SettingRow title="Reminder window" description="Notify about deadlines within this many hours.">
+            <Select
+              value={String(draft.deadlineReminderHours)}
+              onValueChange={(v) => set("deadlineReminderHours", Number(v))}
+              options={DEADLINE_OPTIONS as Array<{ value: string; label: string }>}
+              ariaLabel="Deadline reminder window"
             />
           </SettingRow>
-          <SettingRow
-            title="Updated files"
-            controlClassName={notificationsDisabled ? "dimmed" : undefined}
-            description={notificationsDisabled ? undefined : "Notify when resources change."}
-          >
-            <Switch
-              checked={draft.notifyUpdated}
-              onCheckedChange={(v) => set("notifyUpdated", v)}
-              disabled={notificationsDisabled}
-              ariaLabel="Updated files"
-            />
+          {errors.deadlineReminderHours && <Banner kind="error">{errors.deadlineReminderHours}</Banner>}
+          <SettingRow title="Quiet hours" description="Notifications pause between these local times.">
+            <div className="settings-inline">
+              <TimeField value={draft.quietHoursStart ?? ""} onChange={(e) => set("quietHoursStart", e.target.value || null)} aria-label="Quiet hours start" />
+              <span className="muted">to</span>
+              <TimeField value={draft.quietHoursEnd ?? ""} onChange={(e) => set("quietHoursEnd", e.target.value || null)} aria-label="Quiet hours end" />
+            </div>
+          </SettingRow>
+          {errors.quietHours && <Banner kind="error">{errors.quietHours}</Banner>}
+          {errors.quietHoursStart && <Banner kind="error">{errors.quietHoursStart}</Banner>}
+          {errors.quietHoursEnd && <Banner kind="error">{errors.quietHoursEnd}</Banner>}
+          <SettingRow title="Enable notifications" description="Requires permission from your system.">
+            <Switch checked={draft.notificationsEnabled} onCheckedChange={(v) => set("notificationsEnabled", v)} ariaLabel="Enable notifications" />
           </SettingRow>
           <SettingRow
             title="Announcements"
@@ -695,18 +749,6 @@ export default function SettingsView({
               onCheckedChange={(v) => set("notifyAnnouncements", v)}
               disabled={notificationsDisabled}
               ariaLabel="Announcements"
-            />
-          </SettingRow>
-          <SettingRow
-            title="Deadlines"
-            controlClassName={notificationsDisabled ? "dimmed" : undefined}
-            description={notificationsDisabled ? undefined : "Notify about upcoming deadlines."}
-          >
-            <Switch
-              checked={draft.notifyDeadlines}
-              onCheckedChange={(v) => set("notifyDeadlines", v)}
-              disabled={notificationsDisabled}
-              ariaLabel="Deadlines"
             />
           </SettingRow>
           <SettingRow
@@ -733,43 +775,11 @@ export default function SettingsView({
               ariaLabel="Authentication reminders"
             />
           </SettingRow>
-          <SettingRow
-            title="Scan failures and incomplete scans"
-            controlClassName={notificationsDisabled ? "dimmed" : undefined}
-            description={notificationsDisabled
-              ? "Turn on notifications to change this"
-              : "Show a generic system alert when a scan finishes with incomplete results."}
-          >
-            <Switch
-              checked={draft.notifyScanFailures}
-              onCheckedChange={(v) => set("notifyScanFailures", v)}
-              disabled={notificationsDisabled}
-              ariaLabel="Scan failures and incomplete scans"
-            />
-          </SettingRow>
-          <SettingRow title="Deadline reminder window" description="Notify about deadlines within this many hours.">
-            <Select
-              value={String(draft.deadlineReminderHours)}
-              onValueChange={(v) => set("deadlineReminderHours", Number(v))}
-              options={DEADLINE_OPTIONS as Array<{ value: string; label: string }>}
-              ariaLabel="Deadline reminder window"
-            />
-          </SettingRow>
-          {errors.deadlineReminderHours && <Banner kind="error">{errors.deadlineReminderHours}</Banner>}
-          <SettingRow title="Quiet hours" description="Notifications pause between these local times.">
-            <div className="settings-inline">
-              <TimeField value={draft.quietHoursStart ?? ""} onChange={(e) => set("quietHoursStart", e.target.value || null)} aria-label="Quiet hours start" />
-              <span className="muted">to</span>
-              <TimeField value={draft.quietHoursEnd ?? ""} onChange={(e) => set("quietHoursEnd", e.target.value || null)} aria-label="Quiet hours end" />
-            </div>
-          </SettingRow>
-          {errors.quietHours && <Banner kind="error">{errors.quietHours}</Banner>}
-          {errors.quietHoursStart && <Banner kind="error">{errors.quietHoursStart}</Banner>}
-          {errors.quietHoursEnd && <Banner kind="error">{errors.quietHoursEnd}</Banner>}
         </section>
 
         <section id="files" className="settings-section">
           <h2 className="settings-group-title">Files &amp; storage</h2>
+          <p className="settings-section-description">Manage the copies Pulse saves on this device.</p>
           <SettingRow
             title="Saved files folder"
             description="Where your saved course files are stored. Changing this does not move existing files unless you choose to move them."
@@ -913,34 +923,29 @@ export default function SettingsView({
             </SettingRow>
           )}
 
-          {activeDownloads.length > 0 && (
+          {(activeDownloads.length > 0 || failedDownloads.length > 0) && (
             <div className="settings-download-list">
-              <p className="settings-note">Active downloads</p>
-              {activeDownloads.map((item) => (
-                <div key={item.resourceId} className="settings-download-row">
-                  <span className="mono">Resource {item.resourceId}</span>
-                  <progress value={item.bytesDone} max={item.bytesTotal ?? item.bytesDone ?? 1} />
-                  <span className="muted">
-                    {formatBytes(item.bytesDone)}
-                    {item.bytesTotal ? ` / ${formatBytes(item.bytesTotal)}` : ""}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {failedDownloads.length > 0 && (
-            <div className="settings-download-list">
-              <p className="settings-note">Failed downloads</p>
-              {failedDownloads.map((item) => (
-                <div key={item.resourceId} className="settings-download-row">
-                  <span className="mono">Resource {item.resourceId}</span>
-                  {item.error && <span className="muted">{item.error}</span>}
-                  <Button variant="secondary" size="sm" onClick={() => void retryDownloadItem(item.resourceId)}>
-                    Retry
-                  </Button>
-                </div>
-              ))}
+              <h3 className="settings-subgroup-title">Downloads</h3>
+              {[...activeDownloads, ...failedDownloads].map((item) => {
+                const file = resources.find(resource => resource.id === item.resourceId);
+                const percent = item.bytesTotal ? Math.min(100, Math.floor(item.bytesDone / item.bytesTotal * 100)) : null;
+                return (
+                  <div key={item.resourceId} className="settings-download-row">
+                    <span className="settings-download-name" title={file?.title}>{file?.title ?? `Resource ${item.resourceId}`}</span>
+                    {item.state === "failed" ? (
+                      <>
+                        <span className="tag tag-removed" title={item.error ?? undefined}>Failed</span>
+                        <Button variant="secondary" size="sm" onClick={() => void retryDownloadItem(item.resourceId)}>Retry</Button>
+                      </>
+                    ) : (
+                      <>
+                        <progress aria-label={file?.title ?? "Download progress"} value={percent ?? undefined} max={100} />
+                        <span className="mono muted">{percent != null ? `${percent}%` : formatBytes(item.bytesDone) || "Queued"}</span>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
 
@@ -952,31 +957,11 @@ export default function SettingsView({
               Verify now
             </Button>
           </SettingRow>
-          <SettingRow
-            title="Cached files"
-            description="The preview cache holds temporary copies for faster previews. Clearing it does not delete your saved course files. Oldest cached files are removed first when the limit is reached."
-          >
-            <div className="settings-inline">
-              <Select
-                value={String(draft.cacheLimitBytes)}
-                onValueChange={(v) => set("cacheLimitBytes", Number(v))}
-                options={CACHE_LIMITS}
-                ariaLabel="Cache size limit"
-              />
-              <Button
-                variant="secondary"
-                size="sm"
-                loading={clearingCache}
-                onClick={() => void clearCache()}
-              >
-                Clear cached files
-              </Button>
-            </div>
-          </SettingRow>
         </section>
 
         <section id="integrations" className="settings-section">
           <h2 className="settings-group-title">Integrations</h2>
+          <p className="settings-section-description">Send Pulse updates to other places.</p>
           <SettingRow
             title="Forward to Telegram"
             description="Send new material to your own bot chat as the file itself, not a link. The six categories under Notifications decide which events go out."
@@ -1033,21 +1018,42 @@ export default function SettingsView({
 
         <section id="data" className="settings-section">
           <h2 className="settings-group-title">Data &amp; recovery</h2>
-          <PropertyList properties={dbProps} />
-
-          <SettingRow title="Re-baseline" description="Record everything as known. Nothing is reported as new until the next scan.">
-            <Button variant="secondary" size="sm" onClick={() => setShowRebaseline(true)}>Re-baseline all courses</Button>
+          <p className="settings-section-description">Manage what Pulse keeps on this device.</p>
+          <SettingRow
+            title="Preview cache"
+            description={cacheStats ? `${formatBytes(cacheStats.totalBytes) || "0 B"} of generated previews.` : "Temporary copies used for in-app previews."}
+          >
+            <div className="settings-inline">
+              <Select
+                value={String(draft.cacheLimitBytes)}
+                onValueChange={(v) => set("cacheLimitBytes", Number(v))}
+                options={CACHE_LIMITS}
+                ariaLabel="Cache size limit"
+              />
+              <Button
+                variant="secondary"
+                size="sm"
+                loading={clearingCache}
+                onClick={() => void clearCache()}
+              >
+                Clear cache
+              </Button>
+            </div>
+          </SettingRow>
+          <SettingRow title="Reset all baselines" description="The next scan records existing material silently. History is kept.">
+            <Button variant="secondary" size="sm" onClick={() => setShowRebaseline(true)}>Reset baselines…</Button>
           </SettingRow>
           <div className="settings-danger-group">
             <SettingRow
-              title="Delete all saved course files"
-              description="Permanently remove every saved file in the Saved files folder. The preview cache and course history stay in place. This cannot be undone."
+              title="Delete saved files"
+              description="Remove local copies from this device. Files on Quanta stay available."
             >
               <Button variant="danger" size="sm" onClick={() => void openDeleteAll()}>
-                Delete all saved course files
+                Delete saved files…
               </Button>
             </SettingRow>
           </div>
+          <PropertyList properties={dbProps} />
           <p className="settings-note">
             Session cookies stay in memory and are not saved. Times are shown in your local timezone.
           </p>
@@ -1055,8 +1061,76 @@ export default function SettingsView({
 
         <section id="about" className="settings-section">
           <h2 className="settings-group-title">About</h2>
+          <p className="settings-section-description">Quanta Pulse</p>
+          {updateStatus === "available" && updateVersion && (
+            <div className="settings-banner is-info" role="status">
+              <Info aria-hidden="true" />
+              <span>Version {updateVersion} is available.</span>
+              <div className="settings-inline">
+                <Button variant="primary" size="sm" onClick={() => void installUpdate()} disabled={updateInstallRef.current}>
+                  Download
+                </Button>
+              </div>
+            </div>
+          )}
+          {updateStatus === "downloading" && (
+            <div className="settings-banner" role="status">
+              <span>Downloading {updateVersion ?? ""}…</span>
+              <progress aria-label="Update download progress" value={updateProgress?.total ? updateProgress.downloaded : undefined} max={updateProgress?.total ?? 1} />
+              <span className="mono muted">
+                {updateProgress?.total
+                  ? `${Math.min(100, Math.floor(updateProgress.downloaded / updateProgress.total * 100))}%`
+                  : formatBytes(updateProgress?.downloaded ?? 0)}
+              </span>
+            </div>
+          )}
+          {updateStatus === "installing" && (
+            <div className="settings-banner" role="status">
+              <span className="spinner" aria-hidden="true" />
+              <span>Installing…</span>
+            </div>
+          )}
+          {updateStatus === "failed" && (
+            <div className="settings-banner is-error" role="alert">
+              <AlertCircle aria-hidden="true" />
+              <strong>Update failed.</strong>
+              {aboutVersion && <span>Pulse kept version {aboutVersion}.</span>}
+              {updateError && <span>{updateError}</span>}
+              <div className="settings-inline">
+                <Button variant="primary" size="sm" onClick={() => void installUpdate()}>
+                  Retry
+                </Button>
+              </div>
+            </div>
+          )}
+          {updateStatus === "restartRequired" && (
+            <div className="settings-banner is-success" role="status">
+              <strong>Update ready.</strong>
+              <span>Restart Pulse to finish installing {updateVersion ?? ""}.</span>
+              {updateError && <span>{updateError}</span>}
+              <Button variant="primary" size="sm" onClick={() => void restartNow()}>
+                Restart now
+              </Button>
+            </div>
+          )}
+          {(updateStatus === "upToDate" || updateStatus === "checkError") && (
+            <div className={cx("settings-banner", updateStatus === "checkError" && "is-error")} role={updateStatus === "checkError" ? "alert" : "status"}>
+              <span>{updateStatus === "upToDate" ? "Up to date" : `Check failed${updateError ? `: ${updateError}` : ""}`}</span>
+            </div>
+          )}
           <SettingRow title="Version">
             <span className="mono">{aboutVersion || "—"}</span>
+          </SettingRow>
+          <SettingRow
+            title="Automatic update checks"
+            description="Check for new versions in the background."
+          >
+            <Switch
+              checked={draft.updateAutoCheck ?? settings.updateAutoCheck ?? true}
+              onCheckedChange={(v) => void changeAutoUpdate(v)}
+              disabled={savingAutoUpdate}
+              ariaLabel="Check for updates automatically"
+            />
           </SettingRow>
           <SettingRow
             title="Check for updates"
@@ -1069,92 +1143,8 @@ export default function SettingsView({
               disabled={updateStatus === "checking" || updateStatus === "downloading" || updateStatus === "installing"}
               onClick={() => void checkForUpdate()}
             >
-              {updateStatus === "checking" ? "Checking..." : "Check now"}
+              {updateStatus === "checking" ? "Checking…" : "Check for updates"}
             </Button>
-          </SettingRow>
-          <SettingRow
-            title="Status"
-            description={updateError ?? undefined}
-          >
-            <span className={cx("settings-inline", (updateStatus === "checkError" || updateStatus === "failed" || updateStatus === "installError") && "danger")}>
-              {updateStatus === "idle" && "Idle"}
-              {updateStatus === "checking" && "Looking..."}
-              {updateStatus === "upToDate" && "Up to date"}
-              {updateStatus === "available" && `Update ${updateVersion} available`}
-              {updateStatus === "downloading" && `Downloading ${updateVersion ?? ""}`}
-              {updateStatus === "installing" && "Installing..."}
-              {updateStatus === "failed" && "Update failed"}
-              {updateStatus === "installError" && "Update failed"}
-              {updateStatus === "restartRequired" && "Restart required"}
-              {updateStatus === "checkError" && "Check failed"}
-            </span>
-          </SettingRow>
-          {updateStatus === "available" && updateVersion && (
-            <div className="settings-banner" role="status">
-              <span>Quanta Pulse {updateVersion} is available.</span>
-              <div className="settings-inline">
-                <Button variant="primary" size="sm" onClick={() => void installUpdate()} disabled={updateInstallRef.current}>
-                  Download
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => window.open(updateNotes ?? "https://github.com/Akshay-VK/quanta-pulse/releases", "_blank")}>
-                  Release notes
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => { setUpdateStatus("idle"); setUpdateProgress(null); }}>
-                  Later
-                </Button>
-              </div>
-            </div>
-          )}
-          {updateStatus === "downloading" && (
-            <div className="settings-banner" role="status">
-              <span>Downloading {updateVersion ?? ""}…</span>
-              <progress value={updateProgress?.downloaded ?? 0} max={updateProgress?.total ?? updateProgress?.downloaded ?? 1} />
-              <span className="muted">
-                {formatBytes(updateProgress?.downloaded ?? 0)}
-                {updateProgress?.total ? ` / ${formatBytes(updateProgress.total)}` : ""}
-              </span>
-            </div>
-          )}
-          {updateStatus === "installing" && (
-            <div className="settings-banner" role="status">
-              <span className="spinner" aria-hidden="true" />
-              <span>Installing…</span>
-            </div>
-          )}
-          {updateStatus === "failed" && (
-            <div className="settings-banner" role="alert">
-              <span>Update failed.</span>
-              {updateError && <span>{updateError}</span>}
-              <div className="settings-inline">
-                <Button variant="primary" size="sm" onClick={() => void installUpdate()}>
-                  Retry
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => { setUpdateStatus(updateVersion ? "available" : "idle"); setUpdateProgress(null); }}>
-                  Later
-                </Button>
-              </div>
-            </div>
-          )}
-          {updateStatus === "restartRequired" && (
-            <div className="settings-banner" role="status">
-              <span>Update ready.</span>
-              <span>Restart Pulse to finish installing {updateVersion ?? ""}.</span>
-              {updateError && <span>{updateError}</span>}
-              <Button variant="primary" size="sm" onClick={() => void restartNow()}>
-                Restart now
-              </Button>
-            </div>
-          )}
-          <SettingRow
-            title="Check for updates automatically"
-            description="Checks 30 seconds after launch and every 6 hours. Network checks stop after 30 seconds and retry on the next interval."
-          >
-            <Switch
-              checked={draft.updateAutoCheck ?? settings.updateAutoCheck ?? true}
-              onCheckedChange={(v) => void changeAutoUpdate(v)}
-              disabled={savingAutoUpdate}
-              ariaLabel="Check for updates automatically"
-            />
           </SettingRow>
           <SettingRow title="Open backups folder">
             <Button variant="ghost" size="sm" onClick={() => void api.openAppFolder("backups")}>
@@ -1168,24 +1158,35 @@ export default function SettingsView({
             {operationFeedback.phase === "pending" ? `${operationFeedback.label}…` : operationFeedback.phase === "success" ? `${operationFeedback.label} completed.` : `${operationFeedback.label} failed: ${operationFeedback.detail}`}
           </p>
         )}
-        {saveError && <Banner kind="error" role="alert">{saveError}</Banner>}
-        {dirty && (
-          <div className="save-bar" role="status" aria-live="polite">
-            <div className="save-copy">You have unsaved changes</div>
+      </div>
+      </div>
+      </div>
+      {(dirty || saved) && (
+        <div className={cx("save-bar", saveError && "is-error")}>
+          <div className="save-copy" role={saveError ? "alert" : "status"} title={saveError ?? undefined}>
+            {saveError ? (
+              <>
+                <AlertCircle aria-hidden="true" />
+                <span><strong>Couldn’t save.</strong> Your changes are kept.</span>
+                <span className="sr-only">{saveError}</span>
+              </>
+            ) : (
+              <>
+                <span className={cx("settings-dot", saved && !dirty && "ok")} aria-hidden="true" />
+                <strong>{dirty ? "Unsaved changes" : "Settings saved"}</strong>
+              </>
+            )}
+          </div>
+          {dirty && (
             <div className="settings-inline">
-              <Button variant="ghost" size="sm" onClick={() => setShowDiscard(true)}>Discard</Button>
-              <Button variant="primary" size="sm" loading={saving} onClick={() => void save()} disabled={hasValidationErrors(errors) || saving}>
-                Save settings
+              <Button variant="secondary" size="sm" onClick={() => setShowDiscard(true)} disabled={saving}>Discard</Button>
+              <Button variant="primary" size="sm" loading={saving} onClick={() => void save()} disabled={hasValidationErrors(errors)}>
+                {saving ? "Saving…" : saveError ? "Retry" : "Save changes"}
               </Button>
             </div>
-          </div>
-        )}
-        {saved && !dirty && (
-          <div className="save-bar" role="status" aria-live="polite">
-            <div className="save-copy">Settings saved</div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
       <ConfirmDialog
         open={showDiscard}
@@ -1234,15 +1235,17 @@ export default function SettingsView({
           }
         }}
         role="alertdialog"
-        label="Delete all saved course files"
+        label="Delete all saved files?"
+        className="dialog-confirm dialog-confirm-scope"
+        initialFocusRef={cancelDeleteRef}
       >
-        <h2 className="dialog-title">Delete all saved course files?</h2>
+        <h2 className="dialog-title">Delete all saved files?</h2>
         <div className="dialog-body">
-          <p>This permanently removes every saved file in the Saved files folder. It does not clear the preview cache or delete course history. This cannot be undone.</p>
+          <p>Files on Quanta, History and your baseline stay available. Deletion is permanent.</p>
           {deleteLoading && <p>Loading deletion scope…</p>}
           {deleteScope && (
             <p>
-              {deleteScope.count} saved {deleteScope.count === 1 ? "file" : "files"} will be removed. Course history and your baseline are retained.
+              This removes {deleteScope.count} local {deleteScope.count === 1 ? "copy" : "copies"}{mirrorStats?.root && <> from <span className="mono">{mirrorStats.root}</span></>}.
             </p>
           )}
           {deleteResult && deleteResult.failed.length > 0 && (
@@ -1258,6 +1261,7 @@ export default function SettingsView({
           <label className="settings-inline" style={{ flexDirection: "column", alignItems: "stretch" }}>
             <span>Type DELETE to confirm</span>
             <input
+              className="text-field"
               aria-label="DELETE"
               placeholder="DELETE"
               value={deleteText}
@@ -1268,6 +1272,7 @@ export default function SettingsView({
         </div>
         <div className="dialog-footer">
           <button
+            ref={cancelDeleteRef}
             type="button"
             className="btn btn-secondary"
             onClick={() => {
@@ -1289,11 +1294,10 @@ export default function SettingsView({
             disabled={deletingFiles || deleteLoading || deleteText !== "DELETE" || !deleteScope}
             onClick={() => void confirmDeleteAll()}
           >
-            Delete all
+            Delete saved files
           </Button>
         </div>
       </Dialog>
-      </div>
     </div>
   );
 }

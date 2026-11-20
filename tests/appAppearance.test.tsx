@@ -7,6 +7,13 @@ let app: Awaited<ReturnType<typeof renderApp>>;
 beforeEach(() => setupApp());
 afterEach(() => app?.unmount());
 
+async function pickPalette(label: string, scope: ParentNode = document) {
+  await click(button("Palette", scope));
+  const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(node => node.textContent === label);
+  expect(option).toBeTruthy();
+  await click(option!);
+}
+
 describe("Appearance in the real application", () => {
   it.each(["light", "dark", "system"])("migrates the saved legacy %s mode on mount", async mode => {
     localStorage.setItem("quanta-pulse-theme", mode);
@@ -22,7 +29,7 @@ describe("Appearance in the real application", () => {
   it("applies independent choices, quick toggle, reset and restores after remount", async () => {
     app = await renderApp();
     await click(button("Appearance"));
-    await click(button("Ocean"));
+    await pickPalette("Ocean");
     await click(button("Teal"));
     await click(button("Compact"));
     await click(button("Dark"));
@@ -40,7 +47,7 @@ describe("Appearance in the real application", () => {
     const firstPaint = document.documentElement.style.cssText;
     app = await renderApp();
     expect(document.documentElement.style.cssText).toBe(firstPaint);
-    await click(button("Appearance"));
+    await click(button("Settings"));
     await click(button("Reset appearance"));
     expect(JSON.parse(localStorage.getItem(APPEARANCE_KEY)!)).toEqual(DEFAULT_APPEARANCE);
   });
@@ -63,10 +70,7 @@ describe("Appearance in the real application", () => {
   it("supports keyboard selection, explicit close and focus return without a dirty draft", async () => {
     app = await renderApp();
     await click(button("Appearance"));
-    const ocean = button("Ocean");
-    ocean.focus();
-    // Native buttons activate through Enter/Space in the browser; jsdom exercises click.
-    await click(ocean);
+    await pickPalette("Ocean");
     const result = await axe(document.querySelector('[role="dialog"]') as HTMLElement, { rules: { "color-contrast": { enabled: false } } });
     expect(result.violations).toHaveLength(0);
     await click(button("Close appearance"));
@@ -81,11 +85,11 @@ describe("Appearance in the real application", () => {
     await click(button("Settings"));
     await click(button("Sync interval"));
     await click([...document.querySelectorAll<HTMLElement>('[role="option"]')].find(n => n.textContent === "60 min")!);
-    await click(button("Forest"));
+    await pickPalette("Forest");
     await click(button("Dark"));
     await click(button("Appearance"));
     const popover = document.querySelector('[role="dialog"]')!;
-    await click(button("Iris", popover));
+    await pickPalette("Iris", popover);
     await escape();
     expect(button("Sync interval").textContent).toContain("60 min");
     expect(appApi.setSettings).not.toHaveBeenCalled();
@@ -104,7 +108,7 @@ describe("Appearance in the real application", () => {
     await act(async () => { media.matches = true; listener?.(); });
     expect(document.documentElement.dataset.theme).toBe("light");
     await click(button("Appearance"));
-    await click(button("Follow system"));
+    await click(button("System"));
     expect(document.documentElement.dataset.theme).toBe("dark");
     expect(media.addEventListener).toHaveBeenCalledWith("change", listener);
   });
@@ -112,14 +116,14 @@ describe("Appearance in the real application", () => {
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw Error("blocked"); });
     app = await renderApp();
     await click(button("Appearance"));
-    await click(button("Ocean"));
+    await pickPalette("Ocean");
     expect(document.documentElement.dataset.palette).toBe("ocean");
-    expect(document.querySelector('[role="status"]')?.textContent).toContain("cannot be remembered");
+    expect(document.querySelector(".appearance-feedback")?.textContent).toContain("cannot be remembered");
   });
   it("preserves a future preference after a deliberate control change", async () => {
     localStorage.setItem(APPEARANCE_KEY, '{"version":9,"custom":true}');
-    app = await renderApp(); await click(button("Appearance")); await click(button("Ocean"));
+    app = await renderApp(); await click(button("Appearance")); await pickPalette("Ocean");
     expect(localStorage.getItem(APPEARANCE_KEY)).toBe('{"version":9,"custom":true}');
-    expect(document.querySelector('[role="status"]')?.textContent).toContain("newer version");
+    expect(document.querySelector(".appearance-feedback")?.textContent).toContain("newer version");
   });
 });

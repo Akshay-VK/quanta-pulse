@@ -118,7 +118,7 @@ describe("previous-version retention", () => {
     await render(settings, onSave);
     await choose(value);
     expect(container.textContent).toContain("Previous versions must be a whole number between 0 and 10.");
-    const save = [...container.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "Save settings");
+    const save = [...container.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "Save changes");
     expect(save?.disabled).toBe(true);
     await act(async () => { await controller?.save(); });
     await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "s", ctrlKey: true, bubbles: true })));

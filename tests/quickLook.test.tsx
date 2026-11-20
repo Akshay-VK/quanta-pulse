@@ -7,6 +7,30 @@ vi.mock("../src/lib/api", () => ({
   api: { previewResource: vi.fn() },
 }));
 
+vi.mock("pdfjs-dist/legacy/build/pdf.mjs", () => {
+  const getPage = vi.fn(async (page: number) => ({
+    getViewport: ({ scale }: { scale: number }) => ({
+      width: 420 * scale,
+      height: 552 * scale,
+      convertToViewportRectangle: (rect: number[]) => rect,
+    }),
+    render: () => ({ promise: Promise.resolve(), cancel: vi.fn() }),
+    getTextContent: async () => ({
+      items: [{
+        str: page === 2 ? "A pointer" : "Arrays only",
+        transform: [1, 0, 0, 1, 20, 50],
+        width: 64,
+        height: 12,
+      }],
+    }),
+  }));
+  return {
+    PDFWorker: { create: () => ({ destroy: vi.fn() }) },
+    getDocument: () => ({ promise: Promise.resolve({ numPages: 3, getPage }), destroy: async () => {} }),
+  };
+});
+vi.mock("pdfjs-dist/legacy/build/pdf.worker.min.mjs?url", () => ({ default: "/pdf-worker.mjs" }));
+
 import { api } from "../src/lib/api";
 import PreviewDialog from "../src/components/PreviewDialog";
 import { TooltipProvider } from "../src/components/ui/Tooltip";
@@ -60,6 +84,7 @@ afterEach(() => {
   act(() => root.unmount());
   container.remove();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 async function flush() {
@@ -170,7 +195,9 @@ describe("QuickLook", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
-  it("uses the WebView PDF viewer without inert decorative controls", async () => {
+  it("renders a local PDF canvas, navigates thumbnails, and finds document text", async () => {
+    vi.stubGlobal("Worker", class extends EventTarget { terminate() {} });
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({} as CanvasRenderingContext2D);
     vi.mocked(api.previewResource).mockResolvedValue({
       kind: "binary", mode: "pdf", mime: "application/pdf", data: "JVBERi0=",
       sourceUrl: "https://quanta.bits-pilani.ac.in/x.pdf", sizeBytes: 8,
@@ -183,10 +210,21 @@ describe("QuickLook", () => {
       );
     });
     await flush();
-    expect(dialog().querySelector("iframe.preview-frame")).toBeTruthy();
-    const labels = [...dialog().querySelectorAll("button")].map((node) => node.textContent);
-    expect(labels).not.toContain("Thumbnails");
-    expect(labels).not.toContain("Search");
+    await act(async () => {
+      await vi.waitFor(() => expect(dialog().textContent).toContain("Page 1 / 3"));
+    });
+    await act(async () => dialog().querySelector<HTMLButtonElement>('[aria-label="Go to page 3"]')?.click());
+    expect(dialog().textContent).toContain("Page 3 / 3");
+    const search = dialog().querySelector<HTMLInputElement>('[aria-label="Search in document"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "pointer");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 180)); });
+    expect(dialog().textContent).toContain("1 of 1");
+    expect(dialog().textContent).toContain("Page 2 / 3");
+    expect(dialog().querySelector(".pdf-stage canvas")?.getAttribute("aria-label")).toBe("PDF page 2");
+    expect(dialog().querySelector("iframe")).toBeNull();
   });
 
   it("offers real saved-copy actions for unsupported files", async () => {

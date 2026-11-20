@@ -183,7 +183,7 @@ describe("CourseList", () => {
       resources: [buildResource()],
     });
     const found = container.querySelector(".course-row") as HTMLElement;
-    expect(found.querySelector(".course-row-unread")?.textContent).toBe("3");
+    expect(found.querySelector(".course-row-unread")?.textContent).toBe("3 unread");
     expect(found.querySelector(".course-row-last")?.textContent).toBeTruthy();
   });
 
@@ -208,8 +208,8 @@ describe("CourseList", () => {
 
     await renderCourses([buildCourse()], { search: "no-such-course" });
     expect(container.querySelector(".course-row")).toBeNull();
-    expect(container.textContent).toContain("No courses found");
-    expect(container.textContent).toContain("Pulse discovers your courses on the first scan");
+    expect(container.textContent).toContain("No courses match your search");
+    expect(container.textContent).toContain("Try a different course name or code.");
   });
 
   it("shows the empty state when there are no courses at all", async () => {

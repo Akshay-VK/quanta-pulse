@@ -20,12 +20,10 @@ function validDate(key: string): boolean {
 }
 export type AgendaGroup = 'Past due dates' | 'Today' | 'Tomorrow' | 'This week' | 'Later';
 export interface AgendaEntry { item: DueResource; day: string; group: AgendaGroup; label: string; sort: number }
-export const AGENDA_GROUPS: AgendaGroup[] = ['Past due dates', 'Today', 'Tomorrow', 'This week', 'Later'];
+export const AGENDA_GROUPS: AgendaGroup[] = ['Today', 'Tomorrow', 'This week', 'Later', 'Past due dates'];
 export function agendaEntries(items: DueResource[], now: Date, timeZone: string): AgendaEntry[] {
   const today = localDateKey(now, timeZone);
   const dayNumber = ordinal(today);
-  const weekday = new Date(`${today}T12:00:00Z`).getUTCDay();
-  const weekEnd = dayNumber + (7 - ((weekday + 6) % 7));
   const seen = new Set<string>();
   return items.flatMap(item => {
     const raw = item.resource.dueAt;
@@ -36,7 +34,7 @@ export function agendaEntries(items: DueResource[], now: Date, timeZone: string)
     const day = dateOnly ? raw : localDateKey(new Date(timestamp), timeZone);
     const delta = ordinal(day) - dayNumber;
     const past = dateOnly ? delta < 0 : timestamp < now.getTime();
-    const group: AgendaGroup = past ? 'Past due dates' : delta === 0 ? 'Today' : delta === 1 ? 'Tomorrow' : ordinal(day) < weekEnd ? 'This week' : 'Later';
+    const group: AgendaGroup = past ? 'Past due dates' : delta === 0 ? 'Today' : delta === 1 ? 'Tomorrow' : delta < 7 ? 'This week' : 'Later';
     const identity = item.resource.externalResourceId;
     if (seen.has(identity)) return [];
     seen.add(identity);

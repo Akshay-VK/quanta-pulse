@@ -20,9 +20,9 @@ describe('controlled agenda selectors', () => {
     expect(entries[0].label).not.toBe(entries[1].label);
     expect(agendaEntries([due('2026-11-02T04:59:00Z')], new Date('2026-11-02T05:00:00Z'), 'America/New_York')[0].group).toBe('Past due dates');
   });
-  it('uses Monday-first weeks across year boundaries and preserves unrelated same titles', () => {
+  it('uses the displayed seven-day Agenda window across year boundaries and preserves unrelated same titles', () => {
     const now = new Date('2026-12-30T00:00:00Z');
-    expect(agendaEntries([due('2027-01-01', 1, 'date'), due('2027-01-04', 2, 'date'), due('2027-01-01', 3, 'date')], now, 'UTC').map(e => e.group)).toEqual(['This week', 'This week', 'Later']);
+    expect(agendaEntries([due('2027-01-01', 1, 'date'), due('2027-01-06', 2, 'date'), due('2027-01-01', 3, 'date')], now, 'UTC').map(e => e.group)).toEqual(['This week', 'This week', 'Later']);
   });
   it('deduplicates canonical identities and limits due soon to five in seven local days', () => {
     const items = Array.from({ length: 9 }, (_, i) => due(`2026-11-${15 + i}`, i + 1, 'date'));

@@ -108,7 +108,7 @@ async function tick() {
 
 async function clickCheck() {
   const buttons = Array.from(container.querySelectorAll("button"));
-  const check = buttons.find((b) => /Check now/i.test(b.textContent ?? ""));
+  const check = buttons.find((b) => /Check for updates/i.test(b.textContent ?? ""));
   expect(check).not.toBeNull();
   await act(async () => {
     check!.click();
@@ -117,9 +117,9 @@ async function clickCheck() {
 }
 
 describe("Settings > About states", () => {
-  it("starts idle", () => {
+  it("shows the version and last-check row without a redundant idle state", () => {
     render();
-    expect(container.textContent).toContain("Idle");
+    expect(container.textContent).toContain("Never checked.");
   });
 
   it("shows Up to date after a check finds nothing", async () => {
@@ -130,7 +130,7 @@ describe("Settings > About states", () => {
     expect(container.textContent).toContain("Up to date");
   });
 
-  it("shows the available version and release notes/restart when one exists", async () => {
+  it("shows the available version and download action when one exists", async () => {
     vi.mocked(api.checkUpdate).mockResolvedValue({
       version: "9.9.9",
       body: "notes",
@@ -138,7 +138,7 @@ describe("Settings > About states", () => {
     render();
     await clickCheck();
     await tick();
-    expect(container.textContent).toContain("Update 9.9.9 available");
+    expect(container.textContent).toContain("Version 9.9.9 is available.");
     expect(container.textContent).toContain("Download");
   });
 
@@ -155,7 +155,7 @@ describe("Settings > About states", () => {
     expect(container.textContent).not.toContain("Check failed");
     expect(container.textContent).not.toContain("Up to date");
     expect(container.textContent).toContain("busy");
-    const retry = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Check now"));
+    const retry = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Check for updates"));
     expect(retry).toBeTruthy();
   });
 
@@ -163,7 +163,7 @@ describe("Settings > About states", () => {
     let resolveFn: (value: null) => void = () => {};
     vi.mocked(api.checkUpdate).mockReturnValue(new Promise((resolve) => { resolveFn = resolve; }) as never);
     render();
-    const check = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Check now"))!;
+    const check = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Check for updates"))!;
     await act(async () => { check.click(); });
     expect(check.disabled).toBe(true);
     expect(api.checkUpdate).toHaveBeenCalledTimes(1);
@@ -173,7 +173,7 @@ describe("Settings > About states", () => {
   it("keeps stored files accessible and points to the single reconnect action", async () => {
     render(SETTINGS, { authenticated: false, attemptId: null, email: null, fullName: null, method: null, acquiredAt: null, sessionExpired: true });
     expect(container.textContent).toContain("Your saved files remain available.");
-    expect(container.textContent).toContain("Scroll to the top of Settings and use Reconnect");
+    expect(container.textContent).toContain("Use Reconnect in the session notice");
     expect([...container.querySelectorAll("button")].filter((button) => button.textContent?.trim() === "Reconnect")).toHaveLength(0);
   });
 
@@ -192,7 +192,7 @@ describe("Settings > About states", () => {
     );
     render();
     const buttons = Array.from(container.querySelectorAll("button"));
-    const check = buttons.find((b) => /Check now|Checking/i.test(b.textContent ?? ""));
+    const check = buttons.find((b) => /Check for updates|Checking/i.test(b.textContent ?? ""));
     expect(check).not.toBeNull();
     // synchronous start
     void clickCheck();

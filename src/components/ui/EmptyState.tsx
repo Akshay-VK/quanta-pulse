@@ -5,19 +5,22 @@ export function EmptyState({
   title,
   body,
   action,
+  secondaryAction,
 }: {
   title: string;
   body?: string;
   action?: { label: string; onClick: () => void };
+  secondaryAction?: { label: string; onClick: () => void };
 }) {
   return (
     <div className="empty-state">
       <p className="empty-title">{title}</p>
       {body && <p className="empty-body">{body}</p>}
       {action && (
-        <Button variant="secondary" onClick={action.onClick}>
-          {action.label}
-        </Button>
+        secondaryAction ? <div className="empty-actions">
+          <Button variant="secondary" onClick={action.onClick}>{action.label}</Button>
+          <Button variant="ghost" onClick={secondaryAction.onClick}>{secondaryAction.label}</Button>
+        </div> : <Button variant="secondary" onClick={action.onClick}>{action.label}</Button>
       )}
     </div>
   );

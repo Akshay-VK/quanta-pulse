@@ -51,7 +51,7 @@ describe("Settings save and navigation in the real application", () => {
     await openSettings();
     await toggleScanFailureNotifications();
     expect(appApi.setSettings).not.toHaveBeenCalled();
-    await click(button("Save settings"));
+    await click(button("Save changes"));
     expect(appApi.setSettings).toHaveBeenCalledWith(expect.objectContaining({ notifyScanFailures: false }));
     expect(document.querySelector('[aria-label="Scan failures and incomplete scans"]')?.getAttribute("data-state")).toBe("unchecked");
 
@@ -67,7 +67,7 @@ describe("Settings save and navigation in the real application", () => {
     app = await renderApp();
     await openSettings();
     await toggleScanFailureNotifications();
-    await click(button("Save settings"));
+    await click(button("Save changes"));
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("Disk is busy");
     expect(document.querySelector('[aria-label="Scan failures and incomplete scans"]')?.getAttribute("data-state")).toBe("unchecked");
     await click(button("Discard"));
@@ -84,24 +84,24 @@ describe("Settings save and navigation in the real application", () => {
     await click(button("Stay", document.querySelector('[role="alertdialog"]')!));
     expect(document.querySelector("main h1")?.textContent).toBe("Settings");
     expect(document.querySelector('[aria-label="Scan failures and incomplete scans"]')?.getAttribute("data-state")).toBe("unchecked");
-    await click(button("Save settings"));
+    await click(button("Save changes"));
     expect(appApi.setSettings).toHaveBeenCalledWith(expect.objectContaining({ notifyScanFailures: false }));
   });
 
-  it("retains a failed draft and retries save before navigating", async () => {
+  it("keeps a failed draft in the panel-wide save bar and retries it", async () => {
     appApi.setSettings.mockRejectedValueOnce(new Error("Disk is busy")).mockImplementationOnce(async (next) => next);
     app = await renderApp();
     await openSettings();
     await editInterval();
-    await click(button("Inbox"));
-    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain("Save");
-    await click(button("Save"));
-    expect(document.querySelector("main h1")?.textContent).toBe("Settings");
-    expect(document.querySelector('[aria-label="Sync interval"]')).toBeTruthy();
-    expect(document.querySelector('[role="alert"]')?.textContent).toContain("Disk is busy");
-    await click(button("Save"));
-    expect(document.querySelector("main h1")?.textContent).toBe("Inbox");
+    const saveBar = document.querySelector(".save-bar")!;
+    expect(saveBar.closest(".settings-layout")).toBeNull();
+    await click(button("Save changes", saveBar));
+    expect(document.querySelector(".save-bar [role='alert']")?.textContent).toContain("Your changes are kept.");
+    expect(button("Sync interval").textContent).toContain("60 min");
+    await click(button("Retry", saveBar));
     expect(appApi.setSettings).toHaveBeenCalledTimes(2);
+    await click(button("Inbox"));
+    expect(document.querySelector("main h1")?.textContent).toBe("Inbox");
   });
 
   it("keeps history unchanged until the user discards a dirty draft", async () => {
@@ -110,41 +110,34 @@ describe("Settings save and navigation in the real application", () => {
     await editInterval();
     await emitAppEvent("ui:navigate", "history");
     expect(document.querySelector("main h1")?.textContent).toBe("Settings");
-    await click(button("Discard", document.querySelector('[role="alertdialog"]')!));
+    await click(button("Discard changes", document.querySelector('[role="alertdialog"]')!));
     expect(document.querySelector("main h1")?.textContent).toBe("History");
     expect(appApi.setSettings).not.toHaveBeenCalled();
   });
 
-  it.each(["Stay", "Escape"])("cancels pending save navigation with %s while allowing persistence to finish", async (dismiss) => {
-    const pending = deferred<Settings>();
-    appApi.setSettings.mockReturnValueOnce(pending.promise);
+  it.each(["Stay", "Escape"])("cancels guarded navigation with %s and retains the draft", async (dismiss) => {
     app = await renderApp();
     await openSettings();
     await editInterval();
     await click(button("Inbox"));
-    await click(button("Save", document.querySelector('[role="alertdialog"]')!));
+    const dialog = document.querySelector('[role="alertdialog"]')!;
+    expect(dialog.textContent).toContain("Leave without saving?");
+    expect(document.activeElement).toBe(button("Stay", dialog));
+    expect([...dialog.querySelectorAll("button")].map(action => action.textContent)).toEqual(["Discard changes", "Stay"]);
     if (dismiss === "Escape") await escape();
-    else await click(button("Stay"));
+    else await click(button("Stay", dialog));
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
-    expect(document.querySelector('[aria-label="Sync interval"]')?.textContent).toContain("60 min");
-    await act(async () => pending.resolve({ ...settings, syncIntervalMinutes: 60 }));
-    await flushApp();
-    expect(document.querySelector("main h1")?.textContent).toBe("Settings");
-    expect(document.querySelector('[aria-label="Sync interval"]')?.textContent).toContain("60 min");
-    expect(appApi.setSettings).toHaveBeenCalledTimes(1);
-    await emitAppEvent("ui:navigate", "history");
-    expect(document.querySelector("main h1")?.textContent).toBe("History");
+    expect(button("Sync interval").textContent).toContain("60 min");
+    expect(appApi.setSettings).not.toHaveBeenCalled();
   });
 
-  it.each(["course", "palette", "back"])("cancels pending %s navigation without losing a newer draft edit", async (intent) => {
-    const pending = deferred<Settings>();
-    appApi.setSettings.mockReturnValueOnce(pending.promise);
+  it.each(["course", "palette", "back"])("guards %s navigation until the draft is discarded", async (intent) => {
     app = await renderApp();
     await openSettings();
     await editInterval();
     if (intent === "course") await click(document.querySelector<HTMLButtonElement>(".course-nav-item")!);
     else if (intent === "palette") {
-      await click(document.querySelector<HTMLButtonElement>(".search-trigger")!);
+      await click(button("Search"));
       const target = [...document.querySelectorAll<HTMLElement>(".palette-item")].find((node) => node.textContent?.startsWith("Go to History"))!;
       await click(target);
     } else {
@@ -154,34 +147,11 @@ describe("Settings save and navigation in the real application", () => {
         document.body.dispatchEvent(event);
       });
     }
-    expect(document.querySelector('[role="alertdialog"]')).toBeTruthy();
-    await click(button("Save"));
-    await click(button("Stay"));
-    await editInterval("5 min");
-    await act(async () => pending.resolve({ ...settings, syncIntervalMinutes: 60 }));
-    await flushApp();
-    expect(document.querySelector("main h1")?.textContent).toBe("Settings");
-    expect(document.querySelector('[aria-label="Sync interval"]')?.textContent).toContain("5 min");
-    await click(button("Save settings"));
-    expect(appApi.setSettings).toHaveBeenLastCalledWith(expect.objectContaining({ syncIntervalMinutes: 5 }));
-  });
-
-  it("does not let an older save consume a replacement navigation intent", async () => {
-    const pending = deferred<Settings>();
-    appApi.setSettings.mockReturnValueOnce(pending.promise);
-    app = await renderApp();
-    await openSettings();
-    await editInterval();
-    await click(button("Inbox"));
-    await click(button("Save"));
-    await click(button("Stay"));
-    await emitAppEvent("ui:navigate", "history");
-    await act(async () => pending.resolve({ ...settings, syncIntervalMinutes: 60 }));
-    await flushApp();
-    expect(document.querySelector("main h1")?.textContent).toBe("Settings");
-    expect(document.querySelector('[role="alertdialog"]')).toBeTruthy();
-    await click(button("Discard"));
-    expect(document.querySelector("main h1")?.textContent).toBe("History");
+    const dialog = document.querySelector('[role="alertdialog"]')!;
+    expect(dialog).toBeTruthy();
+    await click(button("Discard changes", dialog));
+    expect(document.querySelector("main h1")?.textContent).not.toBe("Settings");
+    expect(appApi.setSettings).not.toHaveBeenCalled();
   });
 
   it("does not replace an unsaved draft when the app refreshes settings", async () => {
@@ -199,21 +169,22 @@ describe("Settings save and navigation in the real application", () => {
     app = await renderApp();
     await openSettings();
     await editInterval();
-    await click(button("Save settings"));
-    await click(button("Save settings"));
+    await click(button("Save changes"));
+    expect(button("Saving…").disabled).toBe(true);
+    await click(button("Saving…"));
     expect(appApi.setSettings).toHaveBeenCalledTimes(1);
     await act(async () => pending.resolve(settings));
   });
 
-  it("blocks invalid navigation saves and saves a valid draft with Mod+S", async () => {
+  it("blocks invalid saves and saves a valid draft with Mod+S", async () => {
     app = await renderApp();
     await openSettings();
     await setInput("Quiet hours start", "08:00");
     await setInput("Quiet hours end", "08:00");
     await click(button("Inbox"));
     const guard = document.querySelector('[role="alertdialog"]')!;
-    expect(button("Save", guard).disabled).toBe(true);
     await click(button("Stay", guard));
+    expect(button("Save changes").disabled).toBe(true);
     await setInput("Quiet hours end", "09:00");
     await act(async () => {
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "s", ctrlKey: true, bubbles: true, cancelable: true }));
@@ -327,7 +298,7 @@ describe("Settings task 14A account, notifications and Telegram", () => {
     expect(tray.getAttribute("data-state")).toBe("checked");
     await click(tray);
     expect(document.querySelector<HTMLButtonElement>('[aria-label="Run in background"]')?.getAttribute("data-state")).toBe("unchecked");
-    await click(button("Save settings"));
+    await click(button("Save changes"));
     expect(appApi.setSettings).toHaveBeenCalledWith(expect.objectContaining({ runInBackground: false }));
   });
 
@@ -355,7 +326,7 @@ describe("Settings task 14A account, notifications and Telegram", () => {
     await openSettings();
     await setInput("Quiet hours start", "22:00");
     await setInput("Quiet hours end", "06:00");
-    await click(button("Save settings"));
+    await click(button("Save changes"));
     expect(appApi.setSettings).not.toHaveBeenCalled();
     expect(document.body.textContent).toContain("Quiet hours start must be before the end.");
   });
@@ -378,7 +349,7 @@ describe("Settings task 14A account, notifications and Telegram", () => {
     const chatId = document.querySelector<HTMLInputElement>('#integrations input[aria-label="Chat id"]')!;
     await setInput("Chat id", "not a chat");
     expect(chatId.getAttribute("aria-invalid")).toBe("true");
-    await click(button("Save settings"));
+    await click(button("Save changes"));
     expect(appApi.setSettings).not.toHaveBeenCalled();
   });
 

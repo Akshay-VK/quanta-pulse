@@ -90,6 +90,8 @@ export function setupApp({ width = 1280, dark = false, platform = "Linux" } = {}
     const courseCounts = [...new Set(items.map(item => item.courseId))].map(courseId => ({ courseId, total: items.filter(item => item.courseId === courseId).length, unreadTotal: items.filter(item => item.courseId === courseId && item.unread).length }));
     return { items: items.slice(filter.offset ?? 0, (filter.offset ?? 0) + (filter.limit ?? 100)), total: items.length, unreadTotal: items.filter(item => item.unread).length, courseCounts };
   });
+  appApi.snapshotResourceUnreadEventIds.mockImplementation(async (id) =>
+    (await appApi.listDashboardEvents()).filter(event => event.resourceId === id && !event.read).map(event => event.id));
   appApi.snapshotInboxEventIds.mockImplementation(async filter => (await appApi.queryInbox(filter)).items.flatMap(item => item.eventIds));
   appApi.queryDueResources.mockResolvedValue({ items: [], total: 0 });
   appApi.listHistoryEvents.mockResolvedValue([change()]);

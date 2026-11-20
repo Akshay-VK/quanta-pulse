@@ -47,7 +47,7 @@ describe('Inbox keyboard integration', () => {
     app = await renderApp();
     const row = button('Show details for Lecture 4'); act(() => row.focus());
     await act(async () => { key(row, 'a', { shiftKey: true }); });
-    expect(appApi.snapshotInboxEventIds).toHaveBeenCalledWith({});
+    expect(appApi.snapshotInboxEventIds).toHaveBeenCalledWith({ attention: 'unread' });
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
     await act(async () => { captured.resolve([10, 11, 900]); });
     expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain('3 recorded changes across all matching items');
@@ -84,8 +84,11 @@ describe('Inbox keyboard integration', () => {
     appApi.listDashboardEvents.mockResolvedValue([change(), change({ id: 11, resourceId: 2, resourceTitle: 'Problem set', title: 'Updated set' })]);
     appApi.listResources.mockResolvedValue([resource(), resource({ id: 2, externalResourceId: 'r2', title: 'Problem set' })]);
     app = await renderApp();
-    act(() => button('Show details for Lecture 4').focus());
+    const row = button('Show details for Lecture 4');
+    act(() => row.focus());
+    await act(async () => { key(row, '/'); });
     const search = document.querySelector<HTMLInputElement>('input[aria-label="Search Inbox"]')!;
+    expect(document.activeElement).toBe(search);
     await act(async () => { const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set; setter?.call(search, 'Problem'); search.dispatchEvent(new Event('input', { bubbles: true })); });
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 220)); });
     await flushApp();
@@ -94,8 +97,11 @@ describe('Inbox keyboard integration', () => {
   });
   it('returns focus to Inbox search when the visible list becomes empty', async () => {
     app = await renderApp();
-    act(() => button('Show details for Lecture 4').focus());
+    const row = button('Show details for Lecture 4');
+    act(() => row.focus());
+    await act(async () => { key(row, '/'); });
     const search = document.querySelector<HTMLInputElement>('input[aria-label="Search Inbox"]')!;
+    expect(document.activeElement).toBe(search);
     await act(async () => { const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set; setter?.call(search, 'no results'); search.dispatchEvent(new Event('input', { bubbles: true })); });
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 220)); });
     await flushApp();

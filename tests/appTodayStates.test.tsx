@@ -12,7 +12,7 @@ describe("Inbox request and empty states in the real application", () => {
     app = await renderApp();
     const main = document.querySelector("main")!;
     expect(main.textContent).toContain("Could not load Inbox");
-    expect(main.textContent).not.toContain("You're all caught up");
+    expect(main.textContent).not.toContain("You’re all caught up");
     expect(main.textContent).not.toContain("Nothing tracked yet");
     expect(main.textContent).not.toContain("No matches");
     appApi.queryInbox.mockResolvedValue({ items: [{ key: "resource:1", resourceId: 1, courseId: 1, latestEvent: change(), eventIds: [10], changeTypes: ["new"], unread: true }], total: 1, unreadTotal: 1, courseCounts: [] });
@@ -30,6 +30,8 @@ describe("Inbox request and empty states in the real application", () => {
     expect(button("Show details for Lecture 4")).toBeTruthy();
     expect(main.textContent).toContain("· – unread");
     expect(main.textContent).toContain("Sidebar counts may be out of date");
+    expect(button("Inbox").querySelector(".nav-badge")?.textContent).toBe("–");
+    expect(app.container.querySelector(".course-nav-count")?.textContent).toBe("–");
   });
   it("explains a completed known-file baseline without showing false new rows or no-match advice", async () => {
     appApi.listDashboardEvents.mockResolvedValue([]);
@@ -54,7 +56,7 @@ describe("Inbox request and empty states in the real application", () => {
     app = await renderApp();
     const main = document.querySelector("main")!;
     expect(main.textContent).toContain("Nothing tracked yet");
-    expect(main.textContent).not.toContain("You're all caught up");
+    expect(main.textContent).not.toContain("You’re all caught up");
     expect(main.textContent).not.toContain("No matches");
     await click(button("Sync now"));
     expect(appApi.syncNow).toHaveBeenCalledTimes(1);
@@ -64,12 +66,13 @@ describe("Inbox request and empty states in the real application", () => {
     appApi.listDashboardResources.mockResolvedValue([]);
     appApi.listDashboardEvents.mockResolvedValue([]);
     app = await renderApp();
-    expect(document.querySelector("main")?.textContent).toContain("You're all caught up");
+    expect(document.querySelector("main")?.textContent).toContain("You’re all caught up");
     expect(document.querySelector("main")?.textContent).not.toContain("Nothing tracked yet");
   });
 
   it("shows no matches only after filtering, and keeps rows through a failed refresh", async () => {
     app = await renderApp();
+    await click(button("Filter"));
     const search = document.querySelector<HTMLInputElement>('[aria-label="Search Inbox"]')!;
     async function searchFor(value: string) {
       await act(async () => {

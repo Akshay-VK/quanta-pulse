@@ -6,7 +6,7 @@
   svg.lucide {
     width: 16px;
     height: 16px;
-    stroke-width: 1.75;
+    stroke-width: 1.6;
   }
 
   /* ------------------------------------------------------------------ 6.2 */
@@ -16,9 +16,9 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: var(--sp-2);
+    gap: 6px;
     height: var(--control-h-sm);
-    padding: 0 var(--sp-3);
+    padding: 0 var(--sp-2);
     border-radius: var(--radius-sm);
     font: 500 12px/16px var(--type-ui-strong);
     white-space: nowrap;
@@ -57,8 +57,19 @@
   }
 
   .btn-secondary {
-    background: var(--raised);
-    border: 1px solid var(--line);
+    background: transparent;
+    border: 1px solid var(--control-line);
+  }
+
+  .btn-icon svg {
+    width: 14px;
+    height: 14px;
+    color: var(--faint);
+  }
+
+  .btn-primary .btn-icon svg,
+  .btn-danger .btn-icon svg {
+    color: inherit;
   }
 
   .btn-secondary:hover {
@@ -157,19 +168,16 @@
     }
   }
 
-  /* Kbd — mono 12, 1px line, radius-xs. */
   .kbd {
-    display: inline-block;
-    font-family: var(--type-mono);
+    display: inline-flex;
+    align-items: center;
     height: 18px;
-    font-size: 10px;
-    line-height: 14px;
-    font-variant-numeric: tabular-nums;
-    border: 1px solid var(--line);
-    border-bottom-width: 2px;
+    padding: 0 5px;
+    border: 1px solid var(--control-line);
     border-radius: var(--radius-xs);
-    padding: 0 var(--sp-1);
+    background: var(--floating);
     color: var(--muted);
+    font: 500 var(--fs-caps)/1 var(--type-mono);
   }
 
   /* StatusTag — always text, never a bare colour. */
@@ -223,8 +231,8 @@
     padding: 0 var(--sp-2);
     border: 1px solid var(--line);
     border-radius: var(--radius-chip);
-    background: var(--raised);
-    font: 500 11px/16px var(--type-mono);
+    color: var(--muted);
+    font: 400 11px/16px var(--type-mono);
     /* Capped, never shrinking: a long course name ellipsises here rather than
        squeezing the row's other columns. */
     max-width: 16ch;
@@ -362,9 +370,9 @@
     width: 100%;
     height: var(--control-h);
     padding: 0 var(--sp-3);
-    border: 1px solid var(--line-strong);
+    border: 1px solid var(--control-line);
     border-radius: var(--radius-sm);
-    background: var(--raised);
+    background: var(--floating);
     color: var(--ink);
     min-width: 0;
   }
@@ -428,9 +436,9 @@
     width: 72px;
     height: var(--control-h);
     padding: 0 var(--sp-3);
-    border: 1px solid var(--line-strong);
+    border: 1px solid var(--control-line);
     border-radius: var(--radius-sm);
-    background: var(--raised);
+    background: var(--floating);
     color: var(--ink);
     font-family: var(--type-mono);
     font-variant-numeric: tabular-nums;
@@ -452,11 +460,11 @@
     display: inline-flex;
     align-items: center;
     gap: var(--sp-2);
-    height: var(--control-h);
-    padding: 0 var(--sp-3);
-    border: 1px solid var(--line-strong);
+    height: var(--control-h-sm);
+    padding: 0 var(--sp-2);
+    border: 1px solid var(--control-line);
     border-radius: var(--radius-sm);
-    background: var(--raised);
+    background: var(--floating);
     font: 500 12px/16px var(--type-ui-strong);
     color: var(--ink);
     white-space: nowrap;
@@ -494,7 +502,9 @@
   }
 
   .select-content {
-    background: var(--raised);
+    background: var(--floating);
+    border: 1px solid var(--control-line);
+    z-index: calc(var(--z-popover) + 1);
     box-shadow: var(--shadow-pop);
     border-radius: var(--radius-md);
     padding: var(--sp-1);
@@ -562,7 +572,7 @@
     width: 32px;
     height: 18px;
     border-radius: var(--radius-pill);
-    background: var(--line-strong);
+    background: var(--control-line);
     position: relative;
     transition: background-color var(--dur-base) var(--ease-inout);
   }

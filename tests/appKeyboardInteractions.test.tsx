@@ -96,8 +96,9 @@ describe("App keyboard shortcuts", () => {
 
   it("does not navigate or open the palette while editing text, except Mod+K", async () => {
     app = await renderApp();
+    await click(button("Filter"));
     const search = document.querySelector<HTMLInputElement>('input[aria-label="Search Inbox"]')!;
-    search.focus();
+    expect(document.activeElement?.getAttribute("aria-label")).toBe(search.getAttribute("aria-label"));
     await act(async () => { key("2", { ctrlKey: true }); });
     expect(document.querySelector("main h1")?.textContent).toBe("Inbox");
     await act(async () => { key("/", { code: "Slash", shiftKey: true }); });
@@ -149,9 +150,9 @@ describe("App keyboard shortcuts", () => {
 
   it("sends slash to the current view search, or opens the palette when none exists", async () => {
     app = await renderApp();
-    const search = document.querySelector<HTMLInputElement>('input[aria-label="Search Inbox"]')!;
     await act(async () => { key("/", { code: "Slash", shiftKey: true }); });
-    expect(document.activeElement).toBe(search);
+    const search = document.querySelector<HTMLInputElement>('input[aria-label="Search Inbox"]')!;
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("Search Inbox");
     expect(document.querySelector('[role="dialog"]')).toBeNull();
 
     search.blur();
@@ -178,11 +179,13 @@ describe("App keyboard shortcuts", () => {
     expect(appApi.openExternal).not.toHaveBeenCalled();
   });
 
-  it("keeps Escape available from an editor to close the details surface", async () => {
+  it("closes the active filter before closing the details surface", async () => {
     app = await renderApp();
     await click(button("Show details for Lecture 4"));
-    const search = document.querySelector<HTMLInputElement>('input[aria-label="Search Inbox"]')!;
-    search.focus();
+    await click(button("Filter"));
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("Search Inbox");
+    await act(async () => { key("Escape"); });
+    expect(document.querySelector('[role="search"][aria-label="Filter Inbox"]')).toBeNull();
     await act(async () => { key("Escape"); });
     expect(document.querySelector(".peek")).toBeNull();
   });

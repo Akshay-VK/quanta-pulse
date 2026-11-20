@@ -197,9 +197,9 @@ export function longDayLabel(key: string): string {
  * days of the previous month and leading days of the next so the calendar never
  * reflows between months.
  */
-export function buildMonthGrid({ year, month }: YearMonth): Date[][] {
+export function buildMonthGrid({ year, month }: YearMonth, firstDay = 1): Date[][] {
   const first = new Date(year, month, 1);
-  const offset = (first.getDay() + 6) % 7; // 0 = Monday
+  const offset = (first.getDay() - firstDay + 7) % 7;
   const start = new Date(year, month, 1 - offset);
   const weeks: Date[][] = [];
   for (let w = 0; w < 6; w++) {

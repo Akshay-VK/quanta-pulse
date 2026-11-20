@@ -15,6 +15,9 @@ import "./styles/components/content.css";
 import "./styles/components/inspector.css";
 import "./styles/components/overlays.css";
 import "./styles/components/screens.css";
+import "./styles/components/workspace-parity.css";
+import "./styles/components/library-parity.css";
+import "./styles/components/overlay-parity.css";
 
 // The same resolution path as the React owner, before the first app frame.
 applyAppearance(document.documentElement, readAppearance(appearanceStorage()).preference, systemPrefersDark());

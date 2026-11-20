@@ -2,17 +2,22 @@ import { resourceSectionPath } from "../../lib/sectionPath";
 import { useMaterialActions } from "../../hooks/useMaterialActions";
 import { getListNavigationIntent, recoverFocusedId, type ListNavigationInput } from "../../lib/listNavigation";
 import { useSessionScroll, useSessionValue } from "../../hooks/useSessionViews";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMirror } from "../../hooks/useMirror";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
+  AlertCircle,
   ExternalLink,
+  Folder,
   FolderTree,
+  ListFilter,
   MoreHorizontal,
   Pause,
   Pencil,
   Play,
   RotateCcw,
+  Search,
+  X,
 } from "lucide-react";
 import { api } from "../../lib/api";
 import type { DetailsAdapter } from "../../lib/details";
@@ -20,6 +25,7 @@ import { cx } from "../../lib/cx";
 import {
   buildCourseTree,
   dedupeCourseResources,
+  findNode,
   type CourseTreeNode,
 } from "../../lib/courseTree";
 import {
@@ -33,12 +39,11 @@ import {
 } from "../../lib/courseLibrary";
 import { groupEventsByDay, eventKindMeta, longDayLabel } from "../../lib/events";
 import { activityTimestamp } from "../../lib/filter";
-import { formatTimeOfDay, parseTimestamp, relativeLabel } from "../../lib/format";
-import { courseLabel, courseTitle, loadAliases, saveAliases } from "../../lib/courseName";
-import { courseDotClass } from "../../components/ui/CoursePill";
+import { formatTimeOfDay, parseTimestamp } from "../../lib/format";
+import { courseLabel, courseTitle, displayName } from "../../lib/courseName";
+import { isLocal } from "../../lib/mirrorState";
 import type { ChangeEvent, Course, Resource } from "../../lib/types";
 import type { StatusKind } from "../../components/ui/StatusTag";
-import PageHeader from "../../components/PageHeader";
 import ResourceRow from "../../components/ResourceRow";
 import GroupHeader from "../../components/GroupHeader";
 import { Button } from "../../components/ui/Button";
@@ -53,6 +58,8 @@ import { Skeleton } from "../../components/ui/Skeleton";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import TreeRow, { type FlatRow } from "./TreeRow";
 import { courseHomeUrl } from "./courseUrl";
+import CourseRenameDialog from "./CourseRenameDialog";
+import { LibraryFooter, LibraryHeader } from "./LibraryFrame";
 
 interface CoursePageProps {
   course: Course;
@@ -73,6 +80,11 @@ interface CoursePageProps {
   onActivityChanged?: () => Promise<void>;
   onSyncNow?: () => void;
   details?: DetailsAdapter;
+  allCourses?: Course[];
+  onNavigate?: (courseId: number) => void;
+  onAllFiles?: () => void;
+  headerActions?: ReactNode;
+  compact?: boolean;
 }
 
 const identity = (resource: Resource) => `resource:${resource.externalResourceId || `local:${resource.id}`}`;
@@ -88,7 +100,6 @@ interface Capture {
 
 const VIRTUAL_THRESHOLD = 200;
 const EMPTY_EVENTS: ChangeEvent[] = [];
-const TREE_HEIGHT = 560;
 
 const STATUS_KIND: Record<string, StatusKind> = {
   new: "new",
@@ -128,15 +139,6 @@ function latestIn(node: CourseTreeNode): number {
   return latest;
 }
 
-function countNewThisWeek(events: ChangeEvent[]): number {
-  const since = Date.now() - 7 * 86_400_000;
-  return events.filter(
-    (event) =>
-      (event.changeType === "new" || event.changeType === "announcement") &&
-      (parseTimestamp(event.detectedAt)?.getTime() ?? 0) >= since,
-  ).length;
-}
-
 /** One course's page: contents tree and per-course activity. */
 export default function CoursePage({
   course,
@@ -155,6 +157,11 @@ export default function CoursePage({
   onActivityChanged,
   onSyncNow = () => {},
   details,
+  allCourses,
+  onNavigate,
+  onAllFiles,
+  headerActions,
+  compact = false,
 }: CoursePageProps) {
   const items = useMemo(() => inventory?.filter(resource => resource.courseId === course.id) ?? null, [inventory, course.id]);
   const activityMatchingCourse = activityCourseId === course.id;
@@ -164,6 +171,7 @@ export default function CoursePage({
     const byDay = groupEventsByDay(activityEventsList);
     return [...byDay.entries()].sort((a, b) => b[0].localeCompare(a[0]));
   }, [activityEventsList]);
+  const unreadResourceIds = useMemo(() => new Set(activityEventsList.filter((event) => !event.read).map((event) => event.resourceId)), [activityEventsList]);
   const activityIds = useMemo(() => activityGroups.flatMap(([, group]) => group.map((event) => `change:${event.id}`)), [activityGroups]);
   const activityScopeReadyEffective = activityMatchingCourse && Boolean(activityScopeReady) && !activityPending && !activityError && Array.isArray(activityEvents);
   const loading = inventoryPending;
@@ -171,7 +179,6 @@ export default function CoursePage({
   const [busy, setBusy] = useState(false);
   const [confirmRebaseline, setConfirmRebaseline] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
-  const [renameValue, setRenameValue] = useState("");
 
   const [tab, setTab] = useSessionValue<"contents" | "activity">(`course:${course.id}:tab`, "contents");
   const previousTab = useRef(tab);
@@ -184,6 +191,8 @@ export default function CoursePage({
   const [type, setType] = useSessionValue(`course:${course.id}:type`, "all");
   const [category, setCategory] = useSessionValue<ResourceCategoryId | "all">(`course:${course.id}:category`, "all");
   const [expanded, setExpanded] = useSessionValue<Set<string>>(`course:${course.id}:expanded`, new Set());
+  const [selectedFolder, setSelectedFolder] = useSessionValue<string[]>(`course:${course.id}:folder`, []);
+  const [showFilters, setShowFilters] = useState(false);
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [initialised, setInitialised] = useSessionValue(`course:${course.id}:initialised`, false);
 
@@ -207,6 +216,11 @@ export default function CoursePage({
     [searching, unique, search, typeFilter, category, sort],
   );
   const tree = useMemo(() => buildCourseTree(filtered, course.name), [filtered, course.name]);
+  const activeFolder = findNode(tree, selectedFolder) ?? tree;
+  const compactFolders = useMemo(() => {
+    const flatten = (node: CourseTreeNode): CourseTreeNode[] => [node, ...node.children.flatMap(flatten)];
+    return flatten(tree);
+  }, [tree]);
 
   const rows = useMemo<FlatRow[]>(() => {
     if (searching) {
@@ -219,24 +233,36 @@ export default function CoursePage({
       }));
     }
     const out: FlatRow[] = [];
-    const walk = (node: CourseTreeNode, depth: number) => {
+    const addFiles = (node: CourseTreeNode, depth: number) => {
       for (const resource of sortResources(node.resources, sort)) {
         out.push({ kind: "file", id: identity(resource), resource, depth, searching: false });
       }
+    };
+    const walk = (node: CourseTreeNode, depth: number) => {
+      if (activeFolder === tree) addFiles(node, depth);
+      else if (node === activeFolder) {
+        const walkFiles = (folder: CourseTreeNode, level: number) => {
+          addFiles(folder, level);
+          folder.children.forEach((child) => walkFiles(child, level + 1));
+        };
+        walkFiles(node, depth);
+      }
       for (const child of node.children) {
-        out.push({
-          kind: "folder",
-          id: `folder:${child.id}`,
-          node: child,
-          depth,
-          expanded: expanded.has(child.id),
-        });
+        if (!compact) {
+          out.push({
+            kind: "folder",
+            id: `folder:${child.id}`,
+            node: child,
+            depth,
+            expanded: expanded.has(child.id),
+          });
+        }
         if (expanded.has(child.id)) walk(child, depth + 1);
       }
     };
     walk(tree, 0);
     return out;
-  }, [searching, searchResults, tree, sort, expanded]);
+  }, [searching, searchResults, tree, sort, expanded, activeFolder, compact]);
 
   const selectedResourceId = details?.selected?.kind === "resource" ? details.selected.resource.id : null;
   const selectedDetails = details?.selected;
@@ -269,8 +295,9 @@ export default function CoursePage({
   const pathIdentity = JSON.stringify(folderPath ?? []);
   const appliedPath = useRef<string | null>(null);
   useEffect(() => {
-    if (loading || !folderPath?.length || appliedPath.current === pathIdentity) return;
+    if (loading || appliedPath.current === pathIdentity) return;
     appliedPath.current = pathIdentity;
+    if (!folderPath?.length) return;
     const ids: string[] = [];
     const walk = (node: CourseTreeNode) => {
       for (const child of node.children) {
@@ -280,6 +307,7 @@ export default function CoursePage({
     };
     walk(tree);
     setTab("contents");
+    setSelectedFolder(folderPath);
     setExpanded((previous) => new Set([...previous, ...ids]));
     // Only a new route path expands folders; background refresh preserves explicit collapse.
   }, [pathIdentity, loading]);
@@ -290,6 +318,10 @@ export default function CoursePage({
 
   const toggle = useCallback(
     (id: string) => {
+      const path = JSON.parse(id) as string[];
+      if (expanded.has(id) && path.every((segment, index) => selectedFolder[index] === segment)) {
+        setSelectedFolder(path.slice(0, -1));
+      }
       setExpanded((prev) => {
         const next = new Set(prev);
         if (next.has(id)) next.delete(id);
@@ -297,7 +329,7 @@ export default function CoursePage({
         return next;
       });
     },
-    [setExpanded],
+    [expanded, selectedFolder, setExpanded, setSelectedFolder],
   );
 
   const allFolderIds = useCallback(() => {
@@ -318,17 +350,27 @@ export default function CoursePage({
   const setAllExpanded = (expand: boolean) => {
     const next = new Set(expand ? allFolderIds() : []);
     setExpanded(next);
+    if (!expand) setSelectedFolder([]);
   };
 
+  const chooseFolder = (node: CourseTreeNode) => {
+    setSelectedFolder(node.path);
+    setExpanded((previous) => new Set([
+      ...previous,
+      ...node.path.map((_, index) => JSON.stringify(node.path.slice(0, index + 1))),
+    ]));
+  };
+
+  const treeRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const mainScroll = useRef<HTMLElement | null>(null);
-  useLayoutEffect(() => { mainScroll.current = document.querySelector("main"); }, []);
+  const mainScroll = useRef<HTMLDivElement>(null);
   useSessionScroll(`course:${course.id}:${tab}:main`, mainScroll, items !== null);
   const pendingFocus = useRef<string | null>(null);
   const ownedFocus = useRef(false);
   const previousRows = useRef<FlatRow[]>([]);
   const ids = useMemo(() => rows.map(row => row.id), [rows]);
+  const rowIndices = useMemo(() => new Map(ids.map((id, index) => [id, index])), [ids]);
   const oldFocus = previousRows.current.find(row => row.id === focusedId);
   // Collapsing a descendant returns to its nearest surviving folder.
   const ancestor = oldFocus && !ids.includes(oldFocus.id) && !searching
@@ -338,18 +380,20 @@ export default function CoursePage({
     : undefined;
   const currentFocus = ancestor?.id ?? recoverFocusedId(previousRows.current.map(row => row.id), ids, focusedId);
   const activeIndex = Math.max(0, ids.indexOf(currentFocus ?? ""));
-  const virtualActive = rows.length > VIRTUAL_THRESHOLD;
+  const fileRows = useMemo(() => rows.filter((row) => row.kind === "file"), [rows]);
+  const folderRows = useMemo(() => rows.filter((row) => row.kind === "folder"), [rows]);
+  const virtualActive = fileRows.length > VIRTUAL_THRESHOLD;
   const virtualizer = useVirtualizer({
-    count: virtualActive ? rows.length : 0,
+    count: virtualActive ? fileRows.length : 0,
     getScrollElement: () => scrollRef.current,
-    getItemKey: index => rows[index].id,
-    estimateSize: () => 40,
+    getItemKey: index => fileRows[index].id,
+    estimateSize: () => searching ? 48 : 34,
     overscan: 10,
   });
   const virtualItems = virtualActive ? virtualizer.getVirtualItems() : [];
   useSessionScroll(`course:${course.id}:${tab}:tree`, scrollRef, items !== null && (!virtualActive || virtualItems.length > 0));
-  const latestNavigation = useRef({ rows, currentFocus, tab, virtualActive });
-  latestNavigation.current = { rows, currentFocus, tab, virtualActive };
+  const latestNavigation = useRef({ rows, fileRows, currentFocus, tab, virtualActive });
+  latestNavigation.current = { rows, fileRows, currentFocus, tab, virtualActive };
   const focusIdentity = useCallback((id: string | null) => {
     if (latestNavigation.current.tab !== "contents" || !searchRef.current?.isConnected || modalOpen()) return false;
     const currentRows = latestNavigation.current.rows;
@@ -357,12 +401,13 @@ export default function CoursePage({
     if (index < 0) { pendingFocus.current = null; searchRef.current.focus(); return true; }
     setFocusedId(id);
     pendingFocus.current = id;
-    const element = [...(scrollRef.current?.querySelectorAll<HTMLElement>('[role="treeitem"]') ?? [])].find(el => el.dataset.rowKey === id);
+    const element = [...(treeRef.current?.querySelectorAll<HTMLElement>('[role="treeitem"]') ?? [])].find(el => el.dataset.rowKey === id);
     // Redirect a preceding virtual scroll even when this target is mounted.
-    if (latestNavigation.current.virtualActive) virtualizer.scrollToIndex(index, { align: "auto" });
+    const fileIndex = latestNavigation.current.fileRows.findIndex((row) => row.id === id);
+    if (latestNavigation.current.virtualActive && fileIndex >= 0) virtualizer.scrollToIndex(fileIndex, { align: "auto" });
     if (element) { pendingFocus.current = null; element.focus(); }
     return true;
-  }, [virtualActive, virtualizer]);
+  }, [virtualizer]);
   const move = useCallback((index: number) => {
     focusIdentity(rows[Math.max(0, Math.min(rows.length - 1, index))]?.id ?? null);
   }, [rows, focusIdentity]);
@@ -376,7 +421,7 @@ export default function CoursePage({
     const id = pendingFocus.current;
     if (!id) return;
     if (modalOpen() || tab !== "contents" || !ids.includes(id)) { pendingFocus.current = null; return; }
-    const element = [...(scrollRef.current?.querySelectorAll<HTMLElement>('[role="treeitem"]') ?? [])].find(el => el.dataset.rowKey === id);
+    const element = [...(treeRef.current?.querySelectorAll<HTMLElement>('[role="treeitem"]') ?? [])].find(el => el.dataset.rowKey === id);
     if (element) { pendingFocus.current = null; element.focus(); }
   });
   const restore = (id: string | null) => focusIdentity(
@@ -392,7 +437,14 @@ export default function CoursePage({
     details?.selectResource(resource, origin, () => restore(id));
   };
   const [selection, setSelection] = useState<string[]>([]);
-  const matching = searching ? searchResults : filtered;
+  const matching = useMemo(() => {
+    if (searching) return searchResults;
+    if (activeFolder === tree) return filtered;
+    return filtered.filter((resource) => {
+      const path = resourceSectionPath(resource);
+      return activeFolder.path.every((segment, index) => path[index] === segment);
+    });
+  }, [activeFolder, filtered, searchResults, searching, tree]);
   const matchingIds = useMemo(() => matching.map(identity), [matching]);
   useEffect(() => { setSelection(prev => prev.filter(id => matchingIds.includes(id))); }, [matchingIds]);
   const [activitySelection, setActivitySelection] = useState<string[]>([]);
@@ -432,7 +484,7 @@ export default function CoursePage({
   activityWaitRef.current = activityRefreshWait;
   const generation = useRef(0);
   const lock = useRef<number | null>(null);
-  const context = JSON.stringify([course.id, folderPath, tab, search, type, category, sort]);
+  const context = JSON.stringify([course.id, folderPath, selectedFolder, tab, search, type, category, sort]);
   useLayoutEffect(() => {
     generation.current += 1;
     lock.current = null;
@@ -606,7 +658,7 @@ export default function CoursePage({
       if (intent.type === "focus") focusIdentity(intent.id);
       else if (intent.type === "openCapturedScope") void beginCapture(matchingIds, "read", true, input);
       else if (current?.kind === "folder") {
-        if (intent.type === "inspect") toggle(current.node.id);
+        if (intent.type === "inspect") chooseFolder(current.node);
       } else if (current?.kind === "file") {
         if (intent.type === "toggleSelection") setSelection(prev => prev.includes(current.id) ? prev.filter(id => id !== current.id) : [...prev, current.id]);
         else if (intent.type === "inspect") inspect(current.resource, target);
@@ -704,18 +756,10 @@ export default function CoursePage({
   const paused = course.monitoringStatus === "paused";
   const home = courseHomeUrl(course);
   const label = courseLabel(course.id);
-  const display = courseTitle(course.id, course.name);
+  const display = courseTitle(course.id, displayName(course));
   const raw = label?.raw ?? course.name;
-  const showRaw = raw !== display;
-
-  const lastChange = useMemo(() => {
-    let latest: number | null = null;
-    for (const event of events ?? []) {
-      const at = parseTimestamp(event.detectedAt)?.getTime() ?? 0;
-      if (at > (latest ?? 0)) latest = at;
-    }
-    return latest;
-  }, [events]);
+  const code = course.shortName?.trim() || course.externalCourseId;
+  const title = display === code || display.startsWith(`${code} · `) ? display : `${code} · ${display}`;
 
 
   async function toggleMonitoring() {
@@ -728,25 +772,12 @@ export default function CoursePage({
     }
   }
 
-  function commitRename() {
-    const value = renameValue.trim();
-    const aliases = loadAliases();
-    if (value) aliases[String(course.id)] = value;
-    else delete aliases[String(course.id)];
-    saveAliases(aliases);
-    setRenameOpen(false);
-    onChanged();
-  }
-
   const menuItems: MenuItemSpec[] = [
     {
       id: "rename",
-      label: "Rename…",
+      label: "Rename course",
       icon: <Pencil aria-hidden="true" />,
-      onSelect: () => {
-        setRenameValue(display);
-        setRenameOpen(true);
-      },
+      onSelect: () => setRenameOpen(true),
     },
     {
       id: "monitor",
@@ -780,173 +811,136 @@ export default function CoursePage({
     setCategory("all");
   };
 
-  const renderTree = () => (
-    <>
-      {rows.length === 0 ? (
-        <EmptyState
-          title="No files match your search"
-          action={{ label: "Clear", onClick: clearFilters }}
-        />
-      ) : (
-        <div
-          className="tree-branch"
-          ref={scrollRef}
-          role="tree"
-          aria-label={`Resources in ${display}`}
-          onKeyDown={onKeyDown}
-          aria-multiselectable="true"
-          onFocusCapture={event => { ownedFocus.current = event.target === event.currentTarget || (event.target as HTMLElement).matches('[role="treeitem"]'); }}
-          onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) { ownedFocus.current = false; pendingFocus.current = null; } }}
-          style={virtualActive ? { maxHeight: TREE_HEIGHT, overflowY: "auto" } : undefined}
-        >
-          {virtualActive ? (
-            <div
-              style={{
-                height: virtualizer.getTotalSize(),
-                width: "100%",
-                position: "relative",
-              }}
-            >
-              {virtualItems.map((item) => (
-                <div
-                  key={rows[item.index].id}
-                  ref={virtualizer.measureElement}
-                  data-index={item.index}
-                  style={{
-                    position: "absolute",
-                    top: 0,
-                    left: 0,
-                    width: "100%",
-                    transform: `translateY(${item.start}px)`,
-                  }}
-                >
-                  <TreeRow
-                    row={rows[item.index]}
-                    index={item.index}
-                    focused={item.index === activeIndex}
-                    query={search}
-                    onToggle={toggle}
-                    onOpen={onOpen}
-                    onPreview={onPreview}
-                    onActivate={index => setFocusedId(rows[index].id)}
-                    selected={isSelectedResourceRow(rows[item.index])}
-                    multiSelected={selection.includes(rows[item.index].id)}
-                    onSelect={inspect}
-                  />
-                </div>
-              ))}
-            </div>
-          ) : (
-            rows.map((row, index) => (
-              <TreeRow
-                key={row.id}
-                row={row}
-                index={index}
-                focused={index === activeIndex}
-                query={search}
-                onToggle={toggle}
-                onOpen={onOpen}
-                onPreview={onPreview}
-                onActivate={index => setFocusedId(rows[index].id)}
-                selected={row.kind === "file" && selectedResourceId === row.resource.id}
-                multiSelected={selection.includes(row.id)}
-                onSelect={inspect}
-              />
-            ))
-          )}
-        </div>
-      )}
-    </>
+  const renderFile = (row: (typeof fileRows)[number]) => (
+    <TreeRow
+      key={row.id}
+      row={row}
+      index={rowIndices.get(row.id) ?? 0}
+      focused={row.id === currentFocus}
+      query={search}
+      onToggle={toggle}
+      onOpen={onOpen}
+      onPreview={onPreview}
+      onActivate={(index) => setFocusedId(rows[index].id)}
+      selected={isSelectedResourceRow(row)}
+      multiSelected={selection.includes(row.id)}
+      saved={Boolean(mirror && isLocal(mirror.statusOf(row.resource.id)))}
+      unread={unreadResourceIds.has(row.resource.id)}
+      compactCourse={compact ? { id: course.id, code, name: display } : undefined}
+      onSelect={inspect}
+    />
   );
 
-  return (
-    <div>
-      <PageHeader
-        title={
-          <span className="course-title">
-            <span
-              className={cx("course-dot", courseDotClass(course.id))}
-              aria-hidden="true"
-            />
-            <span className="course-title-text" title={raw}>
-              {display}
-            </span>
-          </span>
-        }
-        caption={showRaw ? raw : undefined}
-        actions={
+  const emptyCourse = (state: "error" | "empty" | "search") => {
+    const Icon = state === "error" ? AlertCircle : state === "empty" ? Folder : Search;
+    const title = state === "error" ? "Couldn’t load this course" : state === "empty" ? "Nothing here yet" : "No files match your search";
+    const body = state === "error"
+      ? `Pulse couldn’t read the course from the local library. Your saved files are not affected. ${inventoryError ?? ""}`
+      : state === "empty"
+        ? "This course has no materials on Quanta. New files will appear here as soon as they are posted."
+        : searching ? `Nothing in ${code} matches “${needle}”.` : "Try another file type or category.";
+    return (
+      <div className="library-empty">
+        <span className="library-empty-icon"><Icon aria-hidden="true" /></span>
+        <p className="empty-title">{title}</p>
+        <p className="empty-body">{body}</p>
+        {state === "error" && <Button variant="primary" size="sm" onClick={() => void onChanged()}>Retry</Button>}
+        {state === "empty" && <Button size="sm" onClick={() => home ? onOpen(home) : onSyncNow()}>{home ? "Open in Quanta" : "Sync now"}</Button>}
+        {state === "search" && <Button variant="primary" size="sm" onClick={clearFilters}>{searching ? "Clear search" : "Clear filters"}</Button>}
+      </div>
+    );
+  };
+  const renderTree = () => (
+    <div
+      className={cx("course-materials", compact && "is-compact", searching && "course-materials-search")}
+      ref={treeRef}
+      role="tree"
+      aria-label={`Resources in ${display}`}
+      onKeyDown={onKeyDown}
+      aria-multiselectable="true"
+      onFocusCapture={(event) => { ownedFocus.current = event.target === event.currentTarget || (event.target as HTMLElement).matches('[role="treeitem"]'); }}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) { ownedFocus.current = false; pendingFocus.current = null; }
+      }}
+    >
+      {!searching && !compact && <div className="course-folder-rail" role="group" aria-label="Folders">
+        {onAllFiles && <button type="button" className="course-folder-link" onClick={onAllFiles}>
+          <Folder aria-hidden="true" /> All files <span className="tree-count">{inventory?.length ?? 0}</span>
+        </button>}
+        <button type="button" className={cx("course-folder-link", activeFolder === tree && "is-current")} aria-current={activeFolder === tree ? "true" : undefined} onClick={() => chooseFolder(tree)}>
+          <Folder aria-hidden="true" /> <span>{allCourses ? code : "Course materials"}</span> <span className="tree-count">{total}</span>
+        </button>
+        {folderRows.map((row) => (
+          <TreeRow
+            key={row.id}
+            row={row}
+            index={rowIndices.get(row.id) ?? 0}
+            focused={row.id === currentFocus}
+            query={search}
+            onToggle={toggle}
+            onChooseFolder={chooseFolder}
+            folderSelected={row.node === activeFolder}
+            onOpen={onOpen}
+            onPreview={onPreview}
+            onActivate={(index) => setFocusedId(rows[index].id)}
+            onSelect={inspect}
+          />
+        ))}
+        {onNavigate && allCourses?.filter((other) => other.id !== course.id).map((other) => (
+          <button key={other.id} type="button" className="course-folder-link" onClick={() => onNavigate(other.id)}>
+            <Folder aria-hidden="true" /> <span>{other.shortName || courseTitle(other.id, other.name)}</span> <span className="tree-count">{other.resourceCount}</span>
+          </button>
+        ))}
+      </div>}
+      <div className="course-material-table">
+        {(total === 0 || (filtersActive && rows.length === 0)) ? emptyCourse(total > 0 ? "search" : inventoryError ? "error" : "empty") : (
           <>
-            <Button
-              variant="secondary"
-              size="sm"
-              leadingIcon={
-                paused ? <Play aria-hidden="true" /> : <Pause aria-hidden="true" />
-              }
-              onClick={() => void toggleMonitoring()}
-              disabled={busy}
-            >
-              {paused ? "Resume" : "Pause"}
-            </Button>
-            {home && (
-              <Button
-                variant="secondary"
-                size="sm"
-                leadingIcon={<ExternalLink aria-hidden="true" />}
-                onClick={() => onOpen(home)}
-              >
-                Open in Quanta
-              </Button>
-            )}
-            <Menu
-              label="Course actions"
-              items={menuItems}
-              trigger={
-                <IconButton label="Course actions" size={28} tooltip={false}>
-                  <MoreHorizontal aria-hidden="true" />
-                </IconButton>
-              }
+            <div className="course-material-columns" aria-hidden="true"><span>Name</span><span>Section</span><span>Detected</span><span /></div>
+            <GroupHeader
+              label={searching ? `${shown} ${shown === 1 ? "match" : "matches"}` : activeFolder === tree ? "Course materials" : activeFolder.path.slice(-2).join(" / ")}
+              count={fileRows.length}
             />
-          </>
-        }
-      />
-
-      <div className="stat-strip">
-        <span className="stat-strip-item">
-          <span className="mono">{total.toLocaleString()}</span>{" "}
-          {total === 1 ? "file" : "files"}
-        </span>
-        <span className="stat-strip-sep" aria-hidden="true">
-          ·
-        </span>
-        <span className="stat-strip-item">
-          <span className="mono">{countNewThisWeek(events ?? [])}</span> new this week
-        </span>
-        <span className="stat-strip-sep" aria-hidden="true">
-          ·
-        </span>
-        <span className="stat-strip-item">
-          last change{" "}
-          {lastChange == null ? "—" : relativeLabel(new Date(lastChange).toISOString())}
-        </span>
-        <span className="stat-strip-sep" aria-hidden="true">
-          ·
-        </span>
-        <span className="stat-strip-item">{paused ? "Paused" : "Monitoring"}</span>
-        {mirror?.stats && (
-          <>
-            <span className="stat-strip-sep" aria-hidden="true">
-              ·
-            </span>
-            <span className="stat-strip-item">
-              Saved <span className="mono">{mirror.stats.done.toLocaleString()}</span> of{" "}
-              <span className="mono">{mirror.stats.totalResources.toLocaleString()}</span>
-            </span>
+            <div className="tree-branch" ref={scrollRef} role="group" aria-label="Materials">
+              {virtualActive ? (
+                <div style={{ height: virtualizer.getTotalSize(), width: "100%", position: "relative" }}>
+                  {virtualItems.map((item) => (
+                    <div
+                      key={fileRows[item.index].id}
+                      ref={virtualizer.measureElement}
+                      data-index={item.index}
+                      style={{
+                        position: "absolute",
+                        top: 0,
+                        left: 0,
+                        width: "100%",
+                        transform: `translateY(${item.start}px)`,
+                      }}
+                    >
+                      {renderFile(fileRows[item.index])}
+                    </div>
+                  ))}
+                </div>
+              ) : fileRows.map(renderFile)}
+            </div>
           </>
         )}
       </div>
+    </div>
+  );
 
-      <div className="history-tabs">
-        <ViewTabs
+  const visibleCount = fileRows.length;
+  const footer = tab === "activity" ? `Recorded changes in ${code}`
+    : inventoryError && total === 0 ? "Loading failed"
+    : total === 0 ? "0 materials"
+    : searching ? `${shown} ${shown === 1 ? "match" : "matches"}${shown > 0 ? ` in ${code}` : ""}`
+    : `Library / ${[code, ...activeFolder.path].join(" / ")} · ${visibleCount.toLocaleString()} ${visibleCount === 1 ? "material" : "materials"}`;
+
+  return (
+    <div className={cx("library-panel", "course-panel", details?.selected && "has-library-inspector")}>
+      <LibraryHeader
+        title={<span title={raw}><span className="course-full-title">{title}</span><span className="course-compact-title">{code}</span></span>}
+        tabs={<ViewTabs
+          className="library-tabs"
           items={[
             { id: "contents", label: "Materials" },
             { id: "activity", label: "Activity" },
@@ -954,31 +948,48 @@ export default function CoursePage({
           value={tab}
           onChange={(id) => setTab(id as "contents" | "activity")}
           ariaLabel="Course views"
-        />
-      </div>
-
-      {tab === "contents" && (status || inventoryError || inventoryPending || !inventory) && (
+        />}
+        actions={<>
+          {tab === "contents" && <IconButton label="Filter materials" size={28} onClick={() => setShowFilters((open) => !open)} aria-expanded={showFilters}>
+            <ListFilter aria-hidden="true" />
+          </IconButton>}
+          <Menu label="Course actions" items={menuItems} trigger={
+            <IconButton label="Course actions" size={28} tooltip={false} disabled={busy}>
+              <MoreHorizontal aria-hidden="true" />
+            </IconButton>
+          } />
+          {headerActions}
+        </>}
+      />
+      <div className="library-panel-scroll course-panel-scroll" ref={mainScroll}>
+      {tab === "contents" && (status || (inventoryError && total > 0) || (inventoryPending && total > 0)) && (
         <Banner kind={inventoryError ? "error" : "info"} action={inventoryError ? { label: "Retry", onClick: () => void onChanged() } : undefined}>
           {status ?? (inventoryError ? `Inventory refresh failed: ${inventoryError}. Retained materials remain inspectable; new changes are blocked.` : "Inventory unavailable or refreshing; new changes are blocked.")}
         </Banner>
       )}
-      {tab === "contents" && <span role="status">{selection.length} {selection.length === 1 ? "material" : "materials"} selected</span>}
-      {loadError && (
+      {tab === "contents" && <span role="status" className="sr-only">{selection.length} {selection.length === 1 ? "material" : "materials"} selected</span>}
+      {tab === "activity" && loadError && (
         <Banner kind="error" action={{ label: "Retry", onClick: () => void (onActivityChanged?.() ?? onChanged()) }}>
           {loadError}
         </Banner>
       )}
-      {items === null && (loading || inventoryPending) ? (
-        <Skeleton rows={8} />
-      ) : items === null ? null : total === 0 ? (
-        <EmptyState
-          title="Nothing here yet"
-          body="This course has no materials on Quanta."
-          action={{ label: "Sync now", onClick: onSyncNow }}
-        />
+      {tab === "contents" && (items === null || (inventoryPending && total === 0)) && !inventoryError ? (
+        loading ? <Skeleton rows={8} /> : null
       ) : tab === "contents" ? (
         <>
-          <div className="course-page-toolbar">
+          {searching && shown > 0 && <div className="library-toolbar course-search-summary">
+            <Button variant="ghost" size="sm" leadingIcon={<ListFilter aria-hidden="true" />} aria-expanded={showFilters} onClick={() => setShowFilters((open) => !open)}>Filter</Button>
+            <Button variant="secondary" size="sm" trailingIcon={<X aria-hidden="true" />} onClick={() => setSearch("")}>Search “{needle}”</Button>
+            <span className="library-toolbar-end">Flat matches show their original section path</span>
+          </div>}
+          {!searching && <div className="library-toolbar course-compact-toolbar">
+            <Select value={activeFolder.id} onValueChange={(id) => {
+              const folder = compactFolders.find((node) => node.id === id);
+              if (folder) chooseFolder(folder);
+            }} options={compactFolders.map((node) => ({ value: node.id, label: node === tree ? "Course materials" : node.path.join(" / ") }))} ariaLabel="Course folder" />
+            <span className="library-toolbar-end">{visibleCount} {visibleCount === 1 ? "material" : "materials"}</span>
+          </div>}
+          <div className={cx("library-toolbar course-page-toolbar", !showFilters && "library-search-collapsed", !headerActions && "library-filters-standalone")}>
             <SearchField
               inputRef={searchRef}
               value={search}
@@ -1020,9 +1031,7 @@ export default function CoursePage({
               ]}
               ariaLabel="Filter by category"
             />
-            <span className="result-count">
-              {shown} of {total}
-            </span>
+            <span className="result-count">{shown} of {total}</span>
             {filtersActive && (
               <Button variant="ghost" size="sm" onClick={clearFilters}>
                 Clear filters
@@ -1055,6 +1064,8 @@ export default function CoursePage({
 
           {renderTree()}
         </>
+      ) : (activityPending || !activityMatchingCourse) && activityGroups.length === 0 ? (
+        <Skeleton rows={8} />
       ) : activityGroups.length === 0 ? (
         <EmptyState
           title="No recorded activity"
@@ -1105,6 +1116,8 @@ export default function CoursePage({
         </div>
       )}
 
+      </div>
+      <LibraryFooter course folders={tab === "contents"}>{footer}</LibraryFooter>
       {capture && <ConfirmDialog key={capture.generation} open onOpenChange={open => {
         if (!open && generation.current === capture.generation && lock.current === null) {
           setCapture(null); setStatus(null);
@@ -1121,42 +1134,18 @@ export default function CoursePage({
       <ConfirmDialog
         open={confirmRebaseline}
         onOpenChange={setConfirmRebaseline}
-        title={`Reset the baseline for ${display}?`}
+        title={`Reset the baseline for ${code}?`}
         body="The next scan records everything currently on Quanta as your starting point. Those items will not be reported as new. History and saved files are kept."
         confirmLabel="Reset baseline"
         destructive
+        scopeList
         onConfirm={async () => {
           await api.rebuildBaseline(course.id);
           onChanged();
         }}
       />
 
-      <ConfirmDialog
-        open={renameOpen}
-        onOpenChange={(open) => {
-          if (!open) setRenameOpen(false);
-        }}
-        title="Rename course"
-        body={
-          <>
-            <label className="setting-desc" htmlFor="course-alias-input">
-              Only changes how this course appears in Pulse.
-            </label>
-            <input
-              id="course-alias-input"
-              className="text-field"
-              value={renameValue}
-              autoFocus
-              onChange={(e) => setRenameValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") commitRename();
-              }}
-            />
-          </>
-        }
-        confirmLabel="Save"
-        onConfirm={commitRename}
-      />
+      {renameOpen && <CourseRenameDialog courseId={course.id} name={display} onChanged={onChanged} onClose={() => setRenameOpen(false)} />}
     </div>
   );
 }

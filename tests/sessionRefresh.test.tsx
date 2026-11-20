@@ -65,7 +65,7 @@ describe("SessionRefreshBanner", () => {
       button("Reconnect")?.click();
     });
     expect(onRestart).toHaveBeenCalledTimes(1);
-    expect(container.textContent).toContain("Waiting for sign-in…");
+    expect(container.textContent).toContain("Waiting for sign-in in your browser…");
     expect(button("Cancel")).toBeTruthy();
 
     await act(async () => resolve({ status: "connected", message: "Quanta access was verified." }));
@@ -77,8 +77,11 @@ describe("SessionRefreshBanner", () => {
     await render(onRestart, true);
     await act(async () => { button("Reconnect")?.click(); });
     expect(container.textContent).toContain("Reconnected. Monitoring resumed.");
+    await render(onRestart, false);
     await act(async () => { vi.advanceTimersByTime(4000); });
-    expect(container.textContent ?? "").not.toContain("Reconnected. Monitoring resumed.");
+    expect(container.textContent).toBe("");
+    await render(onRestart, true);
+    expect(button("Reconnect")).toBeTruthy();
   });
 
   it("cancel transitions to failed with retry and dismiss", async () => {

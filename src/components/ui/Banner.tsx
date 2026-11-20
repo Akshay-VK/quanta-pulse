@@ -13,7 +13,7 @@ export function Banner({
   className,
   children,
 }: {
-  kind?: "info" | "ok" | "error";
+  kind?: "info" | "ok" | "error" | "warning";
   role?: "status" | "alert";
   icon?: ReactNode;
   action?: { label: string; onClick: () => void };

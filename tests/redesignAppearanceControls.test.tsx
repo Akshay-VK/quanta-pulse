@@ -10,7 +10,7 @@ afterEach(() => app?.unmount());
 describe("shared appearance controls", () => {
   it("changes all UI text to Geist Mono immediately and resets it off", async () => {
     app = await renderApp();
-    await click(button("Appearance"));
+    await click(button("Settings"));
 
     const monospace = button("Use Geist Mono for all UI text");
     expect(monospace.getAttribute("role")).toBe("switch");
@@ -31,7 +31,7 @@ describe("shared appearance controls", () => {
 
   it("previews light and dark modes independently from the active theme", async () => {
     app = await renderApp();
-    await click(button("Appearance"));
+    await click(button("Settings"));
     const color = (mode: string) => document.querySelector<HTMLElement>(`.appearance-mode-preview[data-mode="${mode}"]`)!.style.getPropertyValue("--appearance-mode-bg");
     const light = color("light");
     const dark = color("dark");
@@ -52,7 +52,7 @@ describe("shared appearance controls", () => {
     expect(JSON.parse(localStorage.getItem(APPEARANCE_KEY)!).monospace).toBe(true);
     expect(appApi.setSettings).not.toHaveBeenCalled();
     await click(button("Inbox"));
-    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain("leaving Settings");
+    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain("Leave without saving?");
     expect(button("Sync interval").textContent).toContain("60 min");
   });
 });

@@ -1,24 +1,31 @@
 import { useSessionValue } from "../../hooks/useSessionViews";
 import { useMaterialActions } from "../../hooks/useMaterialActions";
 import { useMirror } from "../../hooks/useMirror";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { ArrowDownUp, Check, ListFilter, X } from "lucide-react";
 import { api } from "../../lib/api";
 import { getListNavigationIntent, recoverFocusedId, type ListNavigationInput } from "../../lib/listNavigation";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import { MaterialButtons } from "../../components/MaterialButtons";
+import GroupHeader from "../../components/GroupHeader";
+import { Banner } from "../../components/ui/Banner";
+import { Button } from "../../components/ui/Button";
+import { FileTypeIcon } from "../../components/ui/FileTypeIcon";
+import { UnreadDot } from "../../components/ui/UnreadDot";
 import { Select } from "../../components/ui/Select";
 import { typeOptions } from "../../lib/courseLibrary";
 import { dedupeCourseResources } from "../../lib/courseTree";
-import { activityTimestamp, splitLiteralMatches } from "../../lib/filter";
+import { splitLiteralMatches } from "../../lib/filter";
 import { isLocal } from "../../lib/mirrorState";
 import { courseTitle } from "../../lib/courseName";
-import { formatCompact, parseTimestamp } from "../../lib/format";
-import { formatSectionPath } from "../../lib/sectionPath";
+import { formatCompact, formatListDate, parseTimestamp } from "../../lib/format";
+import { formatSectionPath, resourceSectionPath } from "../../lib/sectionPath";
 import type { DetailsAdapter } from "../../lib/details";
 import type { Course, Resource } from "../../lib/types";
 import DataTable, { type DataColumn, type DataTableNavigationHandle } from "../../components/DataTable";
 import { CoursePill } from "../../components/ui/CoursePill";
 import { EmptyState } from "../../components/ui/EmptyState";
+import { LibraryFooter } from "./LibraryFrame";
 
 interface AllFilesProps {
   resources: Resource[];
@@ -34,6 +41,11 @@ interface AllFilesProps {
   onFocusSearch?: () => void;
   inventoryPending?: boolean;
   inventoryError?: string | null;
+  searchField?: ReactNode;
+  requestedFileIds?: ReadonlySet<number> | null;
+  requestedFileFilterLabel?: string;
+  onClearFileScope?: () => void;
+  unreadResourceIds?: ReadonlySet<number>;
 }
 
 const identity = (resource: Resource) => resource.externalResourceId || `local:${resource.id}`;
@@ -57,8 +69,7 @@ const DEFAULT_DIR: Record<SortId, "asc" | "desc"> = {
 };
 
 function detectedAt(resource: Resource): number | null {
-  const at = activityTimestamp(resource) ?? resource.firstSeenAt;
-  return at ? (parseTimestamp(at)?.getTime() ?? null) : null;
+  return parseTimestamp(resource.firstSeenAt)?.getTime() ?? null;
 }
 
 function Highlight({ text, query }: { text: string; query: string }) {
@@ -80,9 +91,16 @@ export default function AllFiles({
   onFocusSearch,
   inventoryPending = false,
   inventoryError,
+  searchField,
+  requestedFileIds,
+  requestedFileFilterLabel,
+  onClearFileScope,
+  unreadResourceIds,
 }: AllFilesProps) {
   const destinations = useMaterialActions({ onOpen, onPreview });
   const mirror = useMirror();
+  const [showFilters, setShowFilters] = useState(false);
+  const [showSort, setShowSort] = useState(false);
   const [courseFilter, setCourseFilter] = useSessionValue("library:files:course", "all");
   const [typeFilter, setTypeFilter] = useSessionValue("library:files:type", "all");
   const [savedFilter, setSavedFilter] = useSessionValue("library:files:saved", "all");
@@ -99,6 +117,7 @@ export default function AllFiles({
     const needle = search.trim().toLowerCase();
     const type = typeFilter === "all" ? "" : typeFilter.toLowerCase();
     return unique.filter((r) => {
+      if (requestedFileIds && !requestedFileIds.has(r.id)) return false;
       if (courseFilter !== "all" && r.courseId !== Number(courseFilter)) return false;
       if (type && r.resourceType.trim().toLowerCase() !== type) return false;
       if (savedFilter === "saved" && !isSaved(r)) return false;
@@ -110,7 +129,7 @@ export default function AllFiles({
       }
       return true;
     });
-  }, [unique, search, typeFilter, courseFilter, savedFilter, mirror]);
+  }, [unique, search, typeFilter, courseFilter, savedFilter, mirror, requestedFileIds]);
 
   const rows = useMemo(() => {
     const sortId: SortId = (["title", "course", "section", "detected", "saved"] as const).includes(sort.id as SortId)
@@ -138,7 +157,7 @@ export default function AllFiles({
     });
   }, [filtered, sort, mirror]);
 
-  const filtersActive = courseFilter !== "all" || typeFilter !== "all" || savedFilter !== "all" || search.trim() !== "";
+  const filtersActive = Boolean(requestedFileIds) || courseFilter !== "all" || typeFilter !== "all" || savedFilter !== "all" || search.trim() !== "";
 
   const onSort = (id: string) => {
     const key = id as SortId;
@@ -148,6 +167,7 @@ export default function AllFiles({
   };
 
   const clearFilters = () => {
+    onClearFileScope?.();
     setCourseFilter("all");
     setTypeFilter("all");
     setSavedFilter("all");
@@ -178,7 +198,7 @@ export default function AllFiles({
   latest.current = { inventoryError, inventoryPending, currentFocus };
   const selected = details?.selected;
   const selectedId = selected?.kind === "resource" ? identity(selected.resource) : null;
-  const context = `${search}\0${courseFilter}\0${typeFilter}`;
+  const context = `${search}\0${courseFilter}\0${typeFilter}\0${savedFilter}`;
 
   useLayoutEffect(() => {
     generation.current += 1;
@@ -187,7 +207,7 @@ export default function AllFiles({
     setBusy(false);
     setStatus(null);
     return () => { generation.current += 1; lock.current = null; };
-  }, [context]);
+  }, [context, requestedFileIds]);
 
   useLayoutEffect(() => {
     const changed = previousIds.current.join("\0") !== ids.join("\0");
@@ -309,15 +329,15 @@ export default function AllFiles({
       id: "title",
       header: "Name",
       className: "title-cell",
-      width: 320,
       sortable: true,
       title: (resource) => resource.title,
       cell: (resource) => {
-        const path = [courseTitle(resource.courseId, resource.courseName), ...formatSectionPath(resource).split(" / ").filter(Boolean)].join(" / ");
+        const path = [courseTitle(resource.courseId, resource.courseName), ...resourceSectionPath(resource)].join(" / ");
+        const unread = unreadResourceIds?.has(resource.id);
         return (
           <button
             type="button"
-            className="cell-title"
+            className={unread ? "cell-title is-unread" : "cell-title"}
             data-resource-id={resource.id}
             aria-label={`Show details for ${resource.title}`}
             onClick={(event) => {
@@ -325,8 +345,12 @@ export default function AllFiles({
               inspect(resource, event.currentTarget);
             }}
           >
-            <span className="cell-title-main"><Highlight text={resource.title} query={query} /></span>
-            {query && <span className="cell-title-sub"><Highlight text={path} query={query} /></span>}
+            {unread && <span className="library-file-unread"><UnreadDot unread /></span>}
+            <FileTypeIcon type={resource.resourceType} />
+            <span className="library-file-title-copy">
+              <span className="cell-title-main"><Highlight text={resource.title} query={query} /></span>
+              {query && <span className="cell-title-sub"><Highlight text={path} query={query} /></span>}
+            </span>
           </button>
         );
       },
@@ -334,7 +358,7 @@ export default function AllFiles({
     {
       id: "course",
       header: "Course",
-      width: 140,
+      width: 100,
       sortable: true,
       title: (resource) => courseTitle(resource.courseId, resource.courseName),
       cell: (resource) => (
@@ -352,28 +376,29 @@ export default function AllFiles({
       id: "section",
       header: "Section",
       className: "section-cell",
-      width: 160,
+      width: 100,
       sortable: true,
       title: (resource) => formatSectionPath(resource),
-      cell: (resource) => <Highlight text={formatSectionPath(resource)} query={query} />,
+      cell: (resource) => <Highlight text={resourceSectionPath(resource).at(-1) ?? ""} query={query} />,
     },
     {
       id: "detected",
       header: "Detected",
       className: "detected-cell",
-      width: 140,
+      width: 84,
+      numeric: true,
       sortable: true,
-      title: (resource) => formatCompact(activityTimestamp(resource) ?? resource.firstSeenAt),
-      cell: (resource) => formatCompact(activityTimestamp(resource) ?? resource.firstSeenAt),
+      title: (resource) => formatCompact(resource.firstSeenAt),
+      cell: (resource) => formatListDate(resource.firstSeenAt),
     },
     {
       id: "saved",
       header: "Saved",
-      width: 160,
+      width: 56,
       sortable: true,
       cell: (resource) => (
         <div className="saved-cell">
-          <span>{isSaved(resource) ? "Saved" : "—"}</span>
+          <span className="library-saved-mark">{isSaved(resource) && <Check aria-label="Saved" />}</span>
           <MaterialButtons
             actions={destinations?.(resource) ?? []}
             label={`Actions for ${resource.title}`}
@@ -385,41 +410,49 @@ export default function AllFiles({
   ];
 
   return (
-    <div ref={container} onKeyDown={handleKey}
+    <div ref={container} className={query ? "all-files-view library-search-results" : "all-files-view"} onKeyDown={handleKey}
       onFocusCapture={event => { ownedFocus.current = event.target instanceof HTMLElement && event.target.matches("tr[data-row-key]"); }}
       onBlurCapture={event => { if (event.relatedTarget instanceof Node && !container.current?.contains(event.relatedTarget)) ownedFocus.current = false; }}>
-      {(status || inventoryPending || inventoryError) && <p role={status?.includes("failed") || inventoryError ? "alert" : "status"}>
+      {(status || inventoryPending || inventoryError) && <Banner kind={status?.includes("failed") || inventoryError ? "error" : "info"}>
         {status ?? (inventoryError ? "Inventory refresh failed. Retained materials remain inspectable; new changes are blocked." : "Inventory is refreshing; new changes are blocked.")}
-      </p>}
+      </Banner>}
       <span className="sr-only" aria-live="polite">{selection.length} materials selected</span>
-      <div className="filter-bar">
-        <div className="filter-bar-left filter-chips" role="group" aria-label="Filters">
-          <div className="filter-chip"><span className="mono">Type</span>
+      <div className="library-toolbar">
+        <Button variant="ghost" size="sm" leadingIcon={<ListFilter aria-hidden="true" />} aria-expanded={showFilters} onClick={() => setShowFilters((open) => !open)}>Filter</Button>
+        {query && <Button variant="secondary" size="sm" trailingIcon={<X aria-hidden="true" />} onClick={onClearSearch}>Search “{query}”</Button>}
+        {requestedFileIds && <Button variant="secondary" size="sm" trailingIcon={<X aria-hidden="true" />} onClick={onClearFileScope}>{requestedFileFilterLabel || "Palette filters"}</Button>}
+        {typeFilter !== "all" && <Button variant="secondary" size="sm" trailingIcon={<X aria-hidden="true" />} onClick={() => setTypeFilter("all")}>Type {typeFilter.toUpperCase()}</Button>}
+        {courseFilter !== "all" && <Button variant="secondary" size="sm" trailingIcon={<X aria-hidden="true" />} onClick={() => setCourseFilter("all")}>Course {courses.find((course) => String(course.id) === courseFilter)?.shortName ?? courseFilter}</Button>}
+        {savedFilter !== "all" && <Button variant="secondary" size="sm" trailingIcon={<X aria-hidden="true" />} onClick={() => setSavedFilter("all")}>Saved {savedFilter === "saved" ? "Yes" : "No"}</Button>}
+        <Button className="library-toolbar-end" variant="ghost" size="sm" leadingIcon={<ArrowDownUp aria-hidden="true" />} aria-expanded={showSort} onClick={() => setShowSort((open) => !open)}>Sort</Button>
+      </div>
+      <div className={showFilters ? "library-toolbar library-file-filters" : "library-toolbar library-file-filters library-search-collapsed"} role="group" aria-label="Filters">
+          {searchField}
+          <div className="filter-chip"><span>Type</span>
             <Select value={typeFilter} onValueChange={setTypeFilter} ariaLabel="Filter by file type" options={[
               { value: "all", label: "All" },
               ...types.map((option) => ({ value: option.type, label: `${option.type} (${option.count})` })),
             ]} />
           </div>
-          <div className="filter-chip"><span className="mono">Course</span>
+          <div className="filter-chip"><span>Course</span>
             <Select value={courseFilter} onValueChange={setCourseFilter} ariaLabel="Filter by course" options={[
               { value: "all", label: "All" },
               ...courses.map((course) => ({ value: String(course.id), label: course.shortName ?? course.name })),
             ]} />
           </div>
-          <label className="filter-chip" aria-label="Saved filter"><span className="mono">Saved</span>
+          <label className="filter-chip" aria-label="Saved filter"><span>Saved</span>
             <select value={savedFilter} onChange={(e) => setSavedFilter(e.target.value)} aria-label="Saved">
-              <option value="all">All</option>
+              <option value="all">Any</option>
               <option value="saved">Saved</option>
               <option value="unsaved">Not saved</option>
             </select>
           </label>
-          {query && <span className="filter-chip active" aria-label="Search query"><span className="mono">Search</span><span>{query}</span></span>}
-        </div>
-        <div className="filter-bar-right">
-          <span className="result-count">{rows.length} of {unique.length}</span>
-          {filtersActive && <button type="button" className="btn ghost sm" onClick={clearFilters}>Clear filters</button>}
-        </div>
+          {filtersActive && <Button variant="ghost" size="sm" onClick={clearFilters}>Clear filters</Button>}
       </div>
+      {showSort && <div className="library-toolbar">
+        <Select ariaLabel="Sort files by" value={sort.id} onValueChange={(value) => onSort(value)} options={columns.map(({ id, header }) => ({ value: id, label: header }))} />
+        <Button variant="ghost" size="sm" onClick={() => onSort(sort.id)}>{sort.dir === "asc" ? "Ascending" : "Descending"}</Button>
+      </div>}
 
       <DataTable
         sessionKey="library:files:table"
@@ -438,6 +471,8 @@ export default function AllFiles({
         }}
         selectedKey={selectedId}
         ariaLabel="All course files"
+        groupHeader={<GroupHeader label="All files" count={rows.length} />}
+        rowHeight={query ? 48 : 34}
         virtual
         empty={
           <EmptyState
@@ -450,6 +485,7 @@ export default function AllFiles({
           />
         }
       />
+      <LibraryFooter>{query ? `${rows.length} ${rows.length === 1 ? "match" : "matches"}` : `${rows.length} ${rows.length === 1 ? "file" : "files"}`}{rows.length > 0 && rows.every(isSaved) && " · all saved on this device"}</LibraryFooter>
 
       {capture && <ConfirmDialog key={capture.generation} open onOpenChange={open => {
         if (!open && generation.current === capture.generation && lock.current === null) {

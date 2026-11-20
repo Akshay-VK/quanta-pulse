@@ -88,8 +88,10 @@ describe("History read action", () => {
     expect(container.querySelectorAll(".unread-dot:not(.read)")).toHaveLength(1);
     expect(container.querySelector('[data-testid="unread-count"]')?.textContent).toBe("1");
 
-    const button = [...container.querySelectorAll("button")]
-      .find((item) => item.textContent?.includes("Mark loaded history read")) as HTMLButtonElement;
+    const trigger = container.querySelector<HTMLButtonElement>('[aria-label="History actions"]')!;
+    await act(async () => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true })));
+    const button = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')]
+      .find((item) => item.textContent?.includes("Mark loaded history read"))!;
     await act(async () => {
       button.click();
       button.click();
@@ -98,10 +100,11 @@ describe("History read action", () => {
     expect(onMarkAllRead).toHaveBeenCalledTimes(1);
     expect(container.querySelectorAll(".unread-dot:not(.read)")).toHaveLength(0);
     expect(container.querySelector('[data-testid="unread-count"]')?.textContent).toBe("0");
-    expect(button.disabled).toBe(true);
-    expect(button.textContent).toContain("Marking read");
+    await act(async () => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true })));
+    const disabled = () => [...document.querySelectorAll<HTMLElement>('[role="menuitem"][data-disabled]')];
+    expect(disabled().some((item) => item.textContent?.includes("Marking read"))).toBe(true);
 
     await act(async () => resolve());
-    expect(button.disabled).toBe(true);
+    expect(disabled().some((item) => item.textContent?.includes("Mark loaded history read"))).toBe(true);
   });
 });

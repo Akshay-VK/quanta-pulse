@@ -7,6 +7,14 @@ let app: Awaited<ReturnType<typeof renderApp>>;
 beforeEach(() => setupApp());
 afterEach(() => app?.unmount());
 
+async function clickInspectorAction(label: string, panel: ParentNode) {
+  const trigger = button("More actions", panel);
+  await act(async () => trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true })));
+  const action = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((item) => item.textContent === label);
+  if (!action) throw new Error(`Missing inspector menu action: ${label}`);
+  await click(action);
+}
+
 describe("App details lifecycle", () => {
   it("inspects Today without opening or acknowledging and returns to the pointer origin", async () => {
     app = await renderApp();
@@ -94,6 +102,7 @@ describe("App details lifecycle", () => {
   it("keeps selection while filters retain the row, then clears it with heading focus", async () => {
     app = await renderApp();
     await click(button("Show details for Lecture 4"));
+    await click(button("Filter"));
     const search = document.querySelector<HTMLInputElement>('[aria-label="Search Inbox"]')!;
     const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
     await act(async () => { setValue.call(search, "Lecture"); search.dispatchEvent(new Event("input", { bubbles: true })); });
@@ -106,6 +115,8 @@ describe("App details lifecycle", () => {
   });
 
   it("dismisses a nested preview before details and returns keyboard focus in two steps", async () => {
+    appApi.mirrorLocalFiles.mockResolvedValue([{ resourceId: 1, status: "ok", error: null }]);
+    appApi.mirrorLocalFile.mockResolvedValue({ resourceId: 1, relPath: "lecture.pdf", path: "/files/lecture.pdf", sizeBytes: 42, mime: null, sha256: null, status: "ok", error: null });
     app = await renderApp();
     const row = button("Show details for Lecture 4");
     row.focus();
@@ -156,27 +167,29 @@ describe("App details lifecycle", () => {
     expect(appApi.openLocalFile).toHaveBeenCalledTimes(2);
     await click(button("Dismiss"));
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 160)); });
-    await click(button("Show in folder", panel));
+    await clickInspectorAction("Show in folder", panel);
     expect(document.body.textContent).toContain("Folder unavailable");
     await emitAppEvent("mirror:file", { resourceId: 1, status: "failed", error: "Download interrupted" });
     expect(panel.textContent).toContain("Download interrupted");
   });
 
-  it("describes absent local data and missing dates honestly and reports failed downloads", async () => {
+  it("describes absent local data without inventing dates and reports failed downloads inline", async () => {
     appApi.ensureLocal.mockRejectedValue("No space available");
     app = await renderApp();
     await click(button("Show details for Lecture 4"));
     const panel = document.querySelector(".peek")!;
-    expect(panel.textContent).toContain("Upload date unavailable");
-    expect(panel.textContent).toContain("No local copy yet");
+    expect(panel.textContent).not.toContain("Uploaded");
+    expect(panel.textContent).toContain("Not saved");
     await click(button("Download and open", panel));
-    expect(document.body.textContent).toContain("No space available");
+    expect(panel.textContent).toContain("No space available");
+    expect(button("Retry", panel)).toBeTruthy();
     expect(document.querySelector(".peek")).toBeTruthy();
   });
 
   it("lets a confirmation dialog consume Escape while keeping details and activity", async () => {
     app = await renderApp();
     await click(button("Show details for Lecture 4"));
+    await click(button("Inbox display"));
     await click(button("Dismiss all Inbox items…"));
     expect(document.querySelector('[role="alertdialog"], [role="dialog"]')).toBeTruthy();
     await escape();
@@ -242,7 +255,7 @@ describe("App details lifecycle", () => {
     appClipboard.writeText.mockRejectedValue("Clipboard unavailable");
     app = await renderApp();
     await click(button("Show details for Lecture 4"));
-    await click(button("Copy path", document.querySelector(".peek")!));
+    await clickInspectorAction("Copy path", document.querySelector(".peek")!);
     expect(document.body.textContent).toContain("Could not copy to the clipboard");
     expect(document.querySelector(".peek")).toBeTruthy();
   });
@@ -288,7 +301,7 @@ describe("App details lifecycle", () => {
     await emitAppEvent("mirror:file", { resourceId: 1, status: "failed", error: "New failure" });
     await act(async () => lookup.resolve({ resourceId: 1, relPath: "a.pdf", path: "/files/a.pdf", sizeBytes: 42, mime: null, sha256: null, status: "ok", error: null }));
     expect(document.querySelector(".peek")?.textContent).toContain("New failure");
-    expect(button("Download and open", document.querySelector(".peek")!)).toBeTruthy();
+    expect(button("Retry", document.querySelector(".peek")!)).toBeTruthy();
   });
 
   it("uses a completed download before the mirror refresh finishes", async () => {

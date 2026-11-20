@@ -5,18 +5,20 @@
 // diagnostics available through the details panel/scan details API.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { KeyboardEvent } from "react";
-import { Copy, MoreHorizontal } from "lucide-react";
+import type { KeyboardEvent, ReactNode } from "react";
+import { Copy, History, ListFilter, SlidersHorizontal } from "lucide-react";
 import { api } from "../lib/api";
 import { courseTitle } from "../lib/courseName";
-import { eventKindMeta } from "../lib/events";
+import { eventKindMeta, localDayKey } from "../lib/events";
 import { formatCompact, formatTimeOfDay } from "../lib/format";
 import {
   filterHistoryEvents,
   frozenDeleteCopy,
   groupHistoryEvents,
+  historyDayLabel,
   HISTORY_RANGE_OPTIONS,
   HISTORY_TYPE_OPTIONS,
+  rangeBounds,
   type HistoryDateRange,
   type HistoryTypeFilter,
 } from "../lib/historyActions";
@@ -25,13 +27,13 @@ import { getListNavigationIntent, recoverFocusedId } from "../lib/listNavigation
 import { useMaterialActions } from "../hooks/useMaterialActions";
 import { useMirror } from "../hooks/useMirror";
 import type { ChangeEvent, Course, HistoryDeletionScope, Resource, ScanRun } from "../lib/types";
-import PageHeader from "../components/PageHeader";
+import { ACTIVITY_HINTS, WorkspaceViewHeader, WorkspaceViewStatus } from "../components/WorkspaceViewChrome";
 import ResourceRow from "../components/ResourceRow";
 import GroupHeader from "../components/GroupHeader";
 import DataTable, { type DataColumn, type DataTableNavigationHandle } from "../components/DataTable";
 import ConfirmDialog from "../components/ConfirmDialog";
 import { Button } from "../components/ui/Button";
-import { IconButton } from "../components/ui/IconButton";
+import { Banner } from "../components/ui/Banner";
 import { Menu } from "../components/ui/Menu";
 import { ViewTabs } from "../components/ui/Tabs";
 import { Select } from "../components/ui/Select";
@@ -69,6 +71,8 @@ export interface HistoryViewProps {
   loading: boolean;
   error: string | null;
   onRetry: () => void;
+  headerActions?: ReactNode;
+  initialTab?: "changes" | "scans";
 }
 
 const STATUS_KIND: Record<string, StatusKind> = {
@@ -87,6 +91,19 @@ function eventTitle(e: ChangeEvent): string {
   return e.resourceTitle ?? e.title;
 }
 
+function timestampLabel(value: string) {
+  const day = localDayKey(value);
+  const group = day && historyDayLabel(day);
+  return group === "Today" || group === "Yesterday" ? `${group} ${formatTimeOfDay(value)}` : formatCompact(value);
+}
+
+function scanResultLabel(status: string) {
+  if (status === "ok" || status === "success") return "Success";
+  if (status === "partial") return "Partial";
+  if (status === "failed" || status === "cancelled" || status === "error") return "Failed";
+  return scanStatusMeta(status).label;
+}
+
 function numberCell(value: number) {
   return value === 0 ? <span className="num zero">0</span> : value;
 }
@@ -98,7 +115,7 @@ export default function HistoryView({
   onSetEventReadState,
   onDismissEvents,
   onChanged,
-  scans,
+  scans: recordedScans,
   onOpen: _onOpen,
   onOpenLocal: _onOpenLocal,
   onMarkAllRead,
@@ -110,15 +127,26 @@ export default function HistoryView({
   loading,
   error,
   onRetry,
+  headerActions,
+  initialTab = "changes",
 }: HistoryViewProps) {
   const mirror = useMirror();
-  const [tab, setTab] = useState<"changes" | "scans">("changes");
+  const [tab, setTab] = useState<"changes" | "scans">(initialTab);
   const [typeFilter, setTypeFilter] = useState<HistoryTypeFilter>("all");
   const [courseFilter, setCourseFilter] = useState<string>("all");
   const [range, setRange] = useState<HistoryDateRange>("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [search, setSearch] = useState("");
+  const [scanResult, setScanResult] = useState("all");
+  const scans = useMemo(() => {
+    const { start, end } = rangeBounds(range, new Date(), dateFrom, dateTo);
+    return recordedScans.filter(scan => {
+      const at = Date.parse(scan.startedAt);
+      return (scanResult === "all" || scanResultLabel(scan.status).toLowerCase() === scanResult)
+        && (start === null || at >= start) && (end === null || at <= end);
+    });
+  }, [recordedScans, scanResult, range, dateFrom, dateTo]);
   const [confirmClear, setConfirmClear] = useState(false);
   const [deleteScope, setDeleteScope] = useState<HistoryDeletionScope | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -448,7 +476,7 @@ export default function HistoryView({
             aria-label={`Show details for scan of ${formatCompact(s.startedAt)}`}
             onClick={(event) => details.selectScan(s, event.currentTarget)}
           >
-            {formatCompact(s.startedAt)}
+            {timestampLabel(s.startedAt)}
           </Button>
           {s.isBaseline && (
             <Tooltip content={BASELINE_TIP}>
@@ -462,7 +490,10 @@ export default function HistoryView({
     {
       id: "duration",
       header: "Duration",
-      cell: (s) => <span className="mono">{scanDurationText(s)}</span>,
+      cell: (s) => {
+        const duration = Date.parse(s.completedAt ?? "") - Date.parse(s.startedAt);
+        return <span className="mono">{Number.isFinite(duration) && duration >= 0 && duration < 60_000 ? `${(duration / 1_000).toFixed(1)} s` : scanDurationText(s)}</span>;
+      },
     },
     {
       id: "status",
@@ -472,115 +503,90 @@ export default function HistoryView({
         return (
           <span className={`tag tag-${meta.kind}`}>
             {meta.running && <span className="spinner" aria-hidden="true" />}
-            {meta.label}
+            {scanResultLabel(s.status)}
           </span>
         );
       },
     },
-    { id: "courses", header: "Courses scanned", numeric: true, cell: (s) => <span className="mono">{Math.max(0, s.coursesScanned - s.coursesFailed)}/{s.coursesScanned}</span> },
-    { id: "new", header: "New", numeric: true, cell: (s) => numberCell(s.newCount) },
-    { id: "updated", header: "Updated", numeric: true, cell: (s) => numberCell(s.updatedCount) },
-    { id: "unavailable", header: "Removed", numeric: true, cell: (s) => numberCell(s.unavailableCount) },
+    { id: "courses", header: "Courses", numeric: true, cell: (s) => <span className="mono">{Math.max(0, s.coursesScanned - s.coursesFailed)} / {s.coursesScanned}</span> },
+    { id: "unavailable", header: "New / Updated / Removed", numeric: true, cell: (s) => <span className="mono">{scanResultLabel(s.status) === "Failed" ? "—" : <>{numberCell(s.newCount)} / {numberCell(s.updatedCount)} / {numberCell(s.unavailableCount)}</>}</span> },
   ];
+
+  const recordedDay = scans[0] ? localDayKey(scans[0].startedAt) : "";
+  const oneScanDay = recordedDay && scans.every(scan => localDayKey(scan.startedAt) === recordedDay);
 
   const deleteCopy = deleteScope
     ? frozenDeleteCopy(deleteScope)
     : { title: "Delete recorded history?", body: "Preparing the exact events and scan records that will be removed…" };
   const activityEmptyTitle = loading && events.length === 0 ? "Loading History…" : error && events.length === 0 ? "History unavailable" : events.length === 0 ? "No history yet" : "No changes match these filters";
   const activityEmptyBody = events.length === 0
-    ? (error ? "Retry to load recorded changes." : "History fills in after your first scan.")
+    ? (error ? "Retry to load recorded changes." : "Recorded changes and scans appear here after your first scan.")
     : "Try changing the type, course, date range, or search.";
-  const scansEmptyTitle = loading ? "Loading scans…" : error ? "Scans unavailable" : "No history yet";
-  const scansEmptyBody = error ? "Retry to load recorded scans." : "History fills in after your first scan.";
+  const scansEmptyTitle = loading ? "Loading scans…" : error ? "Scans unavailable" : recordedScans.length ? "No scans match these filters" : "No history yet";
+  const scansEmptyBody = error ? "Retry to load recorded scans." : "Recorded changes and scans appear here after your first scan.";
 
   return (
-    <div ref={viewRoot} className="history-view">
-      <PageHeader
-        title="History"
-        summary="Every recorded change and scan"
-        actions={
-          <>
-            <Button
-              variant="secondary"
-              size="sm"
-              loading={markingRead}
-              disabled={!hasUnread}
-              onClick={() => void markAllRead()}
-            >
-              {markingRead ? "Marking read" : "Mark loaded history read"}
-            </Button>
-            <Menu
-              label="History actions"
-              items={[
-                {
-                  id: "clear",
-                  label: "Delete history…",
-                  danger: true,
-                  onSelect: () => void openDelete(),
-                },
-              ]}
-              trigger={
-                <IconButton label="History actions" size={28} tooltip={false}>
-                  <MoreHorizontal aria-hidden="true" />
-                </IconButton>
-              }
-            />
-          </>
-        }
-      />
-
-      <div className="history-tabs">
+    <div ref={viewRoot} className="history-view workspace-view" onKeyDown={event => {
+      if (tab === "changes" && event.key === "/" && !(event.target instanceof HTMLElement && event.target.closest('input, textarea, [role="dialog"], [role="menu"]'))) {
+        event.preventDefault();
+        searchRef.current?.focus();
+      }
+    }}>
+      <WorkspaceViewHeader title="History" actions={headerActions} tabs={
         <ViewTabs
-          items={[
-            { id: "changes", label: "Activity" },
-            { id: "scans", label: "Scan history" },
-          ]}
+          items={[{ id: "changes", label: "Activity" }, { id: "scans", label: "Scans", accessibleLabel: "Scan history" }]}
           value={tab}
           onChange={(next) => { invalidate(); scanGeneration.current += 1; setTab(next as "changes" | "scans"); }}
           ariaLabel="History views"
         />
-      </div>
-
-      {loading && (tab === "changes" ? events.length > 0 : scans.length > 0) && <div role="status" className="result-count history-status">Refreshing History…</div>}
-      {error && (tab === "changes" ? events.length > 0 : scans.length > 0) && (
-        <div role="alert" className="empty-state history-status">
-          <span>{error}</span>
-          <Button variant="secondary" size="sm" onClick={onRetry}>Retry History</Button>
+      } />
+      <div className="filter-bar workspace-view-toolbar">
+        <div className="filter-bar-left">
+          <Button variant="ghost" size="sm" leadingIcon={<ListFilter aria-hidden="true" />} onClick={() => viewRoot.current?.querySelector<HTMLElement>('.workspace-view-toolbar [role="combobox"]')?.focus()}>
+            Filter
+          </Button>
+          {tab === "scans" && <div className="workspace-filter-selector"><span>Result</span><Select ariaLabel="Filter by scan result" value={scanResult} onValueChange={setScanResult} options={[{ value: "all", label: "Any" }, ...["success", "partial", "failed", "running"].map(value => ({ value, label: value[0].toUpperCase() + value.slice(1) }))]} /></div>}
+          {tab === "changes" && <>
+            <div className="workspace-filter-selector"><span>Type</span><Select value={typeFilter} onValueChange={(next) => { invalidate(); setTypeFilter(next as HistoryTypeFilter); }} options={HISTORY_TYPE_OPTIONS.map(o => ({ ...o }))} ariaLabel="Filter by change type" /></div>
+            <div className="workspace-filter-selector"><span>Course</span><Select value={courseFilter} onValueChange={(next) => { invalidate(); setCourseFilter(next); }} options={courseOptions} ariaLabel="Filter by course" /></div>
+          </>}
+          <div className="workspace-filter-selector"><span>Date</span><Select value={range} onValueChange={(next) => { invalidate(); setRange(next as HistoryDateRange); }} options={HISTORY_RANGE_OPTIONS.map(o => ({ ...o }))} ariaLabel="Filter by date range" /></div>
+          {range === "custom" && (
+            <div className="history-date-range" aria-label="Custom date range">
+              <label className="history-date-field"><span>From</span><input type="date" value={dateFrom} onChange={(e) => { invalidate(); setDateFrom(e.target.value); }} /></label>
+              <label className="history-date-field"><span>To</span><input type="date" value={dateTo} onChange={(e) => { invalidate(); setDateTo(e.target.value); }} /></label>
+            </div>
+          )}
+          {tab === "changes" && <SearchField className="workspace-local-search" value={search} onChange={(next) => { invalidate(); setSearch(next); }} inputRef={searchRef} debounceMs={0} placeholder="Search changes…" label="Search changes" />}
         </div>
+        <Menu
+          label="History actions"
+          items={[
+            { id: "clear", label: "Delete history…", danger: true, onSelect: () => void openDelete() },
+            { id: "mark-read", label: markingRead ? "Marking read" : "Mark loaded history read", disabled: !hasUnread || markingRead, onSelect: () => void markAllRead() },
+          ]}
+          trigger={<Button variant="ghost" size="sm" leadingIcon={<SlidersHorizontal aria-hidden="true" />} aria-label="History actions">Display</Button>}
+        />
+      </div>
+      {loading && (tab === "changes" ? events.length > 0 : scans.length > 0) && <span className="sr-only" role="status">Refreshing History…</span>}
+      {error && (tab === "changes" ? events.length > 0 : scans.length > 0) && (
+        <Banner kind="error" action={{ label: "Retry History", onClick: onRetry }}>{error}</Banner>
       )}
 
       {tab === "changes" ? (
         <div
-          className="history-activity"
+          className="history-activity workspace-view-list"
           onKeyDown={onChangesKey}
           onFocusCapture={(event) => { listOwnedFocus.current = event.target instanceof HTMLElement && event.target.matches('.row-select'); }}
           onBlurCapture={(event) => { if (event.relatedTarget) listOwnedFocus.current = false; }}
         >
           {capture?.confirmed && !capture.dialog && <div role={actionError ? "alert" : "status"} className="result-count history-capture-status">{actionError ?? "Saving captured changes…"}{actionError && <Button disabled={pending} onClick={() => void execute(capture)}>{capture.written ? "Retry refresh" : "Retry captured action"}</Button>}</div>}
-          <div className="filter-bar history-filter-bar">
-            <div className="filter-bar-left history-filter-left">
-              <Select value={typeFilter} onValueChange={(next) => { invalidate(); setTypeFilter(next as HistoryTypeFilter); }} options={HISTORY_TYPE_OPTIONS.map(o => ({ ...o }))} ariaLabel="Filter by change type" />
-              <Select value={courseFilter} onValueChange={(next) => { invalidate(); setCourseFilter(next); }} options={courseOptions} ariaLabel="Filter by course" />
-              <Select value={range} onValueChange={(next) => { invalidate(); setRange(next as HistoryDateRange); }} options={HISTORY_RANGE_OPTIONS.map(o => ({ ...o }))} ariaLabel="Filter by date range" />
-              {range === "custom" && (
-                <div className="history-date-range" aria-label="Custom date range">
-                  <label className="history-date-field"><span>From</span><input type="date" value={dateFrom} onChange={(e) => { invalidate(); setDateFrom(e.target.value); }} /></label>
-                  <label className="history-date-field"><span>To</span><input type="date" value={dateTo} onChange={(e) => { invalidate(); setDateTo(e.target.value); }} /></label>
-                </div>
-              )}
-            </div>
-            <div className="filter-bar-right history-filter-right">
-              <SearchField value={search} onChange={(next) => { invalidate(); setSearch(next); }} inputRef={searchRef} debounceMs={0} placeholder="Search changes…" label="Search changes" />
-              <span className="result-count">{filtered.length} of {events.length}</span>
-            </div>
-          </div>
-
           {filtered.length === 0 ? (
-            <EmptyState
+            <div className="workspace-view-empty"><span className="workspace-empty-icon" aria-hidden="true"><History /></span><EmptyState
               title={activityEmptyTitle}
               body={activityEmptyBody}
               action={events.length === 0 && error ? { label: "Retry History", onClick: onRetry } : events.length === 0 ? { label: "Sync now", onClick: onSyncNow } : undefined}
-            />
+            /></div>
           ) : (
             groups.map((group) => (
               <div key={group.key} className="history-day-group">
@@ -599,7 +605,7 @@ export default function HistoryView({
                       courseId={e.courseId}
                       courseCode={courseTitle(e.courseId, course?.shortName ?? e.courseName ?? course?.name)}
                       courseName={e.courseName}
-                      unread={!e.read}
+                      unread={!e.read} workspaceVariant="history"
                       selected={selectedChangeId === e.id}
                       keyboardFocused={focused === `change:${e.id}`}
                       multiSelected={selected.includes(`change:${e.id}`)}
@@ -621,14 +627,14 @@ export default function HistoryView({
           )}
         </div>
       ) : scans.length === 0 ? (
-        <EmptyState
+        <div className="workspace-view-list"><div className="workspace-view-empty"><span className="workspace-empty-icon" aria-hidden="true"><History /></span><EmptyState
           title={scansEmptyTitle}
           body={scansEmptyBody}
           action={error ? { label: "Retry History", onClick: onRetry } : { label: "Sync now", onClick: onSyncNow }}
-        />
+        /></div></div>
       ) : (
         <div
-          className="history-scans"
+          className="history-scans workspace-view-list"
           onKeyDown={onScansKey}
           onFocusCapture={(event) => { scanFocusOwned.current = event.target instanceof HTMLElement && event.target.matches('tr[data-row-key]'); }}
           onBlurCapture={(event) => { if (event.relatedTarget) scanFocusOwned.current = false; }}
@@ -642,10 +648,13 @@ export default function HistoryView({
             onRowFocus={(s) => setFocusedScan(`scan:${s.id}`)}
             navigationRef={scanNav}
             virtual
+            groupHeader={oneScanDay ? <GroupHeader label={historyDayLabel(recordedDay)} count={scans.length} /> : undefined}
             ariaLabel="Scan history"
           />
         </div>
       )}
+
+      <WorkspaceViewStatus hints={ACTIVITY_HINTS}>{tab === "changes" ? `${filtered.length} events` : `${scans.length} scans`}{range !== "all" && ` · ${HISTORY_RANGE_OPTIONS.find(option => option.value === range)?.label}`}</WorkspaceViewStatus>
 
       <Dialog
         open={!!capture?.dialog}

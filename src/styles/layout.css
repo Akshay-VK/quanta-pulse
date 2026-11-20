@@ -18,7 +18,6 @@
     display: flex;
     flex-direction: column;
     background: var(--side);
-    border-right: 1px solid var(--line);
     transition: width var(--dur-base) var(--ease-inout);
     z-index: var(--z-sidebar);
     /* A course name must never introduce a horizontal scrollbar here: it also
@@ -34,19 +33,17 @@
     flex: 1 1 auto;
     min-height: 0;
     overflow-y: auto;
-    padding: var(--sp-3);
+    padding: 10px var(--sp-2) 0;
     display: flex;
     flex-direction: column;
-    gap: var(--sp-2);
   }
 
   .sidebar-footer {
     flex: 0 0 auto;
-    padding: var(--sp-3);
-    border-top: 1px solid var(--line);
+    padding: 0 var(--sp-2) 10px;
     display: flex;
     flex-direction: column;
-    gap: var(--sp-2);
+    gap: 2px;
     align-items: stretch;
   }
 
@@ -59,7 +56,7 @@
     display: flex;
     flex-direction: column;
     margin: 8px 8px 8px 0;
-    border: 1px solid var(--line);
+    border: 1px solid var(--control-line);
     border-radius: var(--radius-lg);
     background: var(--raised);
     overflow: hidden;
@@ -158,6 +155,11 @@
     padding: var(--sp-7) var(--page-pad-x) var(--sp-10);
   }
 
+  .page.workspace-page {
+    height: 100%;
+    padding: 0;
+  }
+
   .page-narrow {
     max-width: 720px;
   }
@@ -249,14 +251,24 @@
       width: var(--sidebar-rail);
     }
 
+    .work {
+      height: calc(100% - 12px);
+      margin: 6px 6px 6px 0;
+    }
+
     .app.drawer-open .sidebar.overlay {
       position: fixed;
       top: 0;
       left: 0;
       bottom: 0;
       width: var(--sidebar-w);
+      border-right: 1px solid var(--control-line);
       box-shadow: var(--shadow-pop);
       z-index: var(--z-popover);
+    }
+
+    .app.drawer-open .work {
+      margin-inline-start: var(--sidebar-rail);
     }
 
     .sidebar-scrim {
@@ -284,6 +296,15 @@
   /* 200% zoom (about 720x480 CSS px): one column, wrapping header, no page
      horizontal scroll. Filters scroll inside their own bar, never the page. */
   @media (max-width: 760px) {
+    .app.rail .sidebar:not(.overlay) {
+      display: none;
+    }
+
+    .app .work,
+    .app.drawer-open .work {
+      margin-inline-start: 6px;
+    }
+
     .workspace-toolbar-slot {
       flex-basis: auto;
       height: auto;

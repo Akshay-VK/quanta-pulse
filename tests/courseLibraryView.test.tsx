@@ -11,6 +11,7 @@ vi.mock("../src/lib/api", () => ({
   api: {
     listResources: vi.fn(),
     setMonitoring: vi.fn(),
+    setCourseDisplayName: vi.fn(),
     rebuildBaseline: vi.fn(),
     previewResource: vi.fn().mockRejectedValue(new Error("preview unavailable")),
     eventsRange: vi.fn().mockResolvedValue([]),
@@ -301,6 +302,20 @@ describe("CoursePage tree", () => {
     expect(byLabel("Open Quanta page for Week 1")).toBeTruthy();
   });
 
+  it("opens the selected folder in the materials pane while keeping its siblings navigable", async () => {
+    await render();
+    await collapseAll();
+    await click(byText("Worksheets Folder"));
+
+    const folders = container.querySelector('[aria-label="Folders"]')!;
+    const materials = container.querySelector('[aria-label="Materials"]')!;
+    expect(folders.querySelector('[aria-current="true"]')?.textContent).toContain("Worksheets Folder");
+    expect(folders.textContent).toContain("Notices");
+    expect(materials.textContent).toContain("Lecture One");
+    expect(materials.textContent).toContain("Lecture Two");
+    expect(materials.textContent).not.toContain("Consultation material");
+  });
+
   it("moves a roving selection with arrow keys and expands with ArrowRight", async () => {
     await render();
     await collapseAll();
@@ -336,7 +351,7 @@ describe("CoursePage tree", () => {
     await typeSearch("Lecture Two");
     expect(container.querySelector(".result-count")?.textContent).toBe("1 of 4");
     expect(container.querySelector(".tree-match-path")?.textContent).toBe(
-      "Worksheets Folder → Tutorial Set → Week 1",
+      "Worksheets Folder / Tutorial Set / Week 1",
     );
     expect(container.querySelector("mark.match-hl")?.textContent).toBe("Lecture Two");
 
@@ -389,31 +404,32 @@ describe("CoursePage tree", () => {
     await render([], { course: makeCourse({ id: 13 }) });
     expect(container.textContent).toContain("Nothing here yet");
     expect(container.textContent).toContain("This course has no materials on Quanta.");
-    expect(byText("Sync now")).toBeTruthy();
+    expect(byText("Open in Quanta")).toBeTruthy();
   });
 
-  it("pauses and resumes monitoring from the title row", async () => {
+  it("pauses monitoring from the course actions menu", async () => {
     await render(initialResources);
     await collapseAll();
-    await click(byText("Pause"));
+    await openCourseMenu();
+    await click(menuItem("Pause monitoring") as HTMLButtonElement);
     expect(api.setMonitoring).toHaveBeenCalledWith(1, "paused");
   });
 
-  it("renames a course from the actions menu and persists the alias", async () => {
-    localStorage.removeItem("quanta-pulse-course-aliases");
+  it("updates a course display name through the durable rename command", async () => {
     const onChanged = vi.fn();
-    await render(initialResources, { onChanged });
+    await render(initialResources, { course: makeCourse({ displayName: "Discrete Maths" }), onChanged });
     await openCourseMenu();
-    await click(menuItem("Rename…") as HTMLButtonElement);
+    await click(menuItem("Rename course") as HTMLButtonElement);
     const dialog = document.querySelector<HTMLElement>('[role="alertdialog"]')!;
     expect(dialog.textContent).toContain("Only changes how this course appears in Pulse.");
     const input = dialog.querySelector<HTMLInputElement>("#course-alias-input")!;
+    expect(input.value).toBe("Discrete Maths");
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "MATH F211 · Discrete Math");
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
     await click(dialogButton("Save"));
-    expect(JSON.parse(localStorage.getItem("quanta-pulse-course-aliases") ?? "{}")["1"]).toBe("MATH F211 · Discrete Math");
+    expect(api.setCourseDisplayName).toHaveBeenCalledWith(1, "MATH F211 · Discrete Math");
     expect(onChanged).toHaveBeenCalled();
   });
 
@@ -422,7 +438,7 @@ describe("CoursePage tree", () => {
     await openCourseMenu();
     await click(menuItem("Reset baseline…") as HTMLButtonElement);
     const dialog = document.querySelector<HTMLElement>('[role="alertdialog"]')!;
-    expect(dialog.textContent).toContain("Reset the baseline for MATH F211?");
+    expect(dialog.textContent).toContain("Reset the baseline for CS F111?");
     expect(dialog.textContent).toContain("The next scan records everything currently on Quanta as your starting point.");
     expect(dialog.textContent).toContain("History and saved files are kept.");
     expect(dialogButton("Reset baseline")).toBeTruthy();

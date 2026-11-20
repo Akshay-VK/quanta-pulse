@@ -1,119 +1,90 @@
-import { RotateCcw, ChevronDown } from "lucide-react";
+import { Download, FolderOpen, RotateCcw } from "lucide-react";
 import { Button } from "./ui/Button";
+import { FileTypeIcon } from "./ui/FileTypeIcon";
 import { IconButton } from "./ui/IconButton";
 import { Popover } from "./ui/Popover";
-import { formatBytes } from "../lib/format";
 import { useMirror } from "../hooks/useMirror";
 import { api } from "../lib/api";
+import type { MirrorDownloadProgress, Resource } from "../lib/types";
 
-export default function DownloadsPopover() {
+function DownloadName({ item, resource }: { item: MirrorDownloadProgress; resource?: Resource }) {
+  const title = resource?.title ?? `Resource ${item.resourceId}`;
+  return (
+    <>
+      <FileTypeIcon type={resource?.resourceType ?? null} />
+      <span className="download-name" title={title}>{title}</span>
+    </>
+  );
+}
+
+export default function DownloadsPopover({ resources = [] }: { resources?: Resource[] }) {
   const mirror = useMirror();
-  const stats = mirror?.stats;
-  if (!mirror || !stats) return null;
+  if (!mirror) return null;
 
-  const pending = stats.downloading + stats.queued;
-  const paused = stats.state === "paused";
+  const byId = new Map(resources.map((resource) => [resource.id, resource]));
   const active = [...mirror.downloads.values()].filter((item) => item.state === "queued" || item.state === "downloading");
   const failed = [...mirror.downloads.values()].filter((item) => item.state === "failed");
+  const count = active.length + failed.length;
 
   return (
     <Popover
       label="Downloads"
+      className="downloads-popover-surface"
       align="end"
       trigger={
-        <IconButton label="Open downloads" size={28} tooltip={false}>
-          <ChevronDown aria-hidden="true" />
-          {pending > 0 && <span className="downloads-badge">{pending}</span>}
+        <IconButton className="downloads-trigger" label="Open downloads" size={28} tooltip={false}>
+          <Download aria-hidden="true" />
+          {count > 0 && <span className="downloads-badge">{count}</span>}
         </IconButton>
       }
     >
       <div className="downloads-popover">
-        <div className="popover-header">
-          <h3>Downloads</h3>
-        </div>
-
-        <div className="popover-stats">
-          <div className="stat-row">
-            <span className="stat-label">Active</span>
-            <span className="stat-value">{stats.downloading}</span>
-          </div>
-          <div className="stat-row">
-            <span className="stat-label">Queued</span>
-            <span className="stat-value">{stats.queued}</span>
-          </div>
-          <div className="stat-row">
-            <span className="stat-label">Completed</span>
-            <span className="stat-value">{stats.done}</span>
-          </div>
-          <div className="stat-row">
-            <span className="stat-label">Failed</span>
-            <span className="stat-value stat-bad">{stats.failed}</span>
-          </div>
-          <div className="stat-row">
-            <span className="stat-label">Remaining</span>
-            <span className="stat-value">
-              {formatBytes(stats.bytesTotal - stats.bytesDone) || "0 B"}
-            </span>
-          </div>
-        </div>
-
+        <h3 className="downloads-title">Downloads</h3>
         {active.length > 0 && (
-          <div className="downloads-active">
-            {active.map((item) => (
-              <div key={item.resourceId} className="download-row">
-                <span className="mono">Resource {item.resourceId}</span>
-                <progress value={item.bytesDone} max={item.bytesTotal ?? item.bytesDone ?? 1} />
-                <span className="muted">
-                  {formatBytes(item.bytesDone)}
-                  {item.bytesTotal ? ` / ${formatBytes(item.bytesTotal)}` : ""}
-                </span>
-              </div>
-            ))}
-          </div>
+          <section className="downloads-group" aria-label="Active">
+            <h4>Active</h4>
+            {active.map((item) => {
+              const total = item.bytesTotal;
+              const percent = total && total > 0 ? Math.min(100, Math.round(item.bytesDone / total * 100)) : undefined;
+              const label = byId.get(item.resourceId)?.title ?? `Resource ${item.resourceId}`;
+              return (
+                <div key={item.resourceId} className="download-popover-active">
+                  <div className="download-popover-item">
+                    <DownloadName item={item} resource={byId.get(item.resourceId)} />
+                    <span className="download-meta">
+                      {item.state === "queued" ? "Queued" : percent != null ? `${percent}%` : "Downloading"}
+                    </span>
+                  </div>
+                  {item.state === "downloading" && (
+                    <progress aria-label={`Download progress for ${label}`} value={percent} max={100} />
+                  )}
+                </div>
+              );
+            })}
+          </section>
         )}
-
-        {pending > 0 && (
-          <div className="popover-actions">
-            <Button
-              variant={paused ? "primary" : "secondary"}
-              size="sm"
-              onClick={() => void (paused ? mirror.resume() : mirror.pause())}
-            >
-              {paused ? "Resume" : "Pause"}
-            </Button>
-          </div>
-        )}
-
         {failed.length > 0 && (
-          <div className="popover-failed">
+          <section className="downloads-group" aria-label="Failed">
+            <h4>Failed</h4>
             {failed.map((item) => (
-              <div key={item.resourceId} className="download-failed-row">
-                <span className="mono">Resource {item.resourceId}</span>
-                {item.error && <span className="muted">{item.error}</span>}
+              <div key={item.resourceId} className="download-popover-item">
+                <DownloadName item={item} resource={byId.get(item.resourceId)} />
+                <span className="download-meta download-meta-failed" title={item.error ?? undefined}>Failed</span>
                 <Button
                   variant="secondary"
                   size="sm"
-                  onClick={() => void mirror.retryDownload(item.resourceId)}
+                  leadingIcon={<RotateCcw aria-hidden="true" />}
+                  onClick={() => void mirror.retryDownload(item.resourceId).catch(() => {})}
                 >
-                  <RotateCcw aria-hidden="true" />
                   Retry
                 </Button>
               </div>
             ))}
-            <Button
-              variant="primary"
-              size="sm"
-              className="retry-all"
-              onClick={() => void mirror.retryFailed()}
-            >
-              <RotateCcw aria-hidden="true" />
-              Retry all
-            </Button>
-          </div>
+          </section>
         )}
-
+        {count === 0 && <p className="downloads-empty">No active downloads</p>}
         <div className="downloads-footer">
-          <Button variant="ghost" size="sm" onClick={() => void api.openAppFolder("mirror")}>
+          <Button variant="ghost" size="sm" leadingIcon={<FolderOpen aria-hidden="true" />} onClick={() => void api.openAppFolder("mirror")}>
             Open folder
           </Button>
         </div>

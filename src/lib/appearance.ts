@@ -168,8 +168,12 @@ export function resolveAppearance(
   const base = families[preference.palette][mode];
   const emphasis = (preference.accent === "default" ? defaults[preference.palette] : accents[preference.accent])[mode];
   const fontFamily = preference.monospace ? uiFonts.monospace : uiFonts.standard;
+  const controlLine = preference.palette === "t3-neutral"
+    ? mode === "dark" ? "#2b2b31" : "#dadadf"
+    : base["line-strong"];
   return { mode, tokens: {
     ...base, ...emphasis, ...semantics[mode], selected: base.selected,
+    "control-line": controlLine,
     "t-new-bg": emphasis["accent-tint"], "t-new-fg": emphasis.link,
     "t-note-bg": base.selected, "t-note-fg": base.muted,
     "t-gone-bg": base.selected, "t-gone-fg": base.faint,

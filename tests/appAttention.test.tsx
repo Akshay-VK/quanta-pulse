@@ -6,17 +6,31 @@ const page = (id = 10, unread = true): InboxPage => ({ items: [{ key: 'resource:
 let app: Awaited<ReturnType<typeof renderApp>>;
 beforeEach(() => { setupApp(); vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-11-14T12:00:00Z')); appApi.queryInbox.mockResolvedValue(page()); appApi.queryDueResources.mockResolvedValue({ items: [], total: 0 }); });
 afterEach(() => { app?.unmount(); vi.useRealTimers(); });
+async function chooseInboxAction(label: string) {
+  await click(button('Inbox display'));
+  await click(button(label));
+}
+async function pickRowMenu(label: string) {
+  const trigger = button('More actions', document.querySelector('.resource-row')!);
+  await act(async () => {
+    trigger.focus();
+    trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }));
+  });
+  const item = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(node => node.textContent?.startsWith(label));
+  if (!item) throw new Error(`Missing menu action: ${label}`);
+  await click(item);
+}
 describe('complete attention workflows through App', () => {
   it('uses complete grouped badges and marks captured events read on inspection', async () => {
     app = await renderApp();
     expect(document.querySelector('.nav-item')?.textContent).toContain('80');
     await click(button('Show details for Lecture 4'));
     expect(appApi.setEventReadState).toHaveBeenCalledWith([10, 11], true);
-    await click(button('Mark item read'));
+    await pickRowMenu('Mark as read');
     expect(appApi.setEventReadState).toHaveBeenCalledWith([10, 11], true);
     appApi.queryInbox.mockResolvedValue(page(10, false));
     await emitAppEvent('sync:done', {});
-    await click(button('Mark item unread'));
+    await pickRowMenu('Mark as unread');
     expect(appApi.setEventReadState).toHaveBeenLastCalledWith([10, 11], false);
   });
   it('surfaces a failed inspection acknowledgement without losing the selection', async () => {
@@ -30,8 +44,8 @@ describe('complete attention workflows through App', () => {
   it('captures all matching IDs before confirming and ignores later arrivals', async () => {
     appApi.snapshotInboxEventIds.mockResolvedValue([10, 11, 999]);
     app = await renderApp();
-    await click(button('Mark all Inbox items read'));
-    expect(appApi.snapshotInboxEventIds).toHaveBeenCalledWith({});
+    await chooseInboxAction('Mark all Inbox items read');
+    expect(appApi.snapshotInboxEventIds).toHaveBeenCalledWith({ attention: 'unread' });
     expect(appApi.setEventReadState).not.toHaveBeenCalled();
     appApi.queryInbox.mockResolvedValue(page(50));
     await emitAppEvent('sync:done', {});
@@ -108,6 +122,7 @@ describe('snapshot mutation and retained inventory protections', () => {
     const pending = deferred<number[]>();
     appApi.snapshotInboxEventIds.mockReturnValue(pending.promise);
     app = await renderApp();
+    await click(button('Inbox display'));
     await act(async () => { button('Mark all Inbox items read').click(); button('Mark all Inbox items read').click(); });
     expect(appApi.snapshotInboxEventIds).toHaveBeenCalledTimes(1);
     await act(async () => { pending.reject(new Error('Cannot snapshot')); });
@@ -118,8 +133,7 @@ describe('snapshot mutation and retained inventory protections', () => {
   it('retains failed read operations visibly and never claims success', async () => {
     appApi.setEventReadState.mockRejectedValue(new Error('Disk full'));
     app = await renderApp();
-    await click(button('Mark item read'));
-    expect(button('Mark item read')).toBeTruthy();
+    await pickRowMenu('Mark as read');
     expect(document.querySelector('main')?.textContent).toContain('Disk full');
     expect(document.querySelector('.row-unread')).toBeTruthy();
   });
@@ -127,7 +141,7 @@ describe('snapshot mutation and retained inventory protections', () => {
     appApi.snapshotInboxEventIds.mockResolvedValue([10, 11]);
     appApi.dismissInboxEvents.mockImplementation(async () => { appApi.queryInbox.mockResolvedValue({ items: [], total: 0, unreadTotal: 0, courseCounts: [] }); });
     app = await renderApp();
-    await click(button('Dismiss all Inbox items…'));
+    await chooseInboxAction('Dismiss all Inbox items…');
     expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain('History and saved files remain');
     await click(button('Dismiss captured items'));
     expect(appApi.dismissInboxEvents).toHaveBeenCalledWith([10, 11]);
@@ -183,15 +197,17 @@ describe('filter scope and due request authority', () => {
   it('captures course, announcement and search together across unloaded results', async () => {
     appApi.snapshotInboxEventIds.mockResolvedValue([10, 9999]);
     app = await renderApp();
+    await click(button('Filter'));
     await click(document.querySelector<HTMLElement>('[aria-label="Filter by change type"]')!);
     await click([...document.querySelectorAll<HTMLElement>('[role="option"]')].find(node => node.textContent === 'Announcements')!);
     await click(document.querySelector<HTMLElement>('[aria-label="Filter by course"]')!);
     await click([...document.querySelectorAll<HTMLElement>('[role="option"]')].find(node => node.textContent !== 'All courses')!);
+    await click(button('Filter'));
     const search = document.querySelector<HTMLInputElement>('[aria-label="Search Inbox"]')!;
     await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, 'tutorial'); search.dispatchEvent(new Event('input', { bubbles: true })); });
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 180)); });
-    await click(button('Mark filtered results read'));
-    expect(appApi.snapshotInboxEventIds).toHaveBeenCalledWith({ courseId: 1, changeType: 'announcement', search: 'tutorial' });
+    await chooseInboxAction('Mark filtered results read');
+    expect(appApi.snapshotInboxEventIds).toHaveBeenCalledWith({ attention: 'unread', courseId: 1, changeType: 'announcement', search: 'tutorial' });
     await click(button('Mark captured items read'));
     expect(appApi.setEventReadState).toHaveBeenCalledWith([10, 9999], true);
   });
@@ -214,10 +230,10 @@ describe('filter scope and due request authority', () => {
     app = await renderApp();
     await click(button('Calendar'));
     expect(document.querySelector('main')?.textContent).toContain('Could not load Agenda');
-    expect(document.querySelector('main')?.textContent).not.toContain('No due dates recorded');
+    expect(document.querySelector('main')?.textContent).not.toContain('No known deadlines');
     appApi.queryDueResources.mockResolvedValue({ items: [], total: 0 });
     await click(button('Retry Agenda'));
-    expect(document.querySelector('main')?.textContent).toContain('No due dates recorded');
+    expect(document.querySelector('main')?.textContent).toContain('No known deadlines');
   });
   it('uses Inbox for both legacy routes and distinguishes a successful no-course state', async () => {
     appApi.listCourses.mockResolvedValue([]);
@@ -280,7 +296,7 @@ describe('Agenda past dates and metadata errors', () => {
     expect(document.querySelectorAll('.resource-row')).toHaveLength(20);
     await click(button('Show more past due dates'));
     expect(document.querySelectorAll('.resource-row')).toHaveLength(25);
-    expect(document.querySelector('main')?.textContent).toContain('Confirm status in Quanta');
+    expect(document.querySelector('main')?.textContent).toContain('Submission status is not tracked.');
     expect(document.querySelector('main')?.textContent).not.toMatch(/overdue|unsubmitted|completed/i);
   });
   it('does not describe a failed course load as successful no-course discovery', async () => {

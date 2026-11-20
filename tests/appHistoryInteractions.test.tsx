@@ -78,15 +78,15 @@ describe("History shared details", () => {
   });
 
   it.each([
-    ["running", "Running"], ["ok", "Completed"], ["partial", "Completed with errors"],
-    ["cancelled", "Failed"], ["unexpected", "unexpected"],
-  ])("keeps the %s scan status truthful in rows and details", async (status, label) => {
+    ["running", "Running", "Running"], ["ok", "Success", "Completed"], ["partial", "Partial", "Completed with errors"],
+    ["cancelled", "Failed", "Failed"], ["unexpected", "unexpected", "unexpected"],
+  ])("keeps the %s scan status truthful in rows and details", async (status, rowLabel, inspectorLabel) => {
     appApi.listHistoryScans.mockResolvedValue([{ ...scan, status }]);
     await openHistory();
     await click(button("Scan history"));
-    expect(document.querySelector("tbody")?.textContent).toContain(label);
+    expect(document.querySelector("tbody")?.textContent).toContain(rowLabel);
     await click(document.querySelector<HTMLButtonElement>('[aria-label^="Show details for scan of"]')!);
-    expect(document.querySelector(".peek")?.textContent).toContain(label);
+    expect(document.querySelector(".peek")?.textContent).toContain(inspectorLabel);
   });
 
   it("clears scan details when switching back to changes", async () => {

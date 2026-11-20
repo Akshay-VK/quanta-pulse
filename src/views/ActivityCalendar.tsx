@@ -6,11 +6,10 @@
 // UTC strings.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Copy } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy, X } from "lucide-react";
 import { localDateKey, resolveTimezone } from "../lib/agenda";
 import { api } from "../lib/api";
 import {
-  EVENT_KINDS,
   addMonths,
   buildMonthGrid,
   clampDayToMonth,
@@ -26,14 +25,13 @@ import {
   type EventCounts,
   type YearMonth,
 } from "../lib/events";
-import { formatCompact, relativeLabel } from "../lib/format";
+import { formatTimeOfDay } from "../lib/format";
 import { courseTitle } from "../lib/courseName";
 import type { ChangeEvent, Course, Digest, Resource } from "../lib/types";
 import type { DetailsAdapter } from "../lib/details";
-import PageHeader from "../components/PageHeader";
+import { ACTIVITY_HINTS, WorkspaceViewStatus } from "../components/WorkspaceViewChrome";
 import ResourceRow from "../components/ResourceRow";
 import type { MaterialRowHandlers } from "../lib/materialHandlers";
-import StatBlock from "../components/StatBlock";
 import { Banner } from "../components/ui/Banner";
 import { Button } from "../components/ui/Button";
 import { EmptyState } from "../components/ui/EmptyState";
@@ -54,7 +52,7 @@ export interface CalendarViewProps extends MaterialRowHandlers {
   details: DetailsAdapter;
 }
 
-const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
 const STATUS_KIND: Record<string, StatusKind> = {
   new: "new",
@@ -111,6 +109,7 @@ export default function CalendarView({
   details,
 }: CalendarViewProps) {
   const [{ cursor, selected }, setView] = useState<ViewState>(() => initialView(now, timeZone));
+  const [dayOpen, setDayOpen] = useState(false);
   const [monthEvents, setMonthEvents] = useState<ChangeEvent[] | null>(null);
   const [digest, setDigest] = useState<Digest | null>(null);
   const [monthError, setMonthError] = useState(false);
@@ -123,6 +122,7 @@ export default function CalendarView({
   const dayButtons = useRef(new Map<string, HTMLButtonElement>());
   const panelRef = useRef<HTMLHeadingElement>(null);
   const focusSelected = useRef(false);
+  const focusDayPanel = useRef(false);
   const context = useRef({ selected, cursor });
 
   const courseById = useMemo(() => new Map(courses.map((c) => [c.id, c])), [courses]);
@@ -177,8 +177,8 @@ export default function CalendarView({
 
   useEffect(() => {
     if (context.current.selected !== selected || cursor.year !== context.current.cursor.year || cursor.month !== context.current.cursor.month) {
-      details.clear();
       context.current = { selected, cursor };
+      details.clear();
     }
   }, [cursor, selected, details]);
 
@@ -192,7 +192,7 @@ export default function CalendarView({
   }, [dayPending, dayError, digest, selected, details]);
 
   const byDay = useMemo(() => groupEventsByDay(monthEvents ?? [], timeZone), [monthEvents, timeZone]);
-  const weeks = useMemo(() => buildMonthGrid(cursor), [cursor]);
+  const weeks = useMemo(() => buildMonthGrid(cursor, 0).filter(week => week.some(date => isSameMonth(date, cursor))), [cursor]);
   const today = localDateKey(now, timeZone);
 
   useEffect(() => {
@@ -201,8 +201,16 @@ export default function CalendarView({
     dayButtons.current.get(selected)?.focus();
   }, [selected]);
 
+  useEffect(() => {
+    if (dayOpen && !details.selected && focusDayPanel.current) {
+      focusDayPanel.current = false;
+      panelRef.current?.focus();
+    }
+  }, [dayOpen, details.selected]);
+
   /** Select a day, moving the visible month to it when it lies outside. */
   function select(key: string) {
+    setDayOpen(true);
     // The grid remounts when the month switches, so focus must follow the
     // selection for the clicked cell not to lose it.
     focusSelected.current = true;
@@ -253,30 +261,23 @@ export default function CalendarView({
   const scannedToday = lastSync != null && localDayKey(lastSync, timeZone) === selected;
 
   return (
-    <div>
-      {/* The month is named in the toolbar below; repeating it as a caption
-          above the title read as a duplicate heading. */}
-      <PageHeader title="Activity calendar" summary={`Changes by detection date · ${timeZone}`} />
-
+    <div className="activity-calendar workspace-view-body" onKeyDown={event => {
+      if (event.key.toLowerCase() === "t" && !event.altKey && !event.metaKey && !event.ctrlKey && !(event.target instanceof HTMLElement && event.target.closest('input, textarea, [role="dialog"], [role="menu"]'))) {
+        event.preventDefault();
+        goToday();
+      }
+    }}>
+      <div className="cal-header workspace-view-toolbar">
+        <IconButton label="Previous month" size={28} onClick={() => shiftMonth(-1)}><ChevronLeft aria-hidden="true" /></IconButton>
+        <IconButton label="Next month" size={28} onClick={() => shiftMonth(1)}><ChevronRight aria-hidden="true" /></IconButton>
+        <h2 className="cal-month-title">{monthLabel(cursor)}</h2>
+        <Button variant="secondary" size="sm" onClick={goToday}>Today <kbd>T</kbd></Button>
+        <span className="cal-detection-note">Days show when changes were detected. Due dates are in Agenda.</span>
+      </div>
       {monthError && <Banner kind="error" action={{ label: "Retry month", onClick: () => setMonthReload((n) => n + 1) }}>Could not load activity for this month</Banner>}
-      {dayError && <Banner kind="error" action={{ label: "Retry day", onClick: () => setDayReload((n) => n + 1) }}>Could not load activity for this day</Banner>}
-
-      <div className="cal-layout">
+      {dayOpen && dayError && <Banner kind="error" action={{ label: "Retry day", onClick: () => setDayReload((n) => n + 1) }}>Could not load activity for this day</Banner>}
+      <div className="cal-layout workspace-view-list">
         <section className="cal-main" aria-label="Month calendar">
-          <div className="cal-header">
-            <h2 className="cal-month-title">{monthLabel(cursor)}</h2>
-            <IconButton label="Previous month" size={32} onClick={() => shiftMonth(-1)}>
-              <ChevronLeft aria-hidden="true" />
-            </IconButton>
-            <IconButton label="Next month" size={32} onClick={() => shiftMonth(1)}>
-              <ChevronRight aria-hidden="true" />
-            </IconButton>
-            <span className="cal-header-spacer" />
-            <Button variant="secondary" size="sm" onClick={goToday}>
-              Today
-            </Button>
-          </div>
-
           <div className="cal-weekdays">
             {WEEKDAYS.map((d) => (
               <div key={d} className="cal-weekday">
@@ -353,7 +354,11 @@ export default function CalendarView({
                           goToday();
                         } else if (e.key === "Enter") {
                           e.preventDefault();
-                          panelRef.current?.focus();
+                          if (dayOpen) panelRef.current?.focus();
+                          else {
+                            focusDayPanel.current = true;
+                            setDayOpen(true);
+                          }
                         }
                       }}
                     >
@@ -370,47 +375,29 @@ export default function CalendarView({
             ))}
           </div>
 
-          <div className="cal-legend">
-            {EVENT_KINDS.map((kind) => (
-              <span key={kind.id} className="cal-legend-item">
-                <span className={`cal-dot ${kind.dot}`} aria-hidden="true" />
-                {kind.label}
-              </span>
-            ))}
-          </div>
         </section>
 
-        <section className="cal-panel" aria-label="Selected day activity" aria-live="polite">
-          <h2 className="cal-panel-title" tabIndex={-1} ref={panelRef}>
-            {longDayLabel(selected)}
-          </h2>
-
+        {dayOpen && <section className="cal-panel" aria-label="Selected day activity" aria-live="polite" hidden={details.selected?.kind === "change"}>
+          <div className="cal-panel-header">
+            <h2 className="cal-panel-title" tabIndex={-1} ref={panelRef}>{longDayLabel(selected)}</h2>
+            {digest?.date === selected && <span>{digest.items.length} changes</span>}
+            <IconButton label="Close day activity" size={28} onClick={() => {
+              setDayOpen(false);
+              dayButtons.current.get(selected)?.focus();
+            }}><X aria-hidden="true" /></IconButton>
+          </div>
           {digest?.date !== selected && !dayError ? (
             <Skeleton rows={4} />
           ) : digest?.date === selected ? (
             <>
-              {dayPending && <p className="cal-sync-line" role="status">Refreshing day activity…</p>}
-              <p className="cal-summary">{digest.newCount} new · {digest.updatedCount} updated</p>
-              <div className="stat-grid">
-                <StatBlock label="New" value={digest.newCount} />
-                <StatBlock label="Updated" value={digest.updatedCount} />
-                <StatBlock label="Announcements" value={digest.announcementCount} />
-                <StatBlock label="Deadlines" value={digest.deadlineCount} />
-                <StatBlock label="Unavailable" value={digest.unavailableCount} />
-                <StatBlock label="Courses failed" value={digest.coursesFailed} />
-              </div>
-
+              {dayPending && <span className="sr-only" role="status">Refreshing day activity…</span>}
+              <p className="cal-summary">{digest.newCount} new · {digest.updatedCount} updated · detected by scans</p>
               {digest.coursesFailed > 0 && (
                 <Banner kind="error" action={{ label: "View scan", onClick: onOpenScan }}>
                   {digest.coursesFailed} course{digest.coursesFailed === 1 ? "" : "s"} failed in the last
                   scan
                 </Banner>
               )}
-
-              <p className="cal-sync-line">
-                Last successful sync{" "}
-                {lastSync ? `${formatCompact(lastSync)} (${relativeLabel(lastSync)})` : "None yet"}
-              </p>
 
               {digest.items.length === 0 ? (
                 <EmptyState
@@ -430,11 +417,11 @@ export default function CalendarView({
                       courseId={e.courseId}
                       courseCode={courseTitle(e.courseId, course?.shortName ?? e.courseName ?? course?.name)}
                       courseName={e.courseName}
-                      unread={!e.read}
+                      unread={false} workspaceVariant="history"
                       selected={details.selected?.identity === `change:${e.id}`}
                       unavailable={e.changeType === "unavailable"}
                       status={{ kind: STATUS_KIND[e.changeType] ?? "new", label: meta.label }}
-                      timeLabel={new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", minute: "2-digit", timeZoneName: "short" }).format(new Date(e.detectedAt))}
+                      timeLabel={new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", minute: "2-digit", }).format(new Date(e.detectedAt))}
                       onCourse={
                         e.courseId != null && onOpenCourse
                           ? () => onOpenCourse(e.courseId as number)
@@ -445,8 +432,8 @@ export default function CalendarView({
                       
                       onSelect={(origin) =>
                         details.selectChange(e, origin, e.resourceId == null ? null : resourceById.get(e.resourceId) ?? null, () => {
-                          panelRef.current?.focus();
-                          return true;
+                          if (context.current.selected === selected) focusDayPanel.current = true;
+                          return panelRef.current !== null;
                         })
                       }
                       
@@ -465,8 +452,9 @@ export default function CalendarView({
               )}
             </>
           ) : null}
-        </section>
+        </section>}
       </div>
+      <WorkspaceViewStatus hints={ACTIVITY_HINTS}>{dayOpen && digest?.date === selected ? `${longDayLabel(selected)} · ${digest.items.length} changes` : `Detected changes${lastSync ? ` · scanned ${formatTimeOfDay(lastSync)}` : ""}`}</WorkspaceViewStatus>
     </div>
   );
 }

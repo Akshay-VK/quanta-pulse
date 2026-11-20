@@ -1,7 +1,8 @@
 import { useSessionScroll, useSessionValue } from "../hooks/useSessionViews";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { ArrowDownUp, ListFilter, X } from "lucide-react";
+import { Button } from "../components/ui/Button";
 import { useCourseActivity } from "../hooks/useCourseActivity";
-import PageHeader from "../components/PageHeader";
 import PreviewDialog from "../components/PreviewDialog";
 import { SearchField } from "../components/ui/SearchField";
 import { ToggleGroup } from "../components/ui/ToggleGroup";
@@ -12,6 +13,9 @@ import { Skeleton } from "../components/ui/Skeleton";
 import AllFiles from "./library/AllFiles";
 import CourseList from "./library/CourseList";
 import CoursePage from "./library/CoursePage";
+import { LibraryFooter, LibraryHeader } from "./library/LibraryFrame";
+import { splitCourseAttention } from "../lib/courseLibrary";
+import { cx } from "../lib/cx";
 
 export interface LibraryViewProps {
   courses: Course[];
@@ -42,6 +46,11 @@ export interface LibraryViewProps {
   initialSearch?: string;
   /** Distinguishes repeated palette requests with the same query. */
   initialSearchKey?: number;
+  headerActions?: ReactNode;
+  compact?: boolean;
+  requestedFileIds?: ReadonlySet<number> | null;
+  requestedFileFilterLabel?: string;
+  unreadResourceIds?: ReadonlySet<number>;
 }
 
 function plural(n: number, word: string): string {
@@ -66,6 +75,11 @@ export default function LibraryView({
   onRetry,
   initialSearch,
   initialSearchKey = 0,
+  headerActions,
+  compact = false,
+  requestedFileIds,
+  requestedFileFilterLabel,
+  unreadResourceIds,
 }: LibraryViewProps) {
   // The Courses | All files choice survives navigating into a course page.
   const [tab, setTab] = useSessionValue<"courses" | "files">("library:tab", "courses");
@@ -76,7 +90,10 @@ export default function LibraryView({
     previousTab.current = tab;
   }, [tab, details]);
   const [search, setSearch] = useSessionValue("library:query", "");
+  const [showCourseFilter, setShowCourseFilter] = useState(false);
+  const [courseSort, setCourseSort] = useSessionValue<"original" | "name">("library:course-sort", "original");
   const [appliedSearch, setAppliedSearch] = useSessionValue<string | undefined>("library:applied-search", undefined);
+  const [clearedFileScope, setClearedFileScope] = useSessionValue<string | undefined>("library:cleared-file-scope", undefined);
   const searchRequest = JSON.stringify([initialSearchKey, initialSearch]);
   useEffect(() => {
     if (initialSearch !== undefined && searchRequest !== appliedSearch) {
@@ -96,8 +113,7 @@ export default function LibraryView({
 
   const course = courseId == null ? null : courses.find((c) => c.id === courseId) ?? null;
 
-  const mainScroll = useRef<HTMLElement | null>(null);
-  useLayoutEffect(() => { mainScroll.current = document.querySelector("main"); }, []);
+  const mainScroll = useRef<HTMLDivElement>(null);
   useSessionScroll(`library:${tab}`, mainScroll, !course && (!loading || resources.length > 0 || courses.length > 0));
 
   if (course) {
@@ -113,6 +129,11 @@ export default function LibraryView({
           onOpen={onOpen}
           onPreview={setPreviewResource}
           onChanged={onChanged}
+          allCourses={courses}
+          onNavigate={onNavigate}
+          onAllFiles={() => { setTab("files"); onNavigate(null); }}
+          headerActions={headerActions}
+          compact={compact}
           activityEvents={activityPublication.items}
           activityCourseId={activityPublication.courseId}
           activityPending={activityPublication.pending}
@@ -135,67 +156,77 @@ export default function LibraryView({
   }
 
   return (
-    <div>
-      <PageHeader
+    <div className={cx("library-panel", details?.selected && "has-library-inspector")}>
+      <LibraryHeader
         title="Library"
-        summary={`${plural(courses.length, "course")}, ${plural(resources.length, "file")}`}
-        actions={
-          <div className="library-head-row">
-            <ToggleGroup
-              value={tab}
-              onValueChange={(value) => setTab(value as "courses" | "files")}
-              ariaLabel="Library view"
-              options={[
-                { value: "courses", label: "Courses" },
-                { value: "files", label: "All files" },
-              ]}
-            />
-            <SearchField
-              inputRef={searchRef}
-              value={search}
-              onChange={setSearch}
-              placeholder="Search…"
-              label="Search library"
-              debounceMs={0}
-            />
-          </div>
+        actions={headerActions}
+        tabs={
+          <ToggleGroup
+            className="library-tabs"
+            value={tab}
+            onValueChange={(value) => setTab(value as "courses" | "files")}
+            ariaLabel="Library view"
+            options={[
+              { value: "courses", label: "Courses" },
+              { value: "files", label: "All files" },
+            ]}
+          />
         }
       />
-      {error && (
-        <Banner kind="error" action={onRetry ? { label: "Retry", onClick: onRetry } : undefined}>
-          {error}
-        </Banner>
-      )}
-      {loading && courses.length === 0 && resources.length === 0 ? (
-        <Skeleton rows={8} />
-      ) : error && courses.length === 0 && resources.length === 0 ? null : tab === "courses" ? (
-        <CourseList
-          onFocusSearch={() => searchRef.current?.focus()}
-          courses={courses}
-          resources={resources}
-          search={search}
-          unreadByCourse={unreadByCourse}
-          onOpenCourse={(selected) => onNavigate(selected.id)}
-          onOpen={onOpen}
-          onChanged={onChanged}
-          onSyncNow={onSyncNow}
-        />
-      ) : (
-        <AllFiles
-          onChanged={onChanged}
-          onFocusSearch={() => searchRef.current?.focus()}
-          inventoryPending={loading}
-          inventoryError={error}
-          resources={resources}
-          courses={courses}
-          search={search}
-          onOpen={onOpen}
-          onPreview={setPreviewResource}
-          details={details}
-          onCourse={(id) => onNavigate(id)}
-          onClearSearch={() => setSearch("")}
-        />
-      )}
+      <div className="library-panel-scroll" ref={mainScroll}>
+        {error && (
+          <Banner kind="error" action={onRetry ? { label: "Retry", onClick: onRetry } : undefined}>
+            {error}
+          </Banner>
+        )}
+        {loading && courses.length === 0 && resources.length === 0 ? (
+          <Skeleton rows={8} />
+        ) : error && courses.length === 0 && resources.length === 0 ? null : tab === "courses" ? (
+          <>
+            <div className="library-toolbar">
+              <Button variant="ghost" size="sm" leadingIcon={<ListFilter aria-hidden="true" />} aria-expanded={showCourseFilter} onClick={() => setShowCourseFilter((open) => !open)}>Filter</Button>
+              {search && <Button variant="secondary" size="sm" trailingIcon={<X aria-hidden="true" />} onClick={() => setSearch("")}>Search “{search}”</Button>}
+              <Button className="library-toolbar-end" variant="ghost" size="sm" leadingIcon={<ArrowDownUp aria-hidden="true" />} aria-pressed={courseSort === "name"} onClick={() => setCourseSort((value) => value === "name" ? "original" : "name")}>Sort</Button>
+            </div>
+            <div className={showCourseFilter ? "library-course-search" : "library-course-search library-search-collapsed"}>
+              <SearchField inputRef={searchRef} value={search} onChange={setSearch} placeholder="Search courses" label="Search library" debounceMs={0} />
+            </div>
+            <CourseList
+              onFocusSearch={() => { setShowCourseFilter(true); searchRef.current?.focus(); }}
+              courses={courses}
+              resources={resources}
+              search={search}
+              unreadByCourse={unreadByCourse}
+              onOpenCourse={(selected) => onNavigate(selected.id)}
+              onOpen={onOpen}
+              onChanged={onChanged}
+              onSyncNow={onSyncNow}
+              alphabetical={courseSort === "name"}
+            />
+          </>
+        ) : (
+          <AllFiles
+            onChanged={onChanged}
+            onFocusSearch={() => searchRef.current?.focus()}
+            inventoryPending={loading}
+            inventoryError={error}
+            resources={resources}
+            courses={courses}
+            search={search}
+            searchField={<SearchField inputRef={searchRef} value={search} onChange={setSearch} placeholder="Search files" label="Search library" debounceMs={0} />}
+            onOpen={onOpen}
+            onPreview={setPreviewResource}
+            details={details}
+            requestedFileIds={clearedFileScope === searchRequest ? null : requestedFileIds}
+            requestedFileFilterLabel={requestedFileFilterLabel}
+            unreadResourceIds={unreadResourceIds}
+            onClearFileScope={() => setClearedFileScope(searchRequest)}
+            onCourse={(id) => onNavigate(id)}
+            onClearSearch={() => setSearch("")}
+          />
+        )}
+      </div>
+      {tab === "courses" && <LibraryFooter>{plural(courses.length, "course")} · {splitCourseAttention(courses).attention.length.toLocaleString()} needs attention</LibraryFooter>}
 
       <PreviewDialog
         resource={previewResource}

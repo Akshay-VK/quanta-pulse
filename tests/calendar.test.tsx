@@ -120,11 +120,10 @@ function emptyDigest(date: string): Digest {
   return { date, newCount: 0, updatedCount: 0, announcementCount: 0, deadlineCount: 0, unavailableCount: 0, coursesFailed: 0, lastSuccessAt: null, items: [] };
 }
 
-function statValue(label: string): string | undefined {
-  const block = [...container.querySelectorAll(".stat-block")].find(
-    (el) => el.querySelector(".stat-label")?.textContent === label,
-  );
-  return block?.querySelector(".stat-value")?.textContent?.trim();
+async function openToday() {
+  const day = container.querySelector<HTMLButtonElement>('.cal-day[aria-current="date"]')!;
+  await act(async () => day.click());
+  await flush();
 }
 
 describe("CalendarView", () => {
@@ -165,9 +164,10 @@ describe("CalendarView", () => {
     expect(selectedBtn!.querySelector(".cal-pill")).toBeTruthy();
     expect(selectedBtn!.querySelector(".cal-pill")?.textContent).toContain("1 changes");
 
-    // The day digest shows the new-upload and failed-course figures.
-    expect(statValue("New")).toBe("1");
-    expect(statValue("Courses failed")).toBe("1");
+    expect(container.querySelector(".cal-panel")).toBeNull();
+    await openToday();
+    expect(container.querySelector(".cal-panel")?.textContent).toContain("1 new · 0 updated");
+    expect(container.querySelector(".cal-panel")?.textContent).toContain("1 course failed");
 
     expect(container.textContent).toContain("Worksheet-9.pdf");
     expect(container.textContent).toContain("MATH F211");
@@ -191,6 +191,7 @@ describe("CalendarView", () => {
 
     await renderCalendar();
 
+    await openToday();
     expect(container.textContent).toContain("No activity on this day");
     expect(container.textContent).toContain("No scans ran on this day");
   });
@@ -248,6 +249,7 @@ describe("CalendarView", () => {
     vi.mocked(api.dailyDigest).mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(emptyDigest(selected));
     await renderCalendar();
 
+    await openToday();
     expect(container.textContent).toContain("Could not load activity for this day");
     expect(container.textContent).not.toContain("No activity on this day");
     await clickButton("Retry day");

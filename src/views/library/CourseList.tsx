@@ -1,6 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import {
-  ChevronRight,
   ExternalLink,
   MoreHorizontal,
   Pause,
@@ -12,12 +11,11 @@ import { api } from "../../lib/api";
 import { splitCourseAttention } from "../../lib/courseLibrary";
 import { cx } from "../../lib/cx";
 import { activityTimestamp } from "../../lib/filter";
-import { parseTimestamp, relativeLabel } from "../../lib/format";
+import { formatListDate, parseTimestamp } from "../../lib/format";
 import {
   courseLabel,
   courseTitle,
-  loadAliases,
-  saveAliases,
+  displayName,
 } from "../../lib/courseName";
 import { getListNavigationIntent, recoverFocusedId } from "../../lib/listNavigation";
 import type { Course, Resource } from "../../lib/types";
@@ -26,7 +24,9 @@ import { IconButton } from "../../components/ui/IconButton";
 import { Menu, type MenuItemSpec } from "../../components/ui/Menu";
 import { EmptyState } from "../../components/ui/EmptyState";
 import ConfirmDialog from "../../components/ConfirmDialog";
+import GroupHeader from "../../components/GroupHeader";
 import { courseHomeUrl } from "./courseUrl";
+import CourseRenameDialog from "./CourseRenameDialog";
 
 interface CourseListProps {
   courses: Course[];
@@ -39,6 +39,7 @@ interface CourseListProps {
   onChanged: () => void;
   onSyncNow?: () => void;
   onFocusSearch?: () => void;
+  alphabetical?: boolean;
 }
 
 type Status = { kind: "ok" | "warn" | "error"; label: string };
@@ -62,6 +63,7 @@ export default function CourseList({
   onChanged,
   onSyncNow,
   onFocusSearch,
+  alphabetical = false,
 }: CourseListProps) {
   const [confirmCourse, setConfirmCourse] = useState<Course | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
@@ -95,8 +97,11 @@ export default function CourseList({
           .includes(needle);
       })
     : courses;
-  const { attention, rest } = splitCourseAttention(visible);
-  const ordered = attention.length ? [...attention, ...rest] : visible;
+  const sorted = alphabetical
+    ? [...visible].sort((first, second) => courseTitle(first.id, first.name).localeCompare(courseTitle(second.id, second.name)))
+    : visible;
+  const { attention, rest } = splitCourseAttention(sorted);
+  const ordered = [...attention, ...rest];
 
   const ids = ordered.map((course) => `course:${course.id}`);
   const overlayOpen = () => Boolean(document.querySelector(
@@ -163,24 +168,12 @@ export default function CourseList({
     }
   }
 
-  function commitRename() {
-    if (!renaming) return;
-    const value = renaming.shortName?.trim() ?? "";
-    const aliases = loadAliases();
-    if (value) aliases[String(renaming.id)] = value;
-    else delete aliases[String(renaming.id)];
-    saveAliases(aliases);
-    setRenaming(null);
-    // Display names come from the shared registry; rebuild it in place.
-    onChanged();
-  }
-
   function courseMenu(course: Course): MenuItemSpec[] {
     const paused = course.monitoringStatus === "paused";
     const items: MenuItemSpec[] = [
       {
         id: "rename",
-        label: "Rename…",
+        label: "Rename course",
         icon: <Pencil aria-hidden="true" />,
         onSelect: () => setRenaming(course),
       },
@@ -216,9 +209,9 @@ export default function CourseList({
   if (ordered.length === 0) {
     return (
       <EmptyState
-        title="No courses found"
-        body="Pulse discovers your courses on the first scan"
-        action={onSyncNow ? { label: "Sync now", onClick: onSyncNow } : undefined}
+        title={needle ? "No courses match your search" : "No courses found"}
+        body={needle ? "Try a different course name or code." : "Pulse discovers your courses on the first scan."}
+        action={needle ? undefined : onSyncNow ? { label: "Sync now", onClick: onSyncNow } : undefined}
       />
     );
   }
@@ -228,7 +221,7 @@ export default function CourseList({
     const lastChange = lastChangeByCourse.get(course.id);
     const unread = unreadByCourse?.get(course.id) ?? 0;
     const label = courseLabel(course.id);
-    const display = courseTitle(course.id, course.name);
+    const display = courseTitle(course.id, displayName(course));
     const raw = label?.raw ?? course.name;
     return (
       <div className="course-row" key={course.id}>
@@ -255,15 +248,13 @@ export default function CourseList({
           <span className="course-row-copy">
             <span className="course-row-name" title={raw}>{display}</span>
           </span>
-          <span className="course-row-unread">{unread > 0 ? `${unread}` : "—"}</span>
+          <span className="course-row-unread">{unread > 0 ? `${unread} unread` : "—"}</span>
           <span className="course-row-last mono">
-            {lastChange ? relativeLabel(lastChange) : "—"}
+            {formatListDate(lastChange)}
           </span>
-          <span className={cx("status-pill", status.kind)}>
-            <span className="s-dot" aria-hidden="true" />
-            {status.label}
+          <span className="course-row-status">
+            <span className={cx("status-pill", status.kind)}>{status.label}</span>
           </span>
-          <ChevronRight className="course-row-chevron" aria-hidden="true" />
         </button>
         <div className="course-row-actions">
           <Menu
@@ -285,53 +276,33 @@ export default function CourseList({
       <div>
         {attention.length > 0 && (
           <div className="course-attention-group">
-            <div className="group-header course-attention-header">Needs attention</div>
+            <GroupHeader label="Needs attention" count={attention.length} />
             {attention.map(renderCourse)}
           </div>
         )}
-        {rest.map(renderCourse)}
+        {rest.length > 0 && <div>
+          <GroupHeader label="Courses" count={rest.length} />
+          {rest.map(renderCourse)}
+        </div>}
       </div>
 
-      <ConfirmDialog
-        open={renaming !== null}
-        onOpenChange={(open) => {
-          if (!open) setRenaming(null);
-        }}
-        title="Rename course"
-        body={
-          <>
-            <label className="setting-desc" htmlFor="course-alias-input">
-              Only changes how this course appears in Pulse.
-            </label>
-            <input
-              id="course-alias-input"
-              className="text-field"
-              value={renaming?.shortName ?? ""}
-              autoFocus
-              onChange={(e) =>
-                setRenaming((current) =>
-                  current ? { ...current, shortName: e.target.value } : current,
-                )
-              }
-              onKeyDown={(e) => {
-                if (e.key === "Enter") commitRename();
-              }}
-            />
-          </>
-        }
-        confirmLabel="Save"
-        onConfirm={commitRename}
-      />
+      {renaming && <CourseRenameDialog
+        courseId={renaming.id}
+        name={courseTitle(renaming.id, displayName(renaming))}
+        onChanged={onChanged}
+        onClose={() => setRenaming(null)}
+      />}
 
       <ConfirmDialog
         open={confirmCourse !== null}
         onOpenChange={(open) => {
           if (!open) setConfirmCourse(null);
         }}
-        title={confirmCourse ? `Reset the baseline for ${courseTitle(confirmCourse.id, confirmCourse.name)}?` : "Reset the baseline?"}
+        title={confirmCourse ? `Reset the baseline for ${confirmCourse.shortName || courseTitle(confirmCourse.id, confirmCourse.name)}?` : "Reset the baseline?"}
         body="The next scan records everything currently on Quanta as your starting point. Those items will not be reported as new. History and saved files are kept."
         confirmLabel="Reset baseline"
         destructive
+        scopeList
         onConfirm={async () => {
           if (!confirmCourse) return;
           await api.rebuildBaseline(confirmCourse.id);

@@ -121,7 +121,7 @@ describe("PreviewDialog", () => {
     expect(onOpen).toHaveBeenCalledWith(resource.sourcePageUrl);
   });
 
-  it("renders a PDF in an embedded frame from decoded bytes", async () => {
+  it("does not hand PDF bytes to an embedded browser frame", async () => {
     vi.mocked(api.previewResource).mockResolvedValue({
       kind: "binary",
       mode: "pdf",
@@ -132,9 +132,8 @@ describe("PreviewDialog", () => {
     });
     await render(buildResource());
 
-    const frame = dialog().querySelector("iframe.preview-frame") as HTMLIFrameElement;
-    expect(frame).toBeTruthy();
-    expect(frame.getAttribute("src")).toBe("blob:mock");
+    expect(dialog().querySelector("iframe")).toBeNull();
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
   });
 
   // jsdom does not enforce a CSP, so the policy is read as text. Each directive
@@ -144,7 +143,7 @@ describe("PreviewDialog", () => {
     const policy =
       indexHtmlRaw.match(/Content-Security-Policy[\s\S]*?content="([^"]*)"/)?.[1] ?? "";
     expect(policy).toContain("default-src 'self'");
-    for (const directive of ["img-src", "media-src", "frame-src"]) {
+    for (const directive of ["img-src", "media-src"]) {
       const value = policy
         .split(";")
         .map((part) => part.trim())
@@ -154,6 +153,7 @@ describe("PreviewDialog", () => {
       // A preview never comes from a remote origin, only from local bytes.
       expect(value, `${directive} must stay local`).not.toContain("http");
     }
+    expect(policy).toContain("worker-src 'self'");
   });
 
   it("explains an unsupported type instead of pretending to preview it", async () => {
