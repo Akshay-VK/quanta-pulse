@@ -32,3 +32,7 @@ Existing research artifacts `/tmp/quanta-57-backend-frontier.md` and `/tmp/quant
 Toolchain note: Rust validation on this Linux environment was limited by absent GTK/WebKit system dependencies; the documented native Windows Cargo runner was the authoritative path for Rust checks/tests requiring the Tauri stack. The shared native runner serial lease was recorded as assigned to the backend delegate during setup.
 
 No application code, tests, issue closures, pushes, PRs, or merges were performed by this setup recovery pass. Implementation work remained tracked by #57 and its child issues.
+
+## 2026-11-21 integration follow-up
+
+See [2026-11-21 R1A/R1B integration evidence](2026-11-21-r1a-r1b-integration.md) for the serial R1B/R1A merge record on `feat/search-academic-expansion` (integration head `7d5abcadf05e3be374b5513e041bb8a8002c6a2d`). R1B (#61) and R1A (#60) remain open pending final acceptance/code review; R1A also has a documented proof gap owned by a separate proof agent.
