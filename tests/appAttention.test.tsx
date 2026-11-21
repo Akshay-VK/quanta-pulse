@@ -274,11 +274,12 @@ describe('complete inspector enrichment', () => {
   it('does not mistake a surviving resource beyond the old default page for an orphan', async () => {
     const first = Array.from({ length: 2000 }, (_, i) => resource({ id: i + 1, externalResourceId: `resource:${i}` }));
     const last = resource({ id: 2001, externalResourceId: 'last', title: 'Beyond the default cap' });
-    appApi.listResources.mockImplementation(async filter => filter?.offset ? [last] : first);
+    appApi.listResources.mockResolvedValue([...first, last]);
     appApi.queryInbox.mockResolvedValue({ ...page(), items: [{ ...page().items[0], key: 'resource:2001', resourceId: 2001, latestEvent: change({ resourceId: 2001, resourceTitle: last.title }) }] });
     app = await renderApp();
     await click(button('Show details for Beyond the default cap'));
-    expect(appApi.listResources).toHaveBeenCalledWith({ offset: 2000, limit: 2000 });
+    expect(appApi.listSearchInventory).toHaveBeenCalled();
+    expect(document.querySelector(".peek")?.textContent).not.toContain("The original resource no longer exists");
     expect(button('Download and open', document.querySelector('.peek')!)).toBeTruthy();
     expect(appApi.setEventReadState).toHaveBeenCalledWith([10, 11], true);
   });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parsePaletteQuery } from "../src/lib/paletteQuery";
+import { paletteQueryFilterValues, parsePaletteQuery, replacePaletteQueryFilter } from "../src/lib/paletteQuery";
 
 const courses = [
   { id: 1, name: "CS F111 Computer Programming", shortName: "CS F111" },
@@ -36,4 +36,25 @@ describe("parsePaletteQuery", () => {
       { text: "A+B", match: true },
     ]);
   });
+});
+
+it('retains quoted punctuation and literal quote/backslash escapes when editing controls', () => {
+  const raw = 'course:"ECOM \\"F222\\"" "A\\\\B" "lecture: 4"';
+  const result = parsePaletteQuery(raw, { courses: [{ id: 3, name: 'Econometrics', shortName: 'ECOM "F222"' }], resources: [] });
+  expect(result.errors).toEqual([]);
+  expect(result.filters.courseIds).toEqual([3]);
+  expect(result.terms).toEqual(['A\\B', 'lecture: 4']);
+  expect(result.freeRaw).toBe('"A\\\\B" "lecture: 4"');
+});
+
+it('edits read state without losing a saved filter, quoted phrase or course', () => {
+  const query = parsePaletteQuery('"lecture: 4" course:"CS F111" is:unread is:saved type:pdf', { courses, resources });
+  const edited = parsePaletteQuery(replacePaletteQueryFilter(query, 'is', 'read', ['read', 'unread']), { courses, resources });
+  expect(edited.errors).toEqual([]);
+  expect(edited.terms).toEqual(['lecture: 4']);
+  expect(edited.filters.courseIds).toEqual([1]);
+  expect(edited.filters.is).toEqual(['saved', 'read']);
+  expect(paletteQueryFilterValues(edited, 'type', resources)).toEqual(['PDF']);
+  const cleared = parsePaletteQuery(replacePaletteQueryFilter(edited, 'is', '', ['read', 'unread']), { courses, resources });
+  expect(cleared.filters.is).toEqual(['saved']);
 });

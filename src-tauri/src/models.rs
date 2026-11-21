@@ -59,6 +59,15 @@ pub struct Resource {
     pub is_external: bool,
 }
 
+/// Atomic desktop search inventory: courses and resources read under one
+/// database connection lock so concurrent writes cannot split the snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopSearchInventory {
+    pub courses: Vec<Course>,
+    pub resources: Vec<Resource>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChangeType {

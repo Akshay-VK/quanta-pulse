@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
-import type { DueFilter, DueResource, InboxFilter, InboxPage, Resource } from '../lib/types';
+import type { DueFilter, DueResource, InboxFilter, InboxPage } from '../lib/types';
 
 /** Collection owner. Totals come from complete queries, never loaded row counts. */
 export function useInbox() {
@@ -73,13 +73,3 @@ export function useDueInventory(filter: DueFilter) {
   return { items, pending, error, refresh };
 }
 export type DueState = ReturnType<typeof useDueInventory>;
-
-/** Inspector enrichment must not misidentify a resource beyond the legacy default page as orphaned. */
-export async function queryResourceInventory(): Promise<Resource[]> {
-  const items: Resource[] = [];
-  for (;;) {
-    const page = await api.listResources({ offset: items.length, limit: 2000 });
-    items.push(...page);
-    if (page.length < 2000) return items;
-  }
-}
