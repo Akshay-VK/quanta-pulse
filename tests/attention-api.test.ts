@@ -31,3 +31,12 @@ describe("attention command contracts", () => {
     await expect(api.setEventReadState([12], true)).rejects.toThrow("database unavailable");
   });
 });
+
+it('requests the complete atomic desktop inventory without offsets or limits', async () => {
+  const snapshot = { courses: [], resources: [] };
+  invoke.mockResolvedValueOnce(snapshot);
+  await expect(api.listSearchInventory()).resolves.toBe(snapshot);
+  expect(invoke).toHaveBeenLastCalledWith('list_search_inventory');
+  invoke.mockRejectedValueOnce(new Error('snapshot failed'));
+  await expect(api.listSearchInventory()).rejects.toThrow('snapshot failed');
+});

@@ -1,19 +1,31 @@
+import { dedupeCourseResources } from "./courseTree";
+import { resourceCategory, type ResourceCategoryId } from "./courseLibrary";
 /** Shared offline metadata search policy for the command palette and Library. */
 import type { Course, Resource } from "./types";
 import { parsePaletteQuery, normalizeSearchText as norm } from "./paletteQuery";
 import { activityTimestamp } from "./filter";
 import { parseTimestamp } from "./format";
 import { resourceSectionPath } from "./sectionPath";
-import { resolveTimezone, localDateKey } from "./agenda";
+import { resolveTimezone, localDateKey, validCalendarDate, validCalendarInstant } from "./agenda";
 
 export type SearchScope =
   | { kind: "everywhere" }
   | { kind: "course"; courseId: number }
   | { kind: "folder"; courseId: number; path: string[] };
 
+export interface SearchQueryState {
+  raw: string;
+  scope: SearchScope;
+  sourceFrom?: string | null;
+  sourceThrough?: string | null;
+  requestId: number;
+  revision?: string | null;
+}
+
 export interface SearchFilters {
-  sourceFrom?: string;
-  sourceThrough?: string;
+  category?: ResourceCategoryId | "all";
+  sourceFrom?: string | null;
+  sourceThrough?: string | null;
 }
 
 export interface SearchRequest {
@@ -63,27 +75,25 @@ function toDate(value: unknown): Date {
   return new Date();
 }
 
-function timeZoneOf(request: SearchRequest, inventory: SearchInventory, options?: any): string {
+function timeZoneOf(request: SearchRequest, inventory: SearchInventory, options?: { now?: Date | string | number; clock?: Date | string | number; timeZone?: string; timezone?: string }): string {
   return resolveTimezone(
     request.timeZone ?? request.timezone ?? inventory.timeZone ?? inventory.timezone ?? options?.timeZone ?? options?.timezone,
   );
 }
 
-function nowOf(request: SearchRequest, inventory: SearchInventory, options?: any): Date {
+function nowOf(request: SearchRequest, inventory: SearchInventory, options?: { now?: Date | string | number; clock?: Date | string | number; timeZone?: string; timezone?: string }): Date {
   const raw = request.now ?? request.clock ?? inventory.now ?? inventory.clock ?? options?.now ?? options?.clock;
   return raw === undefined ? new Date() : toDate(raw);
 }
 
-function validDateKey(key: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(key);
-}
 
 function activityDateKey(resource: Resource, timeZone: string): string | null {
   const ts = activityTimestamp(resource);
   if (!ts) return null;
-  const parsed = parseTimestamp(ts);
+  if (isDateOnly(ts)) return validCalendarDate(ts) ? ts : null;
+  const parsed = validCalendarInstant(ts) ? parseTimestamp(ts) : null;
   if (!parsed) {
-    if (validDateKey(ts)) return ts;
+    if (validCalendarDate(ts)) return ts;
     return null;
   }
   return localDateKey(parsed, timeZone);
@@ -95,8 +105,8 @@ function isDateOnly(value: string): boolean {
 
 function dueDayKey(resource: Resource, timeZone: string): string | null {
   if (!resource.dueAt) return null;
-  if (isDateOnly(resource.dueAt)) return resource.dueAt;
-  const parsed = parseTimestamp(resource.dueAt);
+  if (isDateOnly(resource.dueAt)) return validCalendarDate(resource.dueAt) ? resource.dueAt : null;
+  const parsed = validCalendarInstant(resource.dueAt) ? parseTimestamp(resource.dueAt) : null;
   if (!parsed) return null;
   return localDateKey(parsed, timeZone);
 }
@@ -109,15 +119,24 @@ export function inSearchScope(resource: Resource, scope: SearchScope): boolean {
   return scope.path.every((segment, index) => path[index] === segment);
 }
 
-export function searchDesktop(request: SearchRequest, inventory: SearchInventory, options?: any): SearchResult {
+export function searchDesktop(request: SearchRequest, inventory: SearchInventory, options?: { now?: Date | string | number; clock?: Date | string | number; timeZone?: string; timezone?: string }): SearchResult {
+  const resources = dedupeCourseResources([...inventory.resources]);
   const tz = timeZoneOf(request, inventory, options);
   const now = nowOf(request, inventory, options);
   const parsed = parsePaletteQuery(request.raw, {
-    courses: inventory.courses as any,
-    resources: inventory.resources as any,
+    courses: inventory.courses,
+    resources: inventory.resources,
     displayNames: inventory.displayNames,
   });
   const errors = [...parsed.errors];
+  const { sourceFrom: from, sourceThrough: through } = request.filters ?? {};
+  if ((from && !validCalendarDate(from)) || (through && !validCalendarDate(through))) errors.push("Invalid source date");
+  if (from && through && from > through) errors.push("Source date start must precede end");
+  if (request.scope.kind !== "everywhere") {
+    const scope = request.scope;
+    if (!inventory.courses.some(c => c.id === scope.courseId)) errors.push("Course unavailable");
+    else if (scope.kind === "folder" && !inventory.resources.some(r => inSearchScope(r, scope))) errors.push("Folder unavailable");
+  }
   const terms = parsed.terms.map(norm).filter(Boolean);
   const byCourse = new Map((inventory.courses as Course[]).map((c) => [c.id, c]));
   const unreadIds = inventory.unreadIds ?? new Set<number>();
@@ -131,7 +150,8 @@ export function searchDesktop(request: SearchRequest, inventory: SearchInventory
     return values;
   };
 
-  const fileFiltersActive =
+  const fileFiltersActive = Boolean(request.filters?.category && request.filters.category !== "all") ||
+    Boolean(request.filters?.category && request.filters.category !== "all") ||
     Boolean(parsed.filters.types?.length) ||
     Boolean(parsed.filters.is?.length) ||
     Boolean(parsed.filters.due?.length) ||
@@ -142,8 +162,10 @@ export function searchDesktop(request: SearchRequest, inventory: SearchInventory
   const fileMatches = (r: Resource): boolean => {
     if (errors.length) return false;
     if (!inSearchScope(r, request.scope)) return false;
+    if (request.filters?.category && request.filters.category !== "all" && resourceCategory(r.resourceType) !== request.filters.category) return false;
+    if (request.filters?.category && request.filters.category !== "all" && resourceCategory(r.resourceType) !== request.filters.category) return false;
     if (parsed.filters.courseIds && (r.courseId === null || !parsed.filters.courseIds.includes(r.courseId))) return false;
-    if (parsed.filters.types && !parsed.filters.types.includes(r.resourceType)) return false;
+    if (parsed.filters.types && !parsed.filters.types.some(type => norm(type) === norm(r.resourceType))) return false;
     const unread = isUnread(r);
     const saved = isSaved(r);
     if (parsed.filters.is?.includes("read") && unread) return false;
@@ -155,19 +177,13 @@ export function searchDesktop(request: SearchRequest, inventory: SearchInventory
     if (dueValues.length) {
       const dk = dueDayKey(r, tz);
       const todayKey = localDateKey(now, tz);
-      if (dueValues.includes("none")) {
-        if (dk) return false;
-      } else {
-        if (!dk) return false;
-        const isToday = dk === todayKey;
-        const isOverdue = dk < todayKey;
-        const isWeek = !isOverdue && (dateOrdinal(dk) - dateOrdinal(todayKey)) < 7;
-        const matches =
-          (dueValues.includes("today") && isToday) ||
-          (dueValues.includes("week") && isWeek) ||
-          (dueValues.includes("overdue") && isOverdue);
-        if (!matches) return false;
-      }
+      const overdue = dk && (isDateOnly(r.dueAt!) ? dk < todayKey : new Date(r.dueAt!).getTime() < now.getTime());
+      const matches = (!dk && dueValues.includes("none")) || Boolean(dk && (
+        (dueValues.includes("today") && dk === todayKey) ||
+        (dueValues.includes("week") && !overdue && dateOrdinal(dk) - dateOrdinal(todayKey) < 7) ||
+        (dueValues.includes("overdue") && overdue)
+      ));
+      if (!matches) return false;
     }
 
     const from = request.filters?.sourceFrom;
@@ -191,7 +207,7 @@ export function searchDesktop(request: SearchRequest, inventory: SearchInventory
     return terms.every((term) => haystack.includes(term));
   };
 
-  const candidateFiles = (inventory.resources as Resource[]).filter(fileMatches);
+  const candidateFiles = resources.filter(fileMatches);
 
   // Rank files.
   const phrase = terms.join(" ");
@@ -205,7 +221,7 @@ export function searchDesktop(request: SearchRequest, inventory: SearchInventory
   };
   const activityTime = (r: Resource): number => {
     const ts = activityTimestamp(r);
-    const parsedTs = ts ? parseTimestamp(ts) : null;
+    const parsedTs = ts && (validCalendarInstant(ts) || validCalendarDate(ts)) ? parseTimestamp(ts) : null;
     return parsedTs ? parsedTs.getTime() : Number.NEGATIVE_INFINITY;
   };
   const rankedFiles = [...candidateFiles].sort((a, b) => {
@@ -218,9 +234,16 @@ export function searchDesktop(request: SearchRequest, inventory: SearchInventory
     return a.id - b.id;
   });
 
+  const matchingCourses = new Set(rankedFiles.map(r => r.courseId));
+  const matchingFolders = new Set<string>();
+  for (const r of rankedFiles) {
+    const path = resourceSectionPath(r);
+    path.forEach((_, i) => matchingFolders.add(JSON.stringify([r.courseId, path.slice(0, i + 1)])));
+  }
+
   // Folders.
   const folderMap = new Map<string, SearchFolder>();
-  for (const r of inventory.resources as Resource[]) {
+  for (const r of resources) {
     if (r.courseId == null) continue;
     if (!inSearchScope(r, request.scope)) continue; // only folders within scope resources
     const path = resourceSectionPath(r);
@@ -243,7 +266,7 @@ export function searchDesktop(request: SearchRequest, inventory: SearchInventory
     if (parsed.filters.courseIds && !parsed.filters.courseIds.includes(f.courseId)) return false;
     if (fileFiltersActive) {
       // must contain at least one matching file in its scope
-      const has = rankedFiles.some((r) => r.courseId === f.courseId && resourceSectionPath(r).length >= f.path.length && f.path.every((p, i) => resourceSectionPath(r)[i] === p));
+      const has = matchingFolders.has(f.id);
       if (!has) return false;
     }
     return true;
@@ -267,7 +290,7 @@ export function searchDesktop(request: SearchRequest, inventory: SearchInventory
     const haystack = fields.map(norm).join(" ");
     if (terms.length > 0 && !terms.every((t) => haystack.includes(t))) return false;
     if (fileFiltersActive) {
-      const has = rankedFiles.some((r) => r.courseId === c.id);
+      const has = matchingCourses.has(c.id);
       if (!has) return false;
     }
     return true;

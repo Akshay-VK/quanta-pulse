@@ -716,3 +716,22 @@
     }
   }
 }
+
+
+.desktop-search-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.desktop-search-controls select, .desktop-search-controls input {
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  max-width: 280px;
+  font: inherit;
+}
+.desktop-search-controls .faint { font-size: 11px; }

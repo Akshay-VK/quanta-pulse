@@ -1,8 +1,11 @@
+import { Banner } from "./ui/Banner";
+import { SearchControls } from "./SearchControls";
+import type { SearchFilters } from "../lib/desktopSearch";
 import { useMirror } from "../hooks/useMirror";
 import { isLocal } from "../lib/mirrorState";
 import { Command } from "cmdk";
 import { Calendar, Folder, History, Inbox, Library, Search, Settings } from "lucide-react";
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { NAV, type ViewId } from "../lib/nav";
 import { courseTitle } from "../lib/courseName";
 import { Kbd } from "./ui/Kbd";
@@ -10,8 +13,10 @@ import { FileTypeIcon } from "./ui/FileTypeIcon";
 import { Dialog } from "./ui/Dialog";
 import type { Course, Resource } from "../lib/types";
 import { searchDesktop } from "../lib/desktopSearch";
+import type { SearchScope } from "../lib/desktopSearch";
 import { splitLiteralMatches } from "../lib/filter";
 import { parsePaletteQuery } from "../lib/paletteQuery";
+import { loadAliases, buildDisplayNames } from "../lib/courseName";
 
 const VIEW_ICON: Record<ViewId, ReactNode> = {
   today: <Inbox aria-hidden="true" />,
@@ -46,7 +51,7 @@ export default function CommandPalette({
   courses,
   onCourse,
   onFolder,
-  resources,
+  resources, timeZone, inventoryPending, inventoryError,
   unreadResources,
   onInspectResource,
   onSeeAllFiles,
@@ -59,9 +64,12 @@ export default function CommandPalette({
   onCourse: (id: number) => void;
   onFolder?: (courseId: number, path: string[]) => void;
   resources: Resource[];
+  timeZone?: string;
+  inventoryPending?: boolean;
+  inventoryError?: string | null;
   unreadResources?: ReadonlySet<number>;
   onInspectResource: (resource: Resource) => void;
-  onSeeAllFiles: (query: string, filters?: { ids: ReadonlySet<number>; label: string }) => void;
+  onSeeAllFiles: (query: string, options?: { scope?: SearchScope; sourceFrom?: string | null; sourceThrough?: string | null }) => void;
   actions: PaletteAction[];
 }) {
   const mirror = useMirror();
@@ -69,20 +77,24 @@ export default function CommandPalette({
   const [draft, setDraft] = useState("");
   const [tokens, setTokens] = useState<string[]>([]);
   const [recentId, setRecentId] = useState<number>();
+  const [scope, setScope] = useState<SearchScope>({ kind: "everywhere" });
+  const [filters, setFilters] = useState<SearchFilters>({});
+  useEffect(() => { if (open) setScope({ kind: "everywhere" }); }, [open]);
   const query = [...tokens, draft].filter(Boolean).join(" ");
-  const parsed = useMemo(() => parsePaletteQuery(query, { courses, resources }), [query, courses, resources]);
+  const aliases = useMemo(() => loadAliases(), [courses]);
+  const displayNames = useMemo(() => buildDisplayNames(courses, aliases), [courses, aliases]);
+  const parsed = useMemo(() => parsePaletteQuery(query, { courses, resources, displayNames, aliases }), [query, courses, resources, displayNames, aliases]);
   const needle = parsed.freeText.toLowerCase();
-  const hasQuery = query.trim().length > 0;
+  const hasQuery = query.trim().length > 0 || Boolean(filters.sourceFrom || filters.sourceThrough);
 
   const isSaved = (resource: Resource) => Boolean(
     !resource.isExternal && mirror && isLocal(mirror.statusOf(resource.id)),
   );
   const savedIds = useMemo(() => new Set(resources.filter((r) => isSaved(r)).map((r) => r.id)), [resources, mirror]);
-  const displayNames = useMemo(() => new Map(courses.map((c) => [c.id, c.displayName ?? ""])), [courses]);
   const searchResult = useMemo(() => searchDesktop(
-    { raw: query, scope: { kind: "everywhere" } },
+    { raw: query, scope, filters, timeZone },
     { courses, resources, displayNames, unreadIds: unreadResources, savedIds, revision: undefined },
-  ), [query, courses, resources, displayNames, unreadResources, savedIds]);
+  ), [query, courses, resources, displayNames, unreadResources, savedIds, scope, filters, timeZone]);
   const navItems = NAV.filter((item) => (!hasQuery || needle) && (!needle || item.label.toLowerCase().includes(needle)));
   const courseMatches = hasQuery && !parsed.hasKnownInvalid ? searchResult.courses : [];
   const files = hasQuery && !parsed.hasKnownInvalid ? searchResult.files.slice(0, 8) : [];
@@ -92,8 +104,7 @@ export default function CommandPalette({
     : !action.searchableOnly);
   const anyFileMatch = files.length > 0;
   const viewAllFiles = () => {
-    const label = parsed.tokens.filter((token) => token.valid).map((token) => token.raw).join(" ");
-    onSeeAllFiles(parsed.freeText, label ? { ids: new Set(searchResult.files.map(({ id }) => id)), label } : undefined);
+    onSeeAllFiles(query, { scope, ...filters });
   };
   const recent = resources.find((resource) => resource.id === recentId)
     ?? resources.reduce<Resource | undefined>((latest, resource) => !latest || latest.firstSeenAt < resource.firstSeenAt ? resource : latest, undefined);
@@ -101,6 +112,7 @@ export default function CommandPalette({
   const resetQuery = () => {
     setDraft("");
     setTokens([]);
+    setFilters({});
   };
 
   const run = (fn: () => void) => {
@@ -109,7 +121,7 @@ export default function CommandPalette({
     fn();
   };
 
-  const noResults = hasQuery && files.length === 0 && courseMatches.length === 0 && actionMatches.length === 0 && navItems.length === 0 && !anyFileMatch;
+  const noResults = hasQuery && files.length === 0 && courseMatches.length === 0 && actionMatches.length === 0 && navItems.length === 0 && folderMatches.length === 0 && !anyFileMatch && searchResult.errors.length === 0 && !inventoryError && !inventoryPending;
 
   return (
     <Dialog
@@ -141,7 +153,7 @@ export default function CommandPalette({
             value={draft}
             onValueChange={(value) => {
               if (/\s$/.test(value)) {
-                const token = parsePaletteQuery(value, { courses, resources });
+                const token = parsePaletteQuery(value, { courses, resources, displayNames, aliases });
                 if (!token.freeText && token.tokens.length > 0 && token.tokens.every((entry) => entry.valid)) {
                   setTokens((current) => [...current, ...token.tokens.map((entry) => entry.raw)]);
                   setDraft("");
@@ -167,7 +179,15 @@ export default function CommandPalette({
           />
           <span className="palette-extra"><Kbd keys="Esc" /></span>
         </div>
+        <SearchControls raw={query} onRaw={raw => { setTokens([]); setDraft(raw); }} scope={scope} onScope={setScope} filters={filters} onFilters={setFilters} courses={courses} resources={resources} />
         <Command.List className="palette-list">
+          {inventoryError ? <Banner kind="error">Search refresh failed. Retained results are shown. {inventoryError}</Banner> : inventoryPending && <Banner kind="info">Search inventory is refreshing. Retained results are shown.</Banner>}
+          {searchResult.errors.length > 0 && (
+            <div className="palette-empty-state" role="alert">
+              <div className="palette-empty-title">Invalid search</div>
+              <div className="palette-empty-copy">{searchResult.errors.join(" ")}</div>
+            </div>
+          )}
           {noResults && (
             <div className="palette-empty-state">
               <div className="palette-empty-title">No results for “{query.trim()}”</div>
@@ -227,7 +247,7 @@ export default function CommandPalette({
                   onSelect={() => run(() => onFolder?.(folder.courseId, folder.path))}>
                   <span className="icon"><Folder aria-hidden="true" /></span>
                   <span className="palette-main"><Highlight text={folder.name} query={needle || query.trim()} /></span>
-                  <span className="palette-extra"><span className="mono faint">{folder.path.join(" / ")}</span></span>
+                  <span className="palette-extra"><span className="mono faint">{displayNames.get(folder.courseId) || courseTitle(folder.courseId, courses.find(c => c.id === folder.courseId)?.name ?? "")} / {folder.path.join(" / ")}</span></span>
                 </Command.Item>
               ))}
             </Command.Group>
@@ -255,7 +275,7 @@ export default function CommandPalette({
                   inputRef.current?.focus();
                 }}>Clear filters</Command.Item>
               )}
-              <Command.Item className="palette-item" value={`Search all files ${query.trim()}`} onSelect={() => run(() => onSeeAllFiles(parsed.freeText))}>
+              <Command.Item className="palette-item" value={`Search all files ${query.trim()}`} onSelect={() => run(() => onSeeAllFiles(query, { scope, ...filters }))}>
                 <span className="icon"><Search aria-hidden="true" /></span>
                 <span>Search all files</span>
                 <span className="palette-extra"><Kbd keys="Enter" /></span>

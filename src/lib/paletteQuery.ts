@@ -15,6 +15,7 @@ export interface PaletteQueryToken {
 export interface PaletteQuery {
   raw: string;
   freeText: string;
+  freeRaw: string;
   terms: string[];
   tokens: PaletteQueryToken[];
   filters: {
@@ -48,6 +49,7 @@ export function parsePaletteQuery(
   const errors: string[] = [];
   const tokens: PaletteQueryToken[] = [];
   const free: string[] = [];
+  const freeRaw: string[] = [];
   const courseIds = new Set<number>();
   const types = new Set<string>();
   const is = new Set<"read" | "unread" | "saved" | "unsaved">();
@@ -86,6 +88,7 @@ export function parsePaletteQuery(
     const idx = entry.colon;
     if (idx <= 0) {
       free.push(part);
+      freeRaw.push(entry.raw);
       continue;
     }
     const key = normalizeSearchText(part.slice(0, idx));
@@ -101,7 +104,7 @@ export function parsePaletteQuery(
         const names = [
           c.name,
           c.shortName ?? "",
-          (c as any).displayName ?? "",
+          c.displayName ?? "",
           inventory.displayNames?.get(c.id) ?? "",
           inventory.aliases?.[String(c.id)] ?? "",
         ];
@@ -149,6 +152,7 @@ export function parsePaletteQuery(
   return {
     raw,
     freeText,
+    freeRaw: freeRaw.join(" "),
     terms,
     tokens,
     filters: {

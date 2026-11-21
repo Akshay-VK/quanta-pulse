@@ -26,7 +26,8 @@ import { Dialog } from "./components/ui/Dialog";
 import { TooltipProvider } from "./components/ui/Tooltip";
 import { Toaster, type ToastItem } from "./components/ui/Toast";
 import InboxView from "./views/InboxView";
-import { useInbox, useDueInventory, queryResourceInventory } from "./hooks/useAttention";
+import { useInbox, useDueInventory } from "./hooks/useAttention";
+import type { SearchQueryState, SearchScope } from "./lib/desktopSearch";
 import { agendaEntries, resolveTimezone } from "./lib/agenda";
 import CalendarView from "./views/CalendarView";
 import LibraryView from "./views/LibraryView";
@@ -149,9 +150,7 @@ function AppShell() {
   const [paletteReadIds, setPaletteReadIds] = useState<number[] | null>(null);
   const paletteReadRequest = useRef<object | null>(null);
   const [paletteReadError, setPaletteReadError] = useState<string | null>(null);
-  const [librarySearch, setLibrarySearch] = useState<string | undefined>();
-  const [librarySearchScope, setLibrarySearchScope] = useState<{ ids: ReadonlySet<number>; label: string }>();
-  const [librarySearchRequest, setLibrarySearchRequest] = useState(0);
+  const [librarySearchQuery, setLibrarySearchQuery] = useState<SearchQueryState | undefined>();
   const [pendingPaletteInspection, setPendingPaletteInspection] = useState<Resource | null>(null);
   const [selection, setSelection] = useState<DetailSelection | null>(null);
   const selectionRef = useRef<DetailSelection | null>(null);
@@ -225,6 +224,16 @@ function AppShell() {
       go({ view: "library", courseId, folderPath: folderPath ? [...folderPath] : null }),
     [go],
   );
+  const handleSeeAllFiles = useCallback((raw: string, options?: { scope?: SearchScope; sourceFrom?: string | null; sourceThrough?: string | null }) => {
+    setLibrarySearchQuery((previous) => ({
+      raw,
+      scope: options?.scope ?? { kind: "everywhere" },
+      sourceFrom: options?.sourceFrom ?? null,
+      sourceThrough: options?.sourceThrough ?? null,
+      requestId: (previous?.requestId ?? 0) + 1,
+    }));
+    go({ view: "library", courseId: null, folderPath: null });
+  }, [go]);
 
   const goBack = useCallback(() => {
     if (backStack.current.length === 0) return;
@@ -297,9 +306,8 @@ function AppShell() {
     setLoading(true);
     setEventScopeReady(false);
     try {
-      const [c, r, he, s, info] = await Promise.all([
-        api.listCourses(),
-        queryResourceInventory(),
+      const [inventory, he, s, info] = await Promise.all([
+        api.listSearchInventory(),
         queryHistoryInventory(),
         api.listHistoryScans(),
         api.dbInfo(),
@@ -309,8 +317,8 @@ function AppShell() {
         if (requireSuccess) throw new Error("History refresh superseded; retry refresh.");
         return;
       }
-      setCourses(c);
-      setResources(r);
+      setCourses(inventory.courses);
+      setResources(inventory.resources);
       setHistoryEvents(he);
       setScans(s);
       setDbInfo(info);
@@ -1186,6 +1194,7 @@ function AppShell() {
                     courseId={route.courseId}
                     folderPath={route.folderPath}
                     onNavigate={navigateToCourse}
+                    onSeeAllFiles={handleSeeAllFiles}
                     unreadByCourse={unreadByCourse}
                     details={detailsAdapters.library}
                     loading={loading}
@@ -1194,10 +1203,10 @@ function AppShell() {
                     onChanged={refresh}
                     onActivityChanged={() => refresh(true)}
                     onOpen={(url) => void open(url)}
-                    initialSearch={librarySearch}
-                    initialSearchKey={librarySearchRequest}
-                    requestedFileIds={librarySearchScope?.ids}
-                    requestedFileFilterLabel={librarySearchScope?.label}
+                    timeZone={timeZone}
+                    initialSearch={librarySearchQuery?.raw}
+                    initialSearchQuery={librarySearchQuery}
+                    initialSearchKey={librarySearchQuery?.requestId ?? 0}
                     onSyncNow={() => void handleSync()}
                   />
                 )}
@@ -1282,14 +1291,12 @@ function AppShell() {
           onCourse={navigateToCourse}
           onFolder={navigateToCourse}
           resources={resources}
+          inventoryPending={loading}
+          inventoryError={loadError}
           unreadResources={unreadResources}
+          timeZone={timeZone}
           onInspectResource={(resource) => { setPendingPaletteInspection(resource); navigate("library"); }}
-          onSeeAllFiles={(query, scope) => {
-            setLibrarySearch(query);
-            setLibrarySearchScope(scope);
-            setLibrarySearchRequest((previous) => previous + 1);
-            navigate("library");
-          }}
+          onSeeAllFiles={handleSeeAllFiles}
           actions={paletteActions}
         />
 
