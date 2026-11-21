@@ -36,3 +36,7 @@ No application code, tests, issue closures, pushes, PRs, or merges were performe
 ## 2026-11-21 integration follow-up
 
 See [2026-11-21 R1A/R1B integration evidence](2026-11-21-r1a-r1b-integration.md) for the serial R1B/R1A merge record on `feat/search-academic-expansion`. R1A regression proof was merged at `12391a3` (`ecfc5bf`, 2026-11-21 superseding note) with documented acceptance/proof limits; R1B (#61) and R1A (#60) remain open pending final acceptance/code review.
+
+### 2026-11-21 superseding identity prerequisite checkpoint
+
+The [R1B identity proof integration note](2026-11-21-r1a-r1b-integration.md#2026-11-21-superseding-note--r1b-identity-proof-integrated) records source `dd0d1646a600ce112167070da7c28ed2a1526167` merged at `ce9ee1e91374d2355d2de571c93406e3f245f7cd`. This supersedes the earlier setup frontier for verified session publication: production verification/install, rotated transport and cancelled/stale SSO rejection now have six synthetic regressions and inherited same-tree Windows evidence (284 passed, 1 ignored; all-targets check passed). R1A transaction/reset tests and the R1B schema revision gate are unchanged. Verified identity publication is sufficient as an input prerequisite for local synthetic A0 development; owner partitions/generations, R2 and V1 remain separate gates. No live/native GUI/TLS or final #61/#57 acceptance is claimed.

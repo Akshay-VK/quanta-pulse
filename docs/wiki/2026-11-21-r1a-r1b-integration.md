@@ -96,3 +96,45 @@ This note supersedes the earlier "R1A proof gap / limits" section only to the ex
 - Coverage does not directly exercise every R1A acceptance case: `run_scan` dispatch gating (notifications/mirror/miss/baseline consumption) is covered indirectly by `commit_scan` committed contract, not end-to-end through `run_scan`; detail-task JoinSet failure injection, partial nested page, genuine complete empty course, and the two-complete-scan `MISS_THRESHOLD=2` absence case are not directly covered by these added tests. Detail join failure remains a documented code-path limit in proof result.
 - No live Quanta access, no packaged app run. Full native suite not rerun by this merger; shared canonical full runner lease constraints apply.
 - #60 and #62 remain **open** pending final acceptance/parent review. R2 may proceed on local behavior acceptance where R1A contracts are satisfied, but final parent review remains required.
+
+## 2026-11-21 superseding note — R1B identity proof integrated
+
+This note supersedes the earlier R1B identity-proof status and integration-head checkpoint. Historical checks above retain their original scope. It does not add migration/backup proof, close #61, or claim final acceptance of #57.
+
+- Prior integration head: `5756e70f5d087791aaea3e6fa988d3e6f5d7e809`.
+- Identity proof source: [`dd0d1646a600ce112167070da7c28ed2a1526167`](https://github.com/Akshay-VK/quanta-pulse/commit/dd0d1646a600ce112167070da7c28ed2a1526167) (`test: prove verified session identity publication (#61)`).
+- Code integration merge: [`ce9ee1e91374d2355d2de571c93406e3f245f7cd`](https://github.com/Akshay-VK/quanta-pulse/commit/ce9ee1e91374d2355d2de571c93406e3f245f7cd) (`test: merge R1B session identity publication proof (#61)`). Conventional `--no-ff` merge, no conflicts or source edits by the merger.
+- Entire merged tree equals the proof source tree: `f8d6eaca6e4957dde287edc49fce5442c24a5e2b`. `git diff --exit-code dd0d164 HEAD` and `git diff --check 5756e70 HEAD` passed at this code checkpoint; worktree clean.
+- Delta is limited to `src-tauri/src/auth.rs`, test-only fixture support in `src-tauri/src/quanta/client.rs`, and `tests/auth_session_publication.rs`. R1A engine/discovery/reset regression files and `src-tauri/src/db.rs` are byte-identical to `5756e70`, preserving the R1B schema revision gate and earlier migration proof.
+
+### Production contract and six tests
+
+Both real password and SSO finalization call the extracted `verify_and_install_session` operation. It performs the actual `/my/` fetch, parses verified facts, updates session metadata on the same client/jar, and installs state through the existing synchronous `commit_sso_if_current` fence. The Tauri adapter still emits `auth:changed` before reading status. The operation is private; tests access the real implementation from its test module. This is production-operation coverage, not a claim that a new public command was added.
+
+The six regressions use loopback HTTP, real reqwest cookies, real AppState and temporary file-backed SQLite:
+
+1. Password publication replaces stale user ID/name/sesskey, preserves explicit label/method/acquisition time, updates AuthStatus/SQLite/auth state, clears the previous error, and leaves an unrelated SSO slot intact.
+2. Current SSO publishes verified identity and preserves the existing `quanta-account` fullname fallback.
+3. Current SSO preserves an explicit account label.
+4. Cancellation while `/my/` is paused rejects installation after the response, preserving the prior client, persisted label, expiry and error.
+5. A delayed old SSO response cannot replace identity or consume/complete its successor.
+6. HTTP 401 verification leaves prior identity/state untouched.
+
+All three success paths assert exactly the original cookie on `/my/`, rotated session metadata, and exactly the rotated cookie on a subsequent authenticated `/next` request. The active origin is checked before that request. No second stale transport is constructed after verification.
+
+### Check provenance and mutation limits
+
+The merger inspected the actual six tests and retained logs from `/tmp/quanta-57-r1b-proof-result.md`; it did not execute the mutations or rerun Cargo. The implementer used distinct `%TEMP%\quanta-r1b-session-proof-target`, preserving canonical runner manifest flags and avoiding R2's canonical target lease.
+
+- Identity mutation: omit only `client.session = session.clone()`; auth run exit 101, 14 passed / 1 failed / 1 ignored, stale fullname observed. Restored assignment: identical auth filter exit 0, 15 passed / 1 ignored.
+- Fence mutation: bypass only `commit_sso_if_current` ownership checking; six-test run exit 101, 4 passed / 2 failed, cancelled/stale responses unexpectedly published. Restored fence and final adapter ordering: auth run exit 0, 20 passed / 1 ignored.
+- These are staged mutation regressions on the already repaired production operation, not a checkout-and-run reproduction of every historical pre-fix tree. Fence RED preceded the final unit-return/emit-before-status extraction adjustment; final full GREEN includes that adjustment and stricter cookie/origin assertions. No independent cookie-loss mutation is documented.
+- Final `cargo test --target x86_64-pc-windows-msvc --lib`: **284 passed, 0 failed, 1 ignored**, 8.53 seconds (`/tmp/quanta-r1b-full-tests.log`).
+- Final `cargo check --all-targets --target x86_64-pc-windows-msvc`: passed (`/tmp/quanta-r1b-check.log`). The implementer also recorded passing `git diff --check` and fixture rustfmt check.
+- Integration verification is same-tree equality and whitespace checks. No duplicate full suite or frontend gates: no frontend change, unchanged tested Rust tree, canonical runner reserved for R2 until the assembled gate.
+
+### A0 prerequisite and remaining limits
+
+The verified-identity publication prerequisite is satisfied for **local synthetic A0 work**, alongside the previously integrated migration revision gate. It supplies verified Moodle ID/current metadata when `/my/` exposes them. It does not make email/fullname an ownership key, guarantee every page exposes a verified ID, or implement academic isolation. A0 must require official origin plus verified Moodle user ID, reject absent/unverified ownership, partition reads/storage/baselines, advance work generations on logout/reset/replacement, and reject late persistence/events/frontend results. R2 remains a separate prerequisite.
+
+No native credential acquisition/WebView lifecycle, Tauri event delivery, live Quanta/SSO, deployed Moodle layout, TLS/Secure-cookie behavior, or real student identity was proved. HTTP fixture cookies deliberately omit Secure; the production HTTPS origin and Secure-cookie constructor are unchanged. The ignored interactive blank-window test remains ignored. Linux GTK/WebKit and minimum Rust 1.77 execution remain unproved. The separate migration/backup acceptance matrix is not newly proved here. V1 continues to gate unattended academic collection. #61 and #57 remain open; no final parent acceptance claim.
