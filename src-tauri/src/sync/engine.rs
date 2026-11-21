@@ -240,13 +240,6 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
     }
 
     let now = db::now_rfc3339();
-    let mut new_count = 0i64;
-    let mut updated_count = 0i64;
-    let mut unavailable_count = 0i64;
-    let mut seen_ids: Vec<String> = Vec::new();
-    let mut missing_ids: Vec<String> = Vec::new();
-
-    let mut commit_ok = false;
     let reconcile_result = {
         let state = app.state::<AppState>();
         let conn = state.conn();
@@ -262,19 +255,16 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
         )
     };
     outcome.errors.extend(reconcile_result.errors);
-    commit_ok = reconcile_result.committed;
-    new_count = reconcile_result.new as i64;
-    updated_count = reconcile_result.updated as i64;
-    unavailable_count = reconcile_result.unavailable as i64;
-    missing_ids = reconcile_result.missing_ids;
+    let commit_ok = reconcile_result.committed;
+    let new_count = reconcile_result.new as i64;
+    let updated_count = reconcile_result.updated as i64;
+    let unavailable_count = reconcile_result.unavailable as i64;
+    let missing_ids = reconcile_result.missing_ids;
 
     // Apply miss-streak bumps after the inventory transaction has committed.
     if commit_ok && !missing_ids.is_empty() {
         let state = app.state::<AppState>();
         let conn = state.conn();
-        if let Err(e) = db::bump_miss_streak(&conn, &missing_ids, MISS_THRESHOLD) {
-            outcome.errors.push(format!("miss tracking failed: {e}"));
-        }
         // A resource Quanta keeps hiding keeps whatever it has, labelled: the
         // local copy is exactly what should outlive the listing.
         let _ = state.mirror.mark_unavailable_kept(&conn);
@@ -288,31 +278,6 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
         let queued = state.mirror.enqueue_all(&conn);
         if queued > 0 {
             tracing::info!(queued, "scan enqueued for the local mirror");
-        }
-    }
-
-    // Consume only courses that were pending at scan start and whose complete
-    // page plus detail traversal reached success. Re-read the setting so a
-    // reset queued while discovery was running remains pending.
-    if commit_ok && !rebaseline.is_empty() {
-        let state = app.state::<AppState>();
-        let mut conn = state.conn();
-        let completed_course_ids: HashSet<i64> = discovery
-            .courses
-            .iter()
-            .filter(|course| discovery.successful_courses.contains(&course.external_id))
-            .filter_map(|course| db::course_id_for_external(&conn, &course.external_id))
-            .collect();
-        if let Err(error) = consume_completed_rebaseline_markers(
-            &mut conn,
-            &rebaseline,
-            &completed_course_ids,
-            baseline_generation,
-            discovery.cancelled,
-        ) {
-            outcome
-                .errors
-                .push(format!("could not update course baseline markers: {error}"));
         }
     }
 
@@ -402,6 +367,7 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
 /// Remove only start-of-scan reset markers for courses that completed a full
 /// discovery. The setting is re-read before writing to preserve requests added
 /// by another command while the scan was in progress.
+#[cfg(test)]
 fn consume_completed_rebaseline_markers(
     conn: &mut rusqlite::Connection,
     markers_at_start: &HashSet<i64>,
@@ -421,14 +387,23 @@ fn consume_completed_rebaseline_markers(
     }
 
     let tx = conn.transaction()?;
-    let current_generation = db::get_kv(&tx, "baseline_reset_generation")
+    consume_rebaseline_markers(&tx, &consumed, captured_generation)?;
+    tx.commit()
+}
+
+fn consume_rebaseline_markers(
+    conn: &rusqlite::Connection,
+    consumed: &HashSet<i64>,
+    captured_generation: i64,
+) -> rusqlite::Result<()> {
+    if consumed.is_empty() { return Ok(()); }
+    let current_generation = db::get_kv(conn, "baseline_reset_generation")
         .and_then(|value| value.parse::<i64>().ok())
         .unwrap_or(0);
     if current_generation != captured_generation {
-        tx.rollback()?;
         return Ok(());
     }
-    let current: HashSet<i64> = db::get_kv(&tx, "rebaseline_courses")
+    let current: HashSet<i64> = db::get_kv(conn, "rebaseline_courses")
         .and_then(|raw| serde_json::from_str::<Vec<i64>>(&raw).ok())
         .unwrap_or_default()
         .into_iter()
@@ -436,15 +411,15 @@ fn consume_completed_rebaseline_markers(
     let mut remaining: Vec<i64> = current.difference(&consumed).copied().collect();
     remaining.sort_unstable();
     if remaining.is_empty() {
-        db::del_kv(&tx, "rebaseline_courses")?;
+        db::del_kv(conn, "rebaseline_courses")?;
     } else {
         db::set_kv(
-            &tx,
+            conn,
             "rebaseline_courses",
             &serde_json::to_string(&remaining).expect("course IDs always serialize"),
         )?;
     }
-    tx.commit()
+    Ok(())
 }
 
 fn course_is_baseline(
@@ -721,11 +696,25 @@ pub fn reconcile_scan(
 
     if discovery.errors.is_empty() && !discovery.cancelled && result.errors.is_empty() {
         let seen: HashSet<&String> = seen_ids.iter().collect();
-        missing_ids = db::all_resource_external_ids(&tx)
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|id| !seen.contains(id))
-            .collect();
+        match db::all_resource_external_ids(&tx) {
+            Ok(ids) => missing_ids = ids.into_iter().filter(|id| !seen.contains(id)).collect(),
+            Err(error) => result.errors.push(format!("inventory read failed: {error}")),
+        }
+        for id in &missing_ids {
+            if let Err(error) = tx.execute(
+                "UPDATE resources SET miss_streak = miss_streak + 1 WHERE external_resource_id = ?1",
+                [id],
+            ) {
+                result.errors.push(format!("miss tracking failed: {error}"));
+            }
+        }
+        if let Err(error) = tx.execute(
+            "UPDATE resources SET availability_status = 'unavailable'
+             WHERE miss_streak >= ?1 AND availability_status = 'available'",
+            [MISS_THRESHOLD],
+        ) {
+            result.errors.push(format!("miss tracking failed: {error}"));
+        }
     }
 
     if !baseline && result.errors.is_empty() {
@@ -769,7 +758,9 @@ pub fn reconcile_scan(
             } else {
                 "ok"
             };
-            let _ = db::mark_course_scanned(&tx, *id, now, status);
+            if let Err(error) = db::mark_course_scanned(&tx, *id, now, status) {
+                result.errors.push(format!("course status failed: {error}"));
+            }
         }
     }
 
@@ -782,7 +773,20 @@ pub fn reconcile_scan(
             .and_then(|value| value.parse::<i64>().ok())
             .unwrap_or(0);
         if current_generation == global_generation {
-            let _ = db::set_kv(&tx, "baseline_established", now);
+            if let Err(error) = db::set_kv(&tx, "baseline_established", now) {
+                result.errors.push(format!("baseline write failed: {error}"));
+            }
+        }
+    }
+
+    if !discovery.cancelled && result.errors.is_empty() {
+        let completed: HashSet<i64> = discovery.courses.iter()
+            .filter(|course| discovery.successful_courses.contains(&course.external_id))
+            .filter_map(|course| course_ids.get(&course.external_id).copied())
+            .collect();
+        let consumed = rebaseline.intersection(&completed).copied().collect();
+        if let Err(error) = consume_rebaseline_markers(&tx, &consumed, baseline_generation) {
+            result.errors.push(format!("course baseline markers failed: {error}"));
         }
     }
 
@@ -1209,3 +1213,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/collection_reconciliation_r2.rs"]
+mod collection_reconciliation_r2_tests;
