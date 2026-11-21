@@ -1280,6 +1280,7 @@ function AppShell() {
           onView={navigate}
           courses={courses}
           onCourse={navigateToCourse}
+          onFolder={navigateToCourse}
           resources={resources}
           unreadResources={unreadResources}
           onInspectResource={(resource) => { setPendingPaletteInspection(resource); navigate("library"); }}

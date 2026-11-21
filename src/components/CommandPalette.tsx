@@ -1,7 +1,7 @@
 import { useMirror } from "../hooks/useMirror";
 import { isLocal } from "../lib/mirrorState";
 import { Command } from "cmdk";
-import { Calendar, History, Inbox, Library, Search, Settings } from "lucide-react";
+import { Calendar, Folder, History, Inbox, Library, Search, Settings } from "lucide-react";
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { NAV, type ViewId } from "../lib/nav";
 import { courseTitle } from "../lib/courseName";
@@ -9,10 +9,9 @@ import { Kbd } from "./ui/Kbd";
 import { FileTypeIcon } from "./ui/FileTypeIcon";
 import { Dialog } from "./ui/Dialog";
 import type { Course, Resource } from "../lib/types";
-import { rankMaterialMatches } from "../lib/materialActions";
+import { searchDesktop } from "../lib/desktopSearch";
 import { splitLiteralMatches } from "../lib/filter";
-import { parseTimestamp } from "../lib/format";
-import { parsePaletteQuery, type PaletteQuery } from "../lib/paletteQuery";
+import { parsePaletteQuery } from "../lib/paletteQuery";
 
 const VIEW_ICON: Record<ViewId, ReactNode> = {
   today: <Inbox aria-hidden="true" />,
@@ -39,44 +38,6 @@ function Highlight({ text, query }: { text: string; query: string }) {
   return <>{parts.map((part, i) => part.match ? <mark key={i} className="palette-mark">{part.text}</mark> : <span key={i}>{part.text}</span>)}</>;
 }
 
-function courseMatchesQuery(course: Course, parsed: PaletteQuery) {
-  if (parsed.filters.courseIds && !parsed.filters.courseIds.includes(course.id)) return false;
-  const needle = parsed.freeText.toLowerCase();
-  if (!needle) return true;
-  return `${course.name} ${course.shortName ?? ""} ${courseTitle(course.id, course.name)}`.toLowerCase().includes(needle);
-}
-
-function resourceMatchesQuery(resource: Resource, parsed: PaletteQuery, saved: boolean, unread: boolean) {
-  if (parsed.hasKnownInvalid) return false;
-  if (parsed.filters.courseIds && (resource.courseId === null || !parsed.filters.courseIds.includes(resource.courseId))) return false;
-  if (parsed.filters.types && !parsed.filters.types.includes(resource.resourceType)) return false;
-  if (parsed.filters.is?.includes("read") && unread) return false;
-  if (parsed.filters.is?.includes("unread") && !unread) return false;
-  if (parsed.filters.is?.includes("saved") && !saved) return false;
-  if (parsed.filters.is?.includes("unsaved") && saved) return false;
-  const dueValues = parsed.filters.due ?? [];
-  if (dueValues.length) {
-    const dueAt = resource.dueAt ? parseTimestamp(resource.dueAt) : null;
-    if (dueValues.includes("none")) {
-      if (dueAt) return false;
-    } else if (!dueAt) {
-      return false;
-    } else {
-      const today = new Date();
-      const dayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
-      const time = dueAt.getTime();
-      const isToday = time >= dayStart && time < dayStart + 86_400_000;
-      const isWeek = time >= dayStart && time < dayStart + 7 * 86_400_000;
-      const isOverdue = time < dayStart;
-      const matches = (dueValues.includes("today") && isToday)
-        || (dueValues.includes("week") && isWeek)
-        || (dueValues.includes("overdue") && isOverdue);
-      if (!matches) return false;
-    }
-  }
-  return true;
-}
-
 /** The command palette: views, courses, best file matches and app actions. */
 export default function CommandPalette({
   open,
@@ -84,6 +45,7 @@ export default function CommandPalette({
   onView,
   courses,
   onCourse,
+  onFolder,
   resources,
   unreadResources,
   onInspectResource,
@@ -95,6 +57,7 @@ export default function CommandPalette({
   onView: (id: ViewId) => void;
   courses: Course[];
   onCourse: (id: number) => void;
+  onFolder?: (courseId: number, path: string[]) => void;
   resources: Resource[];
   unreadResources?: ReadonlySet<number>;
   onInspectResource: (resource: Resource) => void;
@@ -114,20 +77,23 @@ export default function CommandPalette({
   const isSaved = (resource: Resource) => Boolean(
     !resource.isExternal && mirror && isLocal(mirror.statusOf(resource.id)),
   );
+  const savedIds = useMemo(() => new Set(resources.filter((r) => isSaved(r)).map((r) => r.id)), [resources, mirror]);
+  const displayNames = useMemo(() => new Map(courses.map((c) => [c.id, c.displayName ?? ""])), [courses]);
+  const searchResult = useMemo(() => searchDesktop(
+    { raw: query, scope: { kind: "everywhere" } },
+    { courses, resources, displayNames, unreadIds: unreadResources, savedIds, revision: undefined },
+  ), [query, courses, resources, displayNames, unreadResources, savedIds]);
   const navItems = NAV.filter((item) => (!hasQuery || needle) && (!needle || item.label.toLowerCase().includes(needle)));
-  const courseMatches = courses.filter((c) => !parsed.hasKnownInvalid && (needle || parsed.filters.courseIds?.length) && courseMatchesQuery(c, parsed));
-  const scopedResources = resources.filter((r) => resourceMatchesQuery(r, parsed, isSaved(r), unreadResources?.has(r.id) ?? false));
-  const files = hasQuery
-    ? (needle ? rankMaterialMatches(scopedResources, needle).slice(0, 8) : scopedResources.slice(0, 8))
-    : [];
+  const courseMatches = hasQuery && !parsed.hasKnownInvalid ? searchResult.courses : [];
+  const files = hasQuery && !parsed.hasKnownInvalid ? searchResult.files.slice(0, 8) : [];
+  const folderMatches = hasQuery && !parsed.hasKnownInvalid ? searchResult.folders : [];
   const actionMatches = actions.filter((action) => hasQuery
     ? Boolean(needle && action.label.toLowerCase().includes(needle))
     : !action.searchableOnly);
   const anyFileMatch = files.length > 0;
   const viewAllFiles = () => {
     const label = parsed.tokens.filter((token) => token.valid).map((token) => token.raw).join(" ");
-    const matchingFiles = needle ? rankMaterialMatches(scopedResources, needle) : scopedResources;
-    onSeeAllFiles(parsed.freeText, label ? { ids: new Set(matchingFiles.map(({ id }) => id)), label } : undefined);
+    onSeeAllFiles(parsed.freeText, label ? { ids: new Set(searchResult.files.map(({ id }) => id)), label } : undefined);
   };
   const recent = resources.find((resource) => resource.id === recentId)
     ?? resources.reduce<Resource | undefined>((latest, resource) => !latest || latest.firstSeenAt < resource.firstSeenAt ? resource : latest, undefined);
@@ -248,6 +214,20 @@ export default function CommandPalette({
                   <span className="palette-extra">
                     <span className="mono faint">{resource.courseName}</span>
                   </span>
+                </Command.Item>
+              ))}
+            </Command.Group>
+          )}
+
+          {hasQuery && folderMatches.length > 0 && (
+            <Command.Group className="palette-group">
+              <div className="palette-heading">Folders</div>
+              {folderMatches.map((folder) => (
+                <Command.Item key={folder.id} className="palette-item" value={`Folder ${folder.id} ${folder.name}`}
+                  onSelect={() => run(() => onFolder?.(folder.courseId, folder.path))}>
+                  <span className="icon"><Folder aria-hidden="true" /></span>
+                  <span className="palette-main"><Highlight text={folder.name} query={needle || query.trim()} /></span>
+                  <span className="palette-extra"><span className="mono faint">{folder.path.join(" / ")}</span></span>
                 </Command.Item>
               ))}
             </Command.Group>

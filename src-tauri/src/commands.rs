@@ -141,6 +141,12 @@ pub fn list_dashboard_resources(state: State<AppState>) -> Result<Vec<Resource>,
 }
 
 #[tauri::command]
+pub fn list_search_inventory(state: State<AppState>) -> Result<crate::models::DesktopSearchInventory, String> {
+    let conn = state.conn();
+    crate::search::desktop_inventory(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn list_events(
     state: State<AppState>,
     unread_only: Option<bool>,

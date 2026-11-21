@@ -76,10 +76,15 @@ export type DueState = ReturnType<typeof useDueInventory>;
 
 /** Inspector enrichment must not misidentify a resource beyond the legacy default page as orphaned. */
 export async function queryResourceInventory(): Promise<Resource[]> {
-  const items: Resource[] = [];
-  for (;;) {
-    const page = await api.listResources({ offset: items.length, limit: 2000 });
-    items.push(...page);
-    if (page.length < 2000) return items;
+  try {
+    const snapshot = await api.listSearchInventory();
+    return snapshot.resources;
+  } catch {
+    const items: Resource[] = [];
+    for (;;) {
+      const page = await api.listResources({ offset: items.length, limit: 2000 });
+      items.push(...page);
+      if (page.length < 2000) return items;
+    }
   }
 }
