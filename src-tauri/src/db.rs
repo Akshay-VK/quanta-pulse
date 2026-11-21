@@ -24,6 +24,12 @@ pub fn now_rfc3339() -> String {
 /// database. Written after every successful migration.
 pub const LAST_APP_VERSION_KEY: &str = "last_app_version";
 
+/// Settings key recording the schema revision this database has been migrated to.
+pub const SCHEMA_REVISION_KEY: &str = "schema_revision";
+
+/// The schema revision produced by the current `migrate` implementation.
+pub const CURRENT_SCHEMA_REVISION: i64 = 8;
+
 /// How many pre-migration backups to keep.
 const BACKUP_KEEP: usize = 3;
 
@@ -49,16 +55,42 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
 /// migration is aborted and the error says why — an un-migrated, unmodified
 /// database is safer than a migrated one nobody can roll back to.
 pub fn upgrade(conn: &Connection, db_path: &Path, app_version: &str) -> Result<(), String> {
-    let recorded = get_kv(conn, LAST_APP_VERSION_KEY);
+    let recorded_version = get_kv(conn, LAST_APP_VERSION_KEY);
+    let recorded_schema = recorded_schema_revision(conn);
+    let has_tables = has_user_tables(conn);
 
-    // Back up only when the running version is newer than the recorded one. A
-    // matching version needs nothing; a fresh database has nothing to lose; a
-    // database from before version recording is backed up as "unknown".
-    let old_version = match &recorded {
-        Some(v) if v == app_version => None,
-        Some(v) if app_version > v.as_str() => Some(v.clone()),
-        None if has_user_tables(conn) => Some("unknown".to_string()),
-        _ => None,
+    // A database created by a newer, unsupported build must not be migrated
+    // backward. Refuse before touching it or taking a backup.
+    if let Some(schema) = recorded_schema {
+        if schema > CURRENT_SCHEMA_REVISION {
+            return Err(format!(
+                "database schema revision {schema} is newer than this app supports ({CURRENT_SCHEMA_REVISION})"
+            ));
+        }
+    }
+
+    // A missing revision is treated as "already current" for backup purposes:
+    // existing stores migrated by older code lack the key, and forcing a backup
+    // on every same-version startup would violate the no-unnecessary-backup rule.
+    // An explicitly lower revision (a pending migration) does require a backup.
+    let schema_pending = match recorded_schema {
+        Some(revision) => revision < CURRENT_SCHEMA_REVISION,
+        None => false,
+    };
+    let version_older = match &recorded_version {
+        None => has_tables,
+        Some(v) if v == app_version => false,
+        Some(v) => version_is_older(v, app_version),
+    };
+
+    // Back up a populated store before any pending migration. A matching
+    // version with the current schema needs nothing; a fresh database has
+    // nothing to lose.
+    let needs_backup = has_tables && (schema_pending || version_older);
+    let old_version = if needs_backup {
+        Some(recorded_version.clone().unwrap_or_else(|| "unknown".to_string()))
+    } else {
+        None
     };
 
     if let Some(old) = old_version {
@@ -67,7 +99,78 @@ pub fn upgrade(conn: &Connection, db_path: &Path, app_version: &str) -> Result<(
 
     migrate(conn).map_err(|e| e.to_string())?;
     set_kv(conn, LAST_APP_VERSION_KEY, app_version).map_err(|e| e.to_string())?;
+    set_kv(conn, SCHEMA_REVISION_KEY, &CURRENT_SCHEMA_REVISION.to_string())
+        .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Read the recorded schema revision, accepting the documented key spellings.
+fn recorded_schema_revision(conn: &Connection) -> Option<i64> {
+    for key in [SCHEMA_REVISION_KEY, "db_schema_revision", "schema_version"] {
+        if let Some(value) = get_kv(conn, key) {
+            if let Ok(revision) = value.trim().parse::<i64>() {
+                return Some(revision);
+            }
+        }
+    }
+    None
+}
+
+/// Whether `recorded` is semantically older than `running`. Unknown or
+/// unparseable recorded versions are treated as older so a legacy store is
+/// protected before migration.
+fn version_is_older(recorded: &str, running: &str) -> bool {
+    if recorded.trim().eq_ignore_ascii_case("unknown") {
+        return true;
+    }
+    let Some((recorded_main, recorded_pre)) = parse_semver(recorded) else {
+        return true;
+    };
+    let Some((running_main, running_pre)) = parse_semver(running) else {
+        // Fall back to lexical comparison only when the running label is not
+        // parseable, preserving a conservative backup.
+        return recorded < running;
+    };
+    if recorded_main != running_main {
+        return recorded_main < running_main;
+    }
+    // A release is newer than any of its pre-releases.
+    match (recorded_pre, running_pre) {
+        (Some(_), None) => true,
+        (None, Some(_)) => false,
+        (Some(a), Some(b)) => a < b,
+        (None, None) => false,
+    }
+}
+
+fn parse_semver(value: &str) -> Option<(Vec<u64>, Option<String>)> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let (main, pre) = match value.split_once('-') {
+        Some((m, p)) => (m, Some(p.to_string())),
+        None => (value, None),
+    };
+    let mut parts = Vec::new();
+    for part in main.split('.') {
+        // Allow a leading 'v'.
+        let part = part.trim_start_matches('v');
+        if part.is_empty() {
+            parts.push(0);
+            continue;
+        }
+        // Stop at the first non-digit so "1.2.3-rc" style without dash still works.
+        let digits: String = part.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if digits.is_empty() {
+            return None;
+        }
+        parts.push(digits.parse::<u64>().ok()?);
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    Some((parts, pre))
 }
 
 /// Whether the database holds any user tables (i.e. it is not freshly created).
@@ -3882,4 +3985,106 @@ mod tests {
         assert!(mirror_get(&conn, rid).unwrap().is_none());
         assert_eq!(queue_len(&conn), 0, "a queue row for a dead resource is gone too");
     }
+
+    #[test]
+    fn upgrade_backs_up_semantic_zero_nine_to_zero_ten() {
+        let (dir, path, conn) = file_db();
+        set_kv(&conn, LAST_APP_VERSION_KEY, "0.9.0").unwrap();
+        set_kv(&conn, SCHEMA_REVISION_KEY, "8").unwrap();
+        conn.execute_batch("CREATE TABLE legacy (id INTEGER); INSERT INTO legacy VALUES (1);")
+            .unwrap();
+
+        upgrade(&conn, &path, "0.10.0").unwrap();
+
+        let names = backup_names(&dir);
+        assert_eq!(names.len(), 1, "one backup expected: {names:?}");
+        assert!(names[0].starts_with("quanta-pulse-0.9.0-"), "{}", names[0]);
+        assert_eq!(get_kv(&conn, LAST_APP_VERSION_KEY).as_deref(), Some("0.10.0"));
+        assert_eq!(get_kv(&conn, SCHEMA_REVISION_KEY).as_deref(), Some("8"));
+    }
+
+    #[test]
+    fn upgrade_backs_up_prerelease_progression() {
+        let (dir, path, conn) = file_db();
+        set_kv(&conn, LAST_APP_VERSION_KEY, "0.2.0-rc.1").unwrap();
+        set_kv(&conn, SCHEMA_REVISION_KEY, "8").unwrap();
+
+        upgrade(&conn, &path, "0.2.0").unwrap();
+
+        let names = backup_names(&dir);
+        assert_eq!(names.len(), 1, "one backup expected: {names:?}");
+        assert!(names[0].starts_with("quanta-pulse-0.2.0-rc.1-"), "{}", names[0]);
+    }
+
+    #[test]
+    fn upgrade_no_backup_same_version_current_schema() {
+        let (dir, path, conn) = file_db();
+        set_kv(&conn, LAST_APP_VERSION_KEY, "0.2.0").unwrap();
+        set_kv(&conn, SCHEMA_REVISION_KEY, "8").unwrap();
+
+        upgrade(&conn, &path, "0.2.0").unwrap();
+
+        assert!(!dir.path().join("backups").exists());
+    }
+
+    #[test]
+    fn upgrade_backs_up_pending_same_version_schema_revision() {
+        let (dir, path, conn) = file_db();
+        set_kv(&conn, LAST_APP_VERSION_KEY, "0.2.0").unwrap();
+        set_kv(&conn, SCHEMA_REVISION_KEY, "7").unwrap();
+        conn.execute_batch("CREATE TABLE legacy (id INTEGER); INSERT INTO legacy VALUES (1);")
+            .unwrap();
+
+        upgrade(&conn, &path, "0.2.0").unwrap();
+
+        let names = backup_names(&dir);
+        assert_eq!(names.len(), 1, "one backup expected: {names:?}");
+        let backup = Connection::open(dir.path().join("backups").join(&names[0])).unwrap();
+        let count: i64 = backup.query_row("SELECT COUNT(*) FROM legacy", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn upgrade_refuses_unsupported_newer_schema() {
+        let (dir, path, conn) = file_db();
+        set_kv(&conn, LAST_APP_VERSION_KEY, "0.2.0").unwrap();
+        set_kv(&conn, SCHEMA_REVISION_KEY, "99").unwrap();
+
+        let result = upgrade(&conn, &path, "0.2.0");
+        let err = result.expect_err("newer schema must be refused");
+        assert!(err.contains("newer"), "unexpected error: {err}");
+        assert_eq!(get_kv(&conn, LAST_APP_VERSION_KEY).as_deref(), Some("0.2.0"));
+        assert_eq!(get_kv(&conn, SCHEMA_REVISION_KEY).as_deref(), Some("99"));
+        assert!(!dir.path().join("backups").exists());
+    }
+
+    #[test]
+    fn upgrade_unknown_legacy_still_backs_up() {
+        let (dir, path, conn) = file_db();
+        // No recorded version, but user data present.
+        conn.execute_batch("CREATE TABLE legacy (id INTEGER); INSERT INTO legacy VALUES (1);")
+            .unwrap();
+
+        upgrade(&conn, &path, "0.2.0").unwrap();
+
+        let names = backup_names(&dir);
+        assert_eq!(names.len(), 1, "one backup expected: {names:?}");
+        assert!(names[0].starts_with("quanta-pulse-unknown-"), "{}", names[0]);
+    }
+
+    #[test]
+    fn upgrade_idempotent_reopen_records_revision() {
+        let (dir, path, conn) = file_db();
+        set_kv(&conn, LAST_APP_VERSION_KEY, "0.1.0").unwrap();
+        upgrade(&conn, &path, "0.2.0").unwrap();
+        drop(conn);
+        let reopened = Connection::open(&path).unwrap();
+        // Re-running upgrade at same version/schema must not back up again.
+        let before = backup_names(&dir).len();
+        upgrade(&reopened, &path, "0.2.0").unwrap();
+        let after = backup_names(&dir).len();
+        assert_eq!(before, after);
+        assert_eq!(get_kv(&reopened, SCHEMA_REVISION_KEY).as_deref(), Some("8"));
+    }
 }
+
