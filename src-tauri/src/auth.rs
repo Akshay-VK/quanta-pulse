@@ -416,8 +416,12 @@ async fn finalize_session(
     sso_attempt: Option<&str>,
 ) -> Result<AuthStatus, String> {
     let timeout = app.state::<AppState>().settings().request_timeout_secs;
-    let client =
-        Arc::new(QuantaClient::from_session(session.clone(), timeout).map_err(|e| e.to_string())?);
+    // Build the client before verification so its cookie jar can absorb any
+    // session cookie rotation performed by the verification response. The
+    // verified facts are published into this same client below instead of
+    // constructing a second one from a stale cookie.
+    let mut client =
+        QuantaClient::from_session(session.clone(), timeout).map_err(|e| e.to_string())?;
 
     // Verify the session actually works before storing it.
     let my = client.origin().join("/my/").map_err(|e| e.to_string())?;
@@ -442,6 +446,17 @@ async fn finalize_session(
             session.email = name.clone();
         }
     }
+    // Preserve a session cookie rotated by the verification response instead of
+    // recreating the client from the stale cookie captured before verification.
+    if let Some(header) = client.session_cookie_header() {
+        if let Some(cookie) = extract_session_cookie(&header) {
+            session.session_cookie = cookie;
+        }
+    }
+    // Publish the fully verified session facts into the active client.
+    client.session = session.clone();
+
+    let client = Arc::new(client);
 
     let state = app.state::<AppState>();
     let install = || {
