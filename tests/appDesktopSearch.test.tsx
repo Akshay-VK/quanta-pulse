@@ -143,6 +143,7 @@ it('updates saved and unread facts on both surfaces without downloading', async 
   expect(document.querySelector('tbody')?.textContent).toContain('Lecture 4');
   appApi.listHistoryEvents.mockResolvedValue([]);
   appApi.listDashboardEvents.mockResolvedValue([]);
+  appApi.listSearchInventory.mockResolvedValue({ courses: [course], resources: [resource()], unreadResourceIds: [] });
   await emitAppEvent('sync:done', {});
   expect(document.querySelector('tbody')?.textContent).not.toContain('Lecture 4');
   await palette('is:saved is:unread lecture');
