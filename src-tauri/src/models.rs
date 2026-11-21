@@ -307,6 +307,7 @@ pub struct ScanOutcome {
     pub errors: Vec<String>,
     pub auth_expired: bool,
     pub cancelled: bool,
+    pub committed: bool,
 }
 
 /// Local byte-cache occupancy, for Settings > Data.
