@@ -36,6 +36,7 @@ fn collect(routes: Vec<(&'static str, u16, &'static str)>) -> (discover::Discove
     let server = thread::spawn(move || loop {
         match listener.accept() {
             Ok((mut stream, _)) => {
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(std::time::Duration::from_secs(5)))
                     .unwrap();
@@ -442,4 +443,76 @@ fn miss_or_baseline_write_failure_rolls_back_observations_and_markers() {
     assert!(!result.committed);
     assert!(db::get_resource(&conn, "mod:resource:42").is_none());
     assert!(db::get_kv(&conn, "baseline_established").is_none());
+}
+
+#[test]
+fn unreadable_previous_observation_is_a_persistence_failure_not_a_new_resource() {
+    let (found, _) = collect(vec![
+        ("/my/", 200, DASH),
+        (
+            "/course/view.php?id=10",
+            200,
+            r#"<div class="activity"><a href="/mod/resource/view.php?id=42">Slides</a></div>"#,
+        ),
+        ("/mod/resource/view.php?id=42", 200, "details"),
+    ]);
+    let dir = tempfile::tempdir().unwrap();
+    let conn = db::open(&dir.path().join("proof.db")).unwrap();
+    assert!(commit(&conn, &found, true).committed);
+    // SQLite permits legacy/corrupt column types. An authoritative read error
+    // must not be silently interpreted as a previously unseen resource.
+    conn.execute("UPDATE resources SET content_fingerprint=x'01'", [])
+        .unwrap();
+    let result = commit(&conn, &found, false);
+    assert!(
+        !result.committed,
+        "unreadable prior state cannot authorize a diff"
+    );
+    assert!(!result.errors.is_empty());
+    assert_eq!(result.new, 0);
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM change_events", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn rejected_deadline_reminder_does_not_report_committed_success() {
+    let (found, requests) = collect(vec![
+        ("/my/", 200, DASH),
+        (
+            "/course/view.php?id=10",
+            200,
+            r#"<div class="activity"><a href="/mod/assign/view.php?id=88">Essay</a><div class="activity-dates"><div>Due: <time datetime="2099-01-01T12:00:00Z">1 Jan</time></div></div></div>"#,
+        ),
+    ]);
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        found.resources[0].due_at.as_deref(),
+        Some("2099-01-01T12:00:00+00:00")
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let conn = db::open(&dir.path().join("proof.db")).unwrap();
+    assert!(commit(&conn, &found, true).committed);
+    conn.execute_batch("CREATE TRIGGER reject_reminder BEFORE INSERT ON change_events WHEN NEW.deduplication_key LIKE 'deadline-reminder:%' BEGIN SELECT RAISE(ABORT,'reminder failed'); END;").unwrap();
+    // Wide deterministic window exercises reminder persistence without wall
+    // clock dependence on a short-lived fixture deadline.
+    let result = engine::commit_scan(
+        &conn,
+        &found,
+        false,
+        0,
+        0,
+        &HashSet::new(),
+        1_000_000,
+        "2026-11-21T12:00:00Z",
+    );
+    assert!(
+        !result.committed,
+        "reminder write failure cannot authorize effects"
+    );
+    assert!(!result.errors.is_empty());
+    assert_eq!(result.updated, 0);
 }

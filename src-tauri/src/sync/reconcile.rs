@@ -5,10 +5,42 @@
 use crate::db::{self, ResourceWrite};
 use crate::quanta::discover;
 use crate::sync::diff::{self, Detected};
+use rusqlite::OptionalExtension;
 use std::collections::{HashMap, HashSet};
 
 /// Two complete scans must miss a material before it becomes unavailable.
 const MISS_THRESHOLD: i64 = 2;
+
+/// Read only the stored facts used by the resource diff. Unlike UI convenience
+/// reads, reconciliation must distinguish an absent row from a failed read.
+fn previous_state(
+    conn: &rusqlite::Connection,
+    external_id: &str,
+) -> rusqlite::Result<Option<diff::PreviousState>> {
+    conn.query_row(
+        "SELECT content_fingerprint, availability_status, due_at, uploaded_at, published_at, title
+         FROM resources WHERE external_resource_id = ?1",
+        [external_id],
+        |row| {
+            Ok(diff::PreviousState {
+                fingerprint: row.get(0)?,
+                availability: row.get(1)?,
+                due_at: row.get(2)?,
+                uploaded_at: row.get(3)?,
+                published_at: row.get(4)?,
+                title: row.get(5)?,
+            })
+        },
+    )
+    .optional()
+}
+
+fn read_setting(conn: &rusqlite::Connection, key: &str) -> rusqlite::Result<Option<String>> {
+    conn.query_row("SELECT value FROM settings WHERE key = ?1", [key], |row| {
+        row.get(0)
+    })
+    .optional()
+}
 
 /// Remove only start-of-scan reset markers for courses that completed a full
 /// discovery. The setting is re-read before writing to preserve requests added
@@ -45,13 +77,13 @@ fn consume_rebaseline_markers(
     if consumed.is_empty() {
         return Ok(());
     }
-    let current_generation = db::get_kv(conn, "baseline_reset_generation")
+    let current_generation = read_setting(conn, "baseline_reset_generation")?
         .and_then(|value| value.parse::<i64>().ok())
         .unwrap_or(0);
     if current_generation != captured_generation {
         return Ok(());
     }
-    let current: HashSet<i64> = db::get_kv(conn, "rebaseline_courses")
+    let current: HashSet<i64> = read_setting(conn, "rebaseline_courses")?
         .and_then(|raw| serde_json::from_str::<Vec<i64>>(&raw).ok())
         .unwrap_or_default()
         .into_iter()
@@ -213,11 +245,33 @@ pub fn commit_scan(
         }
     }
 
-    let paused: HashSet<i64> = db::paused_course_ids(&tx).into_iter().collect();
+    let paused = (|| -> rusqlite::Result<HashSet<i64>> {
+        let mut stmt = tx.prepare("SELECT id FROM courses WHERE monitoring_status = 'paused'")?;
+        let rows = stmt.query_map([], |row| row.get(0))?;
+        rows.collect()
+    })();
+    let paused = match paused {
+        Ok(paused) => paused,
+        Err(error) => {
+            result
+                .errors
+                .push(format!("paused courses read failed: {error}"));
+            return result;
+        }
+    };
+    let mut resource_ids = HashMap::new();
 
     for r in &discovery.resources {
         let course_id = course_ids.get(&r.course_external_id).copied();
-        let previous = db::get_resource(&tx, &r.external_id);
+        let previous = match previous_state(&tx, &r.external_id) {
+            Ok(previous) => previous,
+            Err(error) => {
+                result
+                    .errors
+                    .push(format!("resource {} prior state: {error}", r.external_id));
+                continue;
+            }
+        };
         let availability = if r.available {
             "available"
         } else {
@@ -257,11 +311,11 @@ pub fn commit_scan(
                 continue;
             }
         };
+        resource_ids.insert(r.external_id.as_str(), resource_id);
         seen_ids.push(r.external_id.clone());
 
         let effective_baseline = course_is_baseline(baseline, rebaseline, &paused, course_id);
-        let prev_state = previous.as_ref().map(Into::into);
-        let detected = diff::classify(prev_state.as_ref(), r, effective_baseline);
+        let detected = diff::classify(previous.as_ref(), r, effective_baseline);
         let kind = if r.resource_type == "announcement" && detected == Detected::New {
             "announcement"
         } else {
@@ -347,10 +401,20 @@ pub fn commit_scan(
                     let window = chrono::Duration::hours(reminder_hours);
                     if instant > now_utc && instant <= now_utc + window {
                         let key = diff::dedup_key("deadline-reminder", &r.external_id, due);
-                        if !db::event_exists(&tx, &key) {
+                        let exists = match tx.query_row(
+                            "SELECT EXISTS(SELECT 1 FROM change_events WHERE deduplication_key = ?1)",
+                            [&key], |row| row.get::<_, bool>(0),
+                        ) {
+                            Ok(exists) => exists,
+                            Err(error) => {
+                                result.errors.push(format!("reminder dedup read failed: {error}"));
+                                continue;
+                            }
+                        };
+                        if !exists {
                             let course_id = course_ids.get(&r.course_external_id).copied();
-                            let resource_id = db::get_resource(&tx, &r.external_id).map(|x| x.id);
-                            let _ = db::insert_event(
+                            let resource_id = resource_ids.get(r.external_id.as_str()).copied();
+                            match db::insert_event(
                                 &tx,
                                 resource_id,
                                 course_id,
@@ -359,8 +423,13 @@ pub fn commit_scan(
                                 Some("An upcoming deadline is within your reminder window."),
                                 &key,
                                 now,
-                            );
-                            updated_count += 1;
+                            ) {
+                                Ok(true) => updated_count += 1,
+                                Ok(false) => {}
+                                Err(error) => result
+                                    .errors
+                                    .push(format!("deadline reminder failed: {error}")),
+                            }
                         }
                     }
                 }
@@ -387,15 +456,22 @@ pub fn commit_scan(
     }
 
     if baseline && !discovery.cancelled && discovery.errors.is_empty() && result.errors.is_empty() {
-        let current_generation = db::get_kv(&tx, "baseline_global_reset_generation")
-            .and_then(|value| value.parse::<i64>().ok())
-            .unwrap_or(0);
-        if current_generation == global_generation {
-            if let Err(error) = db::set_kv(&tx, "baseline_established", now) {
-                result
-                    .errors
-                    .push(format!("baseline write failed: {error}"));
+        match read_setting(&tx, "baseline_global_reset_generation") {
+            Ok(value) => {
+                let current_generation = value
+                    .and_then(|value| value.parse::<i64>().ok())
+                    .unwrap_or(0);
+                if current_generation == global_generation {
+                    if let Err(error) = db::set_kv(&tx, "baseline_established", now) {
+                        result
+                            .errors
+                            .push(format!("baseline write failed: {error}"));
+                    }
+                }
             }
+            Err(error) => result
+                .errors
+                .push(format!("baseline generation read failed: {error}")),
         }
     }
 
