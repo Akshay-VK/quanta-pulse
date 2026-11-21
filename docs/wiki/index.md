@@ -1,5 +1,6 @@
 # Decision wiki
 
+- [2026-11-21 search and academic expansion setup recovery](2026-11-21-search-and-academic-expansion-setup.md) — Tracker graph verified for #57/#58-#69, base commits recorded, baseline/log limits, and implementation-start handoff.
 - [2026-11-20 redesign reference alignment](2026-11-20-redesign-reference-alignment.md) — Source-aligned UI fixes, browser geometry and zoom evidence, and remaining native and per-screen checks.
 
 - [2026-11-16: Paused redesign session handoff](2026-11-16-redesign-session-handoff.md) — resume entry point, accepted commits, interrupted patches, contracts, proof limits and next tasks.
