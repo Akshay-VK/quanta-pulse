@@ -42,3 +42,10 @@ The completed read-only spec review `/tmp/quanta-57-search-review-spec.md` repor
 The standards review `/tmp/quanta-57-search-review-standards.md` reports S-1 P3 query rewriting/selection inside presentational `SearchControls` and S-2 P3 duplicate category activity/guard predicates in `desktopSearch`.
 
 Per this integration work session's explicit ownership, a separate implementation agent will address the four P2 production contracts and regressions; the parent handles F5, both standards findings and small cleanup after the clean handoff. No review fixes were implemented or delegated here. The reports identify source-supported defects; this integration did not execute new reproductions. Keep #58/#59 open with existing labels pending corrections, review and final acceptance.
+
+
+## 2026-11-21: Small search-review corrections verified
+
+On 2026-11-21, `Akshay-VK/quanta-pulse@35fd65bd8f8207f0c81ec9557701c5cb8a908036` corrected the three small S1/S2 review findings: query editing/value policy moved from SearchControls to the pure palette-query module, duplicate category guards were removed, and course ranking scores the best canonical/short/display name. It also removed the inherited test whitespace noted above. The new exact-name-versus-alias-prefix regression failed before the ranking correction and passed afterward; filter-edit coverage preserves quoted phrases and independent read/saved dimensions.
+
+Fresh verification of that source tree passed lint, all 897 frontend tests across 89 files, and the production build (existing chunk-size advisory retained). Evidence: `/tmp/quanta-57-search-small-red.log`, `...-lint.log`, `...-tests.log`, and `...-build.log`; the full bounded run used `VITEST_MAX_FORKS=4 VITEST_MIN_FORKS=1 npm test`, without timeout changes. No Rust source changed in this correction. This supersedes the specific P3/whitespace pending claims above; the four P2 consistency findings and final S1/S2 acceptance remain pending in their own workstream.

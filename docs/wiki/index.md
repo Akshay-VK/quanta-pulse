@@ -49,3 +49,5 @@ This wiki preserves dated decisions and their evidence. It is not the live track
 - [2026-11-16: Baseline and History acceptance checkpoint](2026-11-16-baseline-and-history-acceptance.md) — accepted backend/policy commits, proof limits, and outstanding surface/recovery work.
 
 - [2026-11-21: Prerelease backup ordering proof](2026-11-21-r1a-r1b-integration.md#2026-11-21-prerelease-backup-ordering-corrected) — numeric prerelease and build-metadata correction, red/green upgrade evidence, and remaining A0 restore gate.
+
+- [2026-11-21 small search-review corrections](2026-11-21-search-integration.md#2026-11-21-small-search-review-corrections-verified) — query-policy ownership, duplicate guards and course-name ranking corrected at `35fd65b`; fresh 897-test/lint/build proof; P2 consistency fixes remain separate.
