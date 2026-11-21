@@ -1,14 +1,14 @@
 use std::collections::HashSet;
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::thread;
 
 use crate::db;
 use crate::quanta::client::QuantaClient;
 use crate::quanta::discover::{self, CrawlLimits};
-use crate::sync::engine;
+use crate::sync::reconcile as engine;
 
 fn server<F>(requests: usize, handler: F) -> (std::net::SocketAddr, thread::JoinHandle<()>)
 where

@@ -6,8 +6,11 @@
 //! and parses the rendered Moodle pages. All parsing logic lives in `parse.rs`
 //! and is unit tested against captured fixtures.
 
+pub(crate) mod announcement_collector;
 pub mod client;
+mod collection;
 pub mod discover;
+pub(crate) mod material_collector;
 pub mod parse;
 pub mod preview;
 pub mod urlnorm;
@@ -80,7 +83,9 @@ pub fn content_fingerprint(
     size_bytes: Option<i64>,
 ) -> String {
     use sha2::{Digest, Sha256};
-    let size = size_bytes.map(|bytes| bytes.to_string()).unwrap_or_default();
+    let size = size_bytes
+        .map(|bytes| bytes.to_string())
+        .unwrap_or_default();
     let mut hasher = Sha256::new();
     for part in [
         title,
