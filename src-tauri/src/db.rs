@@ -138,13 +138,44 @@ fn version_is_older(recorded: &str, running: &str) -> bool {
     match (recorded_pre, running_pre) {
         (Some(_), None) => true,
         (None, Some(_)) => false,
-        (Some(a), Some(b)) => a < b,
+        (Some(a), Some(b)) => compare_prerelease(&a, &b).is_lt(),
         (None, None) => false,
     }
 }
 
+/// Compare dotted prerelease identifiers using numeric precedence, with
+/// numeric identifiers ordered before text and a shorter equal prefix first.
+fn compare_prerelease(left: &str, right: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let mut left = left.split('.');
+    let mut right = right.split('.');
+    loop {
+        let (left, right) = match (left.next(), right.next()) {
+            (Some(left), Some(right)) => (left, right),
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (None, None) => return Ordering::Equal,
+        };
+        let numeric = |value: &str| !value.is_empty() && value.bytes().all(|c| c.is_ascii_digit());
+        let order = match (numeric(left), numeric(right)) {
+            (true, true) => {
+                // Compare by digit count to avoid overflowing on a legal large identifier.
+                let left = left.trim_start_matches('0');
+                let right = right.trim_start_matches('0');
+                left.len().cmp(&right.len()).then_with(|| left.cmp(right))
+            }
+            (true, false) => Ordering::Less,
+            (false, true) => Ordering::Greater,
+            (false, false) => left.cmp(right),
+        };
+        if order != Ordering::Equal {
+            return order;
+        }
+    }
+}
+
 fn parse_semver(value: &str) -> Option<(Vec<u64>, Option<String>)> {
-    let value = value.trim();
+    let value = value.trim().split('+').next()?;
     if value.is_empty() {
         return None;
     }
@@ -4014,6 +4045,43 @@ mod tests {
         let names = backup_names(&dir);
         assert_eq!(names.len(), 1, "one backup expected: {names:?}");
         assert!(names[0].starts_with("quanta-pulse-0.2.0-rc.1-"), "{}", names[0]);
+    }
+
+    #[test]
+    fn upgrade_backs_up_numeric_prerelease_progression() {
+        let (dir, path, conn) = file_db();
+        set_kv(&conn, LAST_APP_VERSION_KEY, "0.2.0-rc.2").unwrap();
+        set_kv(&conn, SCHEMA_REVISION_KEY, &CURRENT_SCHEMA_REVISION.to_string()).unwrap();
+
+        upgrade(&conn, &path, "0.2.0-rc.10").unwrap();
+
+        assert_eq!(backup_names(&dir).len(), 1);
+    }
+
+    #[test]
+    fn upgrade_prerelease_order_and_metadata_control_backups() {
+        for (recorded, running, expected_backups) in [
+            ("0.2.0-rc.10", "0.2.0-rc.2", 0),
+            ("0.2.0-1", "0.2.0-alpha", 1),
+            ("0.2.0-alpha", "0.2.0-1", 0),
+            ("0.2.0-beta", "0.2.0-beta.1", 1),
+            ("0.2.0-beta.1", "0.2.0-beta", 0),
+            ("0.2.0-rc.2+old", "0.2.0-rc.2+new", 0),
+            ("0.2.0-rc.2+old", "0.2.0-rc.10+new", 1),
+            ("0.2.0-rc.999999999999999999999", "0.2.0-rc.1000000000000000000000", 1),
+        ] {
+            let (dir, path, conn) = file_db();
+            set_kv(&conn, LAST_APP_VERSION_KEY, recorded).unwrap();
+            set_kv(&conn, SCHEMA_REVISION_KEY, &CURRENT_SCHEMA_REVISION.to_string()).unwrap();
+
+            upgrade(&conn, &path, running).unwrap();
+
+            assert_eq!(
+                backup_names(&dir).len(),
+                expected_backups,
+                "backup decision for {recorded} -> {running}"
+            );
+        }
     }
 
     #[test]
