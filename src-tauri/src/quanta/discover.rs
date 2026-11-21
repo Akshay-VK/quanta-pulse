@@ -974,4 +974,151 @@ mod tests {
             .iter()
             .any(|error| error.contains("detail limit")));
     }
+
+    #[tokio::test]
+    async fn exact_resource_cap_page_remains_healthy() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            for _ in 0..4 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0u8; 2048];
+                let size = stream.read(&mut request).unwrap();
+                let request = String::from_utf8_lossy(&request[..size]);
+                let path = request
+                    .lines()
+                    .next()
+                    .unwrap()
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap();
+                let body = if path == "/my/" {
+                    r#"<a href="/course/view.php?id=10">Course Ten</a>"#.to_string()
+                } else if path.starts_with("/course/view.php") {
+                    r#"<li class="section main"><h3 class="sectionname">Week 1</h3><div class="activity"><a href="/mod/resource/view.php?id=42">A</a></div><div class="activity"><a href="/mod/resource/view.php?id=43">B</a></div></li>"#.to_string()
+                } else {
+                    "<html><body>details</body></html>".to_string()
+                };
+                write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+            }
+        });
+        let client = Arc::new(crate::quanta::client::QuantaClient::fixture_client(address));
+        let found = discover_all(
+            client,
+            CrawlLimits {
+                max_resources_per_course: 2,
+                concurrency: 1,
+                ..CrawlLimits::default()
+            },
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(|_| {}),
+            Arc::new(|_| {}),
+        )
+        .await;
+        server.join().unwrap();
+        assert!(found.errors.is_empty(), "{:?}", found.errors);
+        assert!(found.successful_courses.contains("10"));
+        assert_eq!(found.resources.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn resource_cap_truncation_is_partial() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            for _ in 0..4 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0u8; 2048];
+                let size = stream.read(&mut request).unwrap();
+                let request = String::from_utf8_lossy(&request[..size]);
+                let path = request
+                    .lines()
+                    .next()
+                    .unwrap()
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap();
+                let body = if path == "/my/" {
+                    r#"<a href="/course/view.php?id=10">Course Ten</a>"#.to_string()
+                } else if path.starts_with("/course/view.php") {
+                    r#"<li class="section main"><h3 class="sectionname">Week 1</h3><div class="activity"><a href="/mod/resource/view.php?id=42">A</a></div><div class="activity"><a href="/mod/resource/view.php?id=43">B</a></div><div class="activity"><a href="/mod/resource/view.php?id=44">C</a></div></li>"#.to_string()
+                } else {
+                    "<html><body>details</body></html>".to_string()
+                };
+                write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+            }
+        });
+        let client = Arc::new(crate::quanta::client::QuantaClient::fixture_client(address));
+        let found = discover_all(
+            client,
+            CrawlLimits {
+                max_resources_per_course: 2,
+                concurrency: 1,
+                ..CrawlLimits::default()
+            },
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(|_| {}),
+            Arc::new(|_| {}),
+        )
+        .await;
+        server.join().unwrap();
+        assert!(!found.successful_courses.contains("10"));
+        assert!(found
+            .errors
+            .iter()
+            .any(|e| e.contains("course resource limit")));
+    }
+
+    #[tokio::test]
+    async fn cancelled_discovery_is_not_successful() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 2048];
+            let _ = stream.read(&mut request);
+            let body = r#"<a href="/course/view.php?id=10">Course Ten</a>"#;
+            let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
+        });
+        let client = Arc::new(crate::quanta::client::QuantaClient::fixture_client(address));
+        let found = discover_all(
+            client,
+            CrawlLimits::default(),
+            Arc::new(AtomicBool::new(true)),
+            Arc::new(|_| {}),
+            Arc::new(|_| {}),
+        )
+        .await;
+        let _ = server.join();
+        assert!(found.cancelled);
+        assert!(found.successful_courses.is_empty());
+    }
+
+    #[tokio::test]
+    async fn fallback_course_listing_failure_is_not_empty_success() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            for status in [200, 500] {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0u8; 2048];
+                let _ = stream.read(&mut request);
+                let body = if status == 200 { "" } else { "boom" };
+                let _ = write!(stream, "HTTP/1.1 {} Error\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", status, body.len(), body);
+            }
+        });
+        let client = Arc::new(crate::quanta::client::QuantaClient::fixture_client(address));
+        let found = discover_all(
+            client,
+            CrawlLimits::default(),
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(|_| {}),
+            Arc::new(|_| {}),
+        )
+        .await;
+        let _ = server.join();
+        assert!(found.courses.is_empty());
+        assert!(found.errors.iter().any(|e| e.contains("course list")));
+        assert_eq!(found.courses_scanned, 0);
+    }
 }
