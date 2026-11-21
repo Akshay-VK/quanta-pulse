@@ -37,6 +37,26 @@ export function normalizeSearchText(value: string): string {
   return value.normalize("NFD").replace(/\p{M}/gu, "").trim().toLowerCase();
 }
 
+/** Replace one filter dimension without discarding phrases or unrelated tokens. */
+export function replacePaletteQueryFilter(
+  query: PaletteQuery, key: PaletteTokenKey, next: string, dimension?: readonly string[],
+): string {
+  const keep = query.tokens.filter(token => token.key !== key || (dimension && !dimension.includes(token.value.toLowerCase())));
+  return [query.freeRaw, ...keep.map(token => token.raw), next ? `${key}:${JSON.stringify(next)}` : ""].filter(Boolean).join(" ");
+}
+
+/** Resolve query values to the canonical spelling used by filter controls. */
+export function paletteQueryFilterValues(
+  query: PaletteQuery, key: PaletteTokenKey, resources: readonly Pick<Resource, "resourceType">[],
+  dimension?: readonly string[],
+): string[] {
+  return query.tokens
+    .filter(token => token.key === key && (!dimension || dimension.includes(token.value.toLowerCase())))
+    .map(token => key === "is" || key === "due" ? token.value.toLowerCase()
+      : key === "type" ? resources.find(resource => resource.resourceType.toLowerCase() === token.value.toLowerCase())?.resourceType ?? token.value
+        : token.value);
+}
+
 export function parsePaletteQuery(
   raw: string,
   inventory: {
