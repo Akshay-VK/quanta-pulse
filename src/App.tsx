@@ -113,11 +113,15 @@ function AppShell() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [searchInventory, setSearchInventory] = useState<DesktopSearchInventory>({ courses: [], resources: [], unreadResourceIds: [] });
   const { courses, resources } = searchInventory;
+  const [searchPending, setSearchPending] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
   const [historyEvents, setHistoryEvents] = useState<ChangeEvent[]>([]);
   const [eventScopeReady, setEventScopeReady] = useState(false);
   const [scans, setScans] = useState<ScanRun[]>([]);
   const inbox = useInbox();
+  const inboxRefreshRef = useRef(inbox.refresh);
+  inboxRefreshRef.current = inbox.refresh;
   const historyEventsRef = useRef(historyEvents);
   historyEventsRef.current = historyEvents;
   const inboxPageRef = useRef(inbox.page);
@@ -299,9 +303,29 @@ function AppShell() {
     setToasts((current) => current.filter((toast) => toast.id !== id));
   }, []);
 
+  const searchGeneration = useRef(0);
+  // Inspection acknowledges captured events without changing History's complete
+  // collection readiness. Search still replaces metadata/read facts together.
+  const refreshSearchInventory = useCallback(async () => {
+    const generation = ++searchGeneration.current;
+    setSearchPending(true);
+    try {
+      const inventory = await api.listSearchInventory();
+      if (generation !== searchGeneration.current) return;
+      setSearchInventory(inventory);
+      setSearchError(null);
+    } catch (error) {
+      if (generation === searchGeneration.current) setSearchError(String(error));
+    } finally {
+      if (generation === searchGeneration.current) setSearchPending(false);
+    }
+  }, []);
+
   const refreshGeneration = useRef(0);
   const refresh = useCallback(async (requireSuccess = false) => {
     const generation = ++refreshGeneration.current;
+    const searchRequest = ++searchGeneration.current;
+    setSearchPending(false);
     setLoading(true);
     setEventScopeReady(false);
     try {
@@ -316,7 +340,10 @@ function AppShell() {
         if (requireSuccess) throw new Error("History refresh superseded; retry refresh.");
         return;
       }
-      setSearchInventory(inventory);
+      if (searchRequest === searchGeneration.current) {
+        setSearchInventory(inventory);
+        setSearchError(null);
+      }
       setHistoryEvents(he);
       setScans(s);
       setDbInfo(info);
@@ -482,6 +509,9 @@ function AppShell() {
     await api.logout();
     setAuth(await api.authStatus());
     ++refreshGeneration.current;
+    ++searchGeneration.current;
+    setSearchPending(false);
+    setSearchError(null);
     setSearchInventory({ courses: [], resources: [], unreadResourceIds: [] });
     setHistoryEvents([]);
   }, []);
@@ -500,15 +530,18 @@ function AppShell() {
     setHistoryEvents((current) => current.map((event) => (ids.includes(event.id) ? { ...event, read: true } : event)));
     // Search keeps its last complete metadata/read snapshot during the write.
     // Invalidate earlier refreshes, then replace all facts atomically on success.
-    ++refreshGeneration.current;
+    ++searchGeneration.current;
+    setSearchPending(true);
     void api.setEventReadState(ids, true).then(() => {
-      void refresh();
+      void refreshSearchInventory();
+      void inboxRefreshRef.current();
     }).catch((err) => {
       setHistoryEvents((current) => current.map((event) => (previous.has(event.id) ? { ...event, read: previous.get(event.id)! } : event)));
-      void refresh();
+      void refreshSearchInventory();
+      void inboxRefreshRef.current();
       notify(String(err), true);
     });
-  }, [notify, refresh]);
+  }, [notify, refreshSearchInventory]);
 
   const selectDetails = useCallback((owner: ViewId, subject: DetailSubject, origin: HTMLElement, restoreFocus?: RestoreDetailFocus) => {
     const next = { ...subject, owner, identity: detailIdentity(subject) };
@@ -1195,8 +1228,8 @@ function AppShell() {
                     onSeeAllFiles={handleSeeAllFiles}
                     unreadByCourse={unreadByCourse}
                     details={detailsAdapters.library}
-                    loading={loading}
-                    error={loadError}
+                    loading={loading || searchPending}
+                    error={loadError ?? searchError}
                     onRetry={() => void refresh()}
                     onChanged={refresh}
                     onActivityChanged={() => refresh(true)}
@@ -1289,8 +1322,8 @@ function AppShell() {
           onCourse={navigateToCourse}
           onFolder={navigateToCourse}
           resources={resources}
-          inventoryPending={loading}
-          inventoryError={loadError}
+          inventoryPending={loading || searchPending}
+          inventoryError={loadError ?? searchError}
           unreadResources={unreadResources}
           timeZone={timeZone} now={now}
           onInspectResource={(resource) => { setPendingPaletteInspection(resource); navigate("library"); }}

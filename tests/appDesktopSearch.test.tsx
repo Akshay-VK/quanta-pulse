@@ -326,3 +326,21 @@ it.each(['write', 'refresh'])('retains the complete unread snapshot after inspec
   await emitAppEvent('sync:done', {});
   expect(document.querySelector('.course-material-row')).toBeNull();
 });
+
+it('rejects a pre-acknowledgment snapshot arriving after the coherent inspector refresh', async () => {
+  appApi.listSearchInventory.mockResolvedValue({ courses: [course], resources: [resource()], unreadResourceIds: [1] });
+  app = await renderApp();
+  await click(button('MATH F111'));
+  await inputValue(document.querySelector<HTMLInputElement>('main .search-field-input')!, 'lecture');
+  const older = deferred<Awaited<ReturnType<typeof appApi.listSearchInventory>>>();
+  appApi.listSearchInventory.mockReturnValueOnce(older.promise).mockResolvedValueOnce({ courses: [course], resources: [resource({ title: 'Lecture latest' })], unreadResourceIds: [] });
+  await emitAppEvent('sync:done', {});
+  await click(button('Show details for Lecture 4'));
+  expect(document.querySelector('.course-material-row')?.textContent).toContain('Lecture latest');
+  expect(document.querySelector('.course-material-row .unread-dot')).toBeNull();
+  await act(async () => older.resolve({ courses: [course], resources: [resource({ title: 'Lecture stale' })], unreadResourceIds: [1] }));
+  await flushApp();
+  expect(document.querySelector('.course-material-row')?.textContent).toContain('Lecture latest');
+  expect(document.querySelector('.course-material-row')?.textContent).not.toContain('Lecture stale');
+  expect(document.querySelector('.course-material-row .unread-dot')).toBeNull();
+});
