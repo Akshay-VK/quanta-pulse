@@ -127,8 +127,39 @@ pub struct DownloadRequest {
 /// Moodle's login form sits near the top of the document, well inside this.
 const LOGIN_SNIFF_BYTES: usize = 64 * 1024;
 
+/// Candidate self-report reads from pinned upstream research. No collector or
+/// scheduler enables these before V1 verifies deployed access and polling effects.
+#[derive(Clone, Copy, Debug)]
+pub enum StudentReport {
+    Assignment { course_module_id: i64 },
+    Grades { course_id: i64 },
+    Attendance { course_module_id: i64 },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum StudentReportError {
+    #[error("Optional student report denied")]
+    Denied,
+    #[error("Student report requires sign-in")]
+    AuthExpired,
+    #[error("Student report unavailable")]
+    Unavailable,
+    #[error("Student report unsupported")]
+    Unsupported,
+    #[error("Student report exceeds body budget")]
+    TooLarge,
+    #[error("Student report route rejected")]
+    UnsafeRoute,
+    #[error("Academic session changed")]
+    SessionChanged,
+}
+
 pub struct QuantaClient {
+    verified_user_id: Option<i64>,
     http: Client,
+    // Same cookie jar, but redirects are followed manually only after validating
+    // intent. Material/download redirect behavior remains independent.
+    student_http: Client,
     /// A second client for downloads: same cookies, but no overall request
     /// timeout, because a lecture recording legitimately takes longer than the
     /// API timeout. Stalls are detected per chunk instead.
@@ -184,6 +215,16 @@ impl QuantaClient {
             .timeout(Duration::from_secs(5))
             .build()
             .unwrap();
+        client.student_http = Client::builder()
+            .no_proxy()
+            .cookie_provider(client.jar.clone())
+            .resolve("quanta.bits-pilani.ac.in", address)
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(10))
+            .gzip(true)
+            .brotli(true)
+            .build()
+            .unwrap();
         client.download_http = Client::builder()
             .no_proxy()
             .cookie_provider(client.jar.clone())
@@ -224,7 +265,19 @@ impl QuantaClient {
             .build()
             .map_err(|e| QuantaError::Client(e.to_string()))?;
 
+        let student_http = Client::builder()
+            .user_agent(concat!("QuantaPulse/", env!("CARGO_PKG_VERSION")))
+            .cookie_provider(jar.clone())
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(10))
+            .gzip(true)
+            .brotli(true)
+            .build()
+            .map_err(|_| QuantaError::Client("cannot prepare student report transport".into()))?;
         Ok(QuantaClient {
+            verified_user_id: None,
+            student_http,
             http,
             download_http,
             jar,
@@ -247,6 +300,41 @@ impl QuantaClient {
         Ok((http, jar))
     }
 
+    /// Revalidate the existing session using the same transport and cookie jar.
+    /// Ownership is re-established from the new verified dashboard, never copied.
+    pub(crate) fn verification_candidate(&self) -> Self {
+        Self {
+            http: self.http.clone(),
+            student_http: self.student_http.clone(),
+            download_http: self.download_http.clone(),
+            jar: self.jar.clone(),
+            origin: self.origin.clone(),
+            session: self.session.clone(),
+            verified_user_id: None,
+        }
+    }
+
+    /// Only facts parsed from a verified self dashboard confer academic ownership.
+    pub(crate) fn verify_academic_identity(&mut self, user_id: Option<i64>, final_url: &str) {
+        self.verified_user_id = url::Url::parse(final_url)
+            .ok()
+            .filter(|url| url.origin() == self.origin.origin() && url.path() == "/my/")
+            .and(user_id.filter(|id| *id > 0));
+    }
+
+    pub(crate) fn academic_owner(&self) -> Option<crate::academic::AcademicOwner> {
+        let official = self.origin.as_str().trim_end_matches('/') == QUANTA_ORIGIN;
+        #[cfg(test)]
+        let official = official
+            || (self.origin.host_str() == Some("quanta.bits-pilani.ac.in")
+                && self.origin.scheme() == "http");
+        official.then_some(())?;
+        Some(crate::academic::AcademicOwner {
+            origin: QUANTA_ORIGIN.into(),
+            moodle_user_id: self.verified_user_id?,
+        })
+    }
+
     pub fn origin(&self) -> &Url {
         &self.origin
     }
@@ -256,6 +344,138 @@ impl QuantaClient {
         self.jar
             .cookies(&self.origin)
             .and_then(|v| v.to_str().ok().map(|s| s.to_string()))
+    }
+
+    /// One bounded self-report read, without crawling links or accepting URLs.
+    /// This is transport policy, not a parser, coverage success, or V1 approval.
+    pub(crate) async fn read_student_report(
+        &self,
+        report: StudentReport,
+    ) -> Result<Fetched, StudentReportError> {
+        if self.academic_owner().is_none() {
+            return Err(StudentReportError::SessionChanged);
+        }
+        let (path, id) = match report {
+            StudentReport::Assignment { course_module_id } => {
+                ("/mod/assign/view.php", course_module_id)
+            }
+            StudentReport::Grades { course_id } => ("/grade/report/user/index.php", course_id),
+            StudentReport::Attendance { course_module_id } => {
+                ("/mod/attendance/view.php", course_module_id)
+            }
+        };
+        if id <= 0 {
+            return Err(StudentReportError::UnsafeRoute);
+        }
+        let mut original = self
+            .origin
+            .join(path)
+            .map_err(|_| StudentReportError::UnsafeRoute)?;
+        original
+            .query_pairs_mut()
+            .append_pair("id", &id.to_string());
+        // No userid/studentid/action/view/mobile parameters are accepted.
+        let operation = async {
+            let mut target = original.clone();
+            for hop in 0..=3 {
+                let mut response = self
+                    .student_http
+                    .get(target.clone())
+                    .send()
+                    .await
+                    .map_err(|_| StudentReportError::Unavailable)?;
+                // Defense in depth: the dedicated transport follows no redirects.
+                if response.url().origin() != self.origin.origin() || response.url() != &target {
+                    return Err(StudentReportError::UnsafeRoute);
+                }
+                let status = response.status();
+                if status == StatusCode::UNAUTHORIZED {
+                    return Err(StudentReportError::AuthExpired);
+                }
+                if status.is_redirection() {
+                    let location = response
+                        .headers()
+                        .get(reqwest::header::LOCATION)
+                        .and_then(|v| v.to_str().ok())
+                        .ok_or(StudentReportError::UnsafeRoute)?;
+                    let next = target
+                        .join(location)
+                        .map_err(|_| StudentReportError::UnsafeRoute)?;
+                    if next.origin() != self.origin.origin()
+                        || !next.username().is_empty()
+                        || next.password().is_some()
+                    {
+                        return Err(StudentReportError::UnsafeRoute);
+                    }
+                    if next.path() == "/login/index.php" || next.path().starts_with("/auth/") {
+                        return Err(StudentReportError::AuthExpired);
+                    }
+                    // A redirect may repeat this exact self report. A staff,
+                    // submit, marking or other-student destination is never sent.
+                    if next != original || hop == 3 {
+                        return Err(StudentReportError::UnsafeRoute);
+                    }
+                    target = next;
+                    continue;
+                }
+                if status.is_server_error() {
+                    return Err(StudentReportError::Unavailable);
+                }
+                if status == StatusCode::NOT_FOUND {
+                    return Err(StudentReportError::Unsupported);
+                }
+                if status != StatusCode::OK && status != StatusCode::FORBIDDEN {
+                    return Err(StudentReportError::Unsupported);
+                }
+                const MAX_DECODED_BYTES: usize = 1024 * 1024;
+                if response
+                    .content_length()
+                    .is_some_and(|n| n > MAX_DECODED_BYTES as u64)
+                {
+                    return Err(StudentReportError::TooLarge);
+                }
+                let headers = response.headers().clone();
+                let content_type = header(&headers, "content-type");
+                if !content_type.as_deref().is_some_and(|v| {
+                    v.starts_with("text/html") || v.starts_with("application/xhtml+xml")
+                }) {
+                    return Err(if status == StatusCode::FORBIDDEN {
+                        StudentReportError::Denied
+                    } else {
+                        StudentReportError::Unsupported
+                    });
+                }
+                let mut bytes = Vec::new();
+                while let Some(chunk) = response
+                    .chunk()
+                    .await
+                    .map_err(|_| StudentReportError::Unavailable)?
+                {
+                    if bytes.len().saturating_add(chunk.len()) > MAX_DECODED_BYTES {
+                        return Err(StudentReportError::TooLarge);
+                    }
+                    bytes.extend_from_slice(&chunk);
+                }
+                let body = String::from_utf8(bytes).map_err(|_| StudentReportError::Unsupported)?;
+                if looks_like_login_page(&body) {
+                    return Err(StudentReportError::AuthExpired);
+                }
+                if status == StatusCode::FORBIDDEN {
+                    return Err(StudentReportError::Denied);
+                }
+                return Ok(Fetched {
+                    status: status.as_u16(),
+                    final_url: target.to_string(),
+                    content_type,
+                    body,
+                    ..Fetched::default()
+                });
+            }
+            Err(StudentReportError::UnsafeRoute)
+        };
+        tokio::time::timeout(Duration::from_secs(10), operation)
+            .await
+            .map_err(|_| StudentReportError::Unavailable)?
     }
 
     /// GET a page, returning its body and headers.
@@ -393,12 +613,19 @@ impl QuantaClient {
     ) -> Result<DownloadResponse, QuantaError> {
         let mut builder = self.download_http.get(url.clone());
         if req.resume_from > 0 {
-            builder = builder.header(reqwest::header::RANGE, format!("bytes={}-", req.resume_from));
+            builder = builder.header(
+                reqwest::header::RANGE,
+                format!("bytes={}-", req.resume_from),
+            );
             if let Some(tag) = req.if_range.as_deref().filter(|t| !t.trim().is_empty()) {
                 builder = builder.header(reqwest::header::IF_RANGE, tag);
             }
         } else {
-            if let Some(tag) = req.if_none_match.as_deref().filter(|t| !t.trim().is_empty()) {
+            if let Some(tag) = req
+                .if_none_match
+                .as_deref()
+                .filter(|t| !t.trim().is_empty())
+            {
                 builder = builder.header(reqwest::header::IF_NONE_MATCH, tag);
             }
             if let Some(since) = req

@@ -20,6 +20,10 @@ struct Fixture {
 
 impl Fixture {
     fn start(status: u16, count: usize) -> Self {
+        Self::with_page(status, count, VERIFIED_PAGE.into())
+    }
+
+    fn with_page(status: u16, count: usize, first_page: String) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let (sent, requests) = mpsc::channel();
@@ -41,7 +45,7 @@ impl Fixture {
                     gate.recv_timeout(Duration::from_secs(15)).unwrap();
                 }
                 let body = if index == 0 {
-                    VERIFIED_PAGE
+                    first_page.as_str()
                 } else {
                     "<html>next request</html>"
                 };
@@ -289,3 +293,5 @@ async fn unusable_session_never_replaces_active_identity() {
     );
     assert_prior_session_untouched(&state, &previous);
 }
+
+include!("academic_foundation.rs");

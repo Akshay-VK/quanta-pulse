@@ -5,6 +5,7 @@
 //! persisted to the database or macOS Keychain.
 
 pub mod attention;
+pub mod academic;
 pub mod auth;
 pub mod commands;
 pub mod core;
@@ -42,6 +43,10 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            commands::academic_context,
+            commands::academic_assignments,
+            commands::academic_grades,
+            commands::academic_attendance,
             commands::login,
             commands::auth_status,
             commands::refresh_session,
