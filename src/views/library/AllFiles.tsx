@@ -1,3 +1,4 @@
+import { compareDates, compareNames, compareResourceNames } from "../../lib/fileOrdering";
 import { SearchControls } from "../../components/SearchControls";
 import { useSessionValue } from "../../hooks/useSessionViews";
 import { buildDisplayNames, loadAliases } from "../../lib/courseName";
@@ -18,10 +19,10 @@ import { FileTypeIcon } from "../../components/ui/FileTypeIcon";
 import { UnreadDot } from "../../components/ui/UnreadDot";
 import { Select } from "../../components/ui/Select";
 import { dedupeCourseResources } from "../../lib/courseTree";
-import { splitLiteralMatches } from "../../lib/filter";
+import { activityTimestamp, splitLiteralMatches } from "../../lib/filter";
 import { isLocal } from "../../lib/mirrorState";
 import { courseTitle } from "../../lib/courseName";
-import { formatCompact, formatListDate, parseTimestamp } from "../../lib/format";
+import { describeUpload, formatCompact, formatListDate } from "../../lib/format";
 import { formatSectionPath, resourceSectionPath } from "../../lib/sectionPath";
 import type { DetailsAdapter } from "../../lib/details";
 import type { Course, Resource } from "../../lib/types";
@@ -63,9 +64,11 @@ interface Capture {
 
 const EMPTY_IDS: ReadonlySet<number> = new Set();
 
-type SortId = "title" | "course" | "section" | "detected" | "saved" | "relevance";
+type SortId = "title" | "course" | "section" | "detected" | "saved" | "relevance" | "activity" | "type";
 
 const DEFAULT_DIR: Record<SortId, "asc" | "desc"> = {
+  activity: "desc",
+  type: "asc",
   title: "asc",
   course: "asc",
   section: "asc",
@@ -73,10 +76,6 @@ const DEFAULT_DIR: Record<SortId, "asc" | "desc"> = {
   saved: "desc",
   relevance: "desc",
 };
-
-function detectedAt(resource: Resource): number | null {
-  return parseTimestamp(resource.firstSeenAt)?.getTime() ?? null;
-}
 
 function Highlight({ text, query }: { text: string; query: string }) {
   const parts = splitLiteralMatches(text, query);
@@ -133,36 +132,43 @@ export default function AllFiles({
   const searchErrors = searchResult.errors;
   const filtered = searchResult.files;
 
+  const hasTextTerms = searchResult.parsed.terms.length > 0;
+  const relevance = sort.id === "relevance" && hasTextTerms;
+  const sortLabels: Record<SortId, string> = {
+    relevance: hasTextTerms ? "Relevance" : sort.dir === "asc" ? "Oldest (activity date)" : "Newest (activity date)",
+    activity: "Activity date", title: "Name", course: "Course", section: "Section",
+    detected: "Detected", saved: "Saved", type: "File type",
+  };
+  const sortLabel = sortLabels[sort.id];
+
   const rows = useMemo(() => {
-    const sortId: SortId = (["title", "course", "section", "detected", "saved", "relevance"] as const).includes(sort.id as SortId)
+    const sortId: SortId = (["title", "course", "section", "detected", "saved", "relevance", "activity", "type"] as const).includes(sort.id as SortId)
       ? (sort.id as SortId) : "detected";
-    if (sortId === "relevance") return filtered;
+    if (sortId === "relevance" && hasTextTerms) return filtered;
     const dir = sort.dir === "asc" ? 1 : -1;
-    const byTitle = (a: Resource, b: Resource) =>
-      a.title.localeCompare(b.title, undefined, { sensitivity: "base" }) || a.id - b.id;
+    const byTitle = compareResourceNames;
     return [...filtered].sort((a, b) => {
       let cmp = 0;
       switch (sortId) {
         case "title": cmp = byTitle(a, b); break;
-        case "course": cmp = courseTitle(a.courseId, a.courseName).localeCompare(courseTitle(b.courseId, b.courseName), undefined, { sensitivity: "base" }); break;
-        case "section": cmp = formatSectionPath(a).localeCompare(formatSectionPath(b), undefined, { sensitivity: "base" }); break;
+        case "course": cmp = compareNames(courseTitle(a.courseId, a.courseName), courseTitle(b.courseId, b.courseName)); break;
+        case "section": cmp = compareNames(formatSectionPath(a), formatSectionPath(b)); break;
         case "saved": cmp = Number(isSaved(a)) - Number(isSaved(b)); break;
+        case "type": cmp = compareNames(a.resourceType, b.resourceType); break;
+        case "activity":
+        case "relevance":
         case "detected":
-        default: {
-          const ta = detectedAt(a); const tb = detectedAt(b);
-          if (ta === null && tb === null) cmp = 0;
-          else if (ta === null) return 1;
-          else if (tb === null) return -1;
-          else cmp = ta - tb;
-        }
+        default:
+          return compareDates(sortId === "detected" ? a.firstSeenAt : activityTimestamp(a), sortId === "detected" ? b.firstSeenAt : activityTimestamp(b), sort.dir) || byTitle(a, b);
       }
       return cmp !== 0 ? cmp * dir : byTitle(a, b);
     });
-  }, [filtered, sort, mirror]);
+  }, [filtered, sort, mirror, hasTextTerms]);
 
   const filtersActive = Boolean(search.trim() || dateFilters.sourceFrom || dateFilters.sourceThrough);
   const onSort = (id: string) => {
     const key = id as SortId;
+    if (key === "relevance" && relevance) return;
     setSort(prev => prev.id === key ? { id: key, dir: prev.dir === "asc" ? "desc" : "asc" } : { id: key, dir: DEFAULT_DIR[key] ?? "asc" });
   };
   const clearFilters = () => { setDateFilters({}); onClearSearch?.(); };
@@ -375,6 +381,20 @@ export default function AllFiles({
       cell: (resource) => <Highlight text={resourceSectionPath(resource).at(-1) ?? ""} query={query} />,
     },
     {
+      id: "activity",
+      header: "Activity date",
+      width: 150,
+      sortable: true,
+      title: (resource) => {
+        const date = describeUpload(resource);
+        return date.source === "unavailable" ? `Upload date unavailable; first detected ${date.detected}` : `${date.source}: ${date.label}; first detected ${date.detected}`;
+      },
+      cell: (resource) => {
+        const date = describeUpload(resource);
+        return `${formatListDate(activityTimestamp(resource))} · ${date.source === "unavailable" ? "detected" : date.source}`;
+      },
+    },
+    {
       id: "detected",
       header: "Detected",
       className: "detected-cell",
@@ -415,11 +435,11 @@ export default function AllFiles({
         {query && <Button variant="secondary" size="sm" trailingIcon={<X aria-hidden="true" />} onClick={onClearSearch}>Search “{query}”</Button>}
         <Button className="library-toolbar-end" variant="ghost" size="sm" leadingIcon={<ArrowDownUp aria-hidden="true" />} aria-expanded={showSort} onClick={() => setShowSort((open) => !open)}>Sort</Button>
       </div>
-      <div className="library-toolbar">{searchField}{filtersActive && <Button variant="ghost" size="sm" onClick={clearFilters}>Clear filters</Button>}<span>Sort: {sort.id}</span></div>
+      <div className="library-toolbar">{searchField}{filtersActive && <Button variant="ghost" size="sm" onClick={clearFilters}>Clear filters</Button>}<span>Sort: {sortLabel}</span></div>
       <SearchControls raw={search} onRaw={onSearchChange ?? (() => {})} scope={scope} onScope={setScope} filters={dateFilters} onFilters={setDateFilters} courses={courses} resources={unique} />
       {showSort && <div className="library-toolbar">
-        <Select ariaLabel="Sort files by" value={sort.id} onValueChange={(value) => onSort(value)} options={[{ value: "relevance", label: "Relevance" }, ...columns.map(({ id, header }) => ({ value: id, label: header }))]} />
-        <Button variant="ghost" size="sm" onClick={() => onSort(sort.id)}>{sort.dir === "asc" ? "Ascending" : "Descending"}</Button>
+        <Select ariaLabel="Sort files by" value={sort.id} onValueChange={(value) => onSort(value)} options={[{ value: "relevance", label: "Relevance" }, { value: "type", label: "File type" }, ...columns.map(({ id, header }) => ({ value: id, label: header }))]} />
+        <Button variant="ghost" size="sm" aria-label="Sort direction" disabled={relevance} onClick={() => onSort(sort.id)}>{relevance ? "Best match first" : sort.dir === "asc" ? "Ascending" : "Descending"}</Button>
       </div>}
 
       <DataTable

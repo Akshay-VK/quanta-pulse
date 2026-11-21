@@ -1032,7 +1032,7 @@ export default function CoursePage({
             <Select
               value={sort}
               onValueChange={(value) => setSort(value as ResourceSort)}
-              options={[{ value: "relevance", label: "Relevance" }, ...RESOURCE_SORTS.map((option) => ({
+              options={[{ value: "relevance", label: result.parsed.terms.length ? "Relevance" : "Newest (activity date)" }, ...RESOURCE_SORTS.map((option) => ({
                 value: option.id,
                 label: option.label,
               }))]}

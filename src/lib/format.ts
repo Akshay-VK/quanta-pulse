@@ -1,3 +1,4 @@
+import { validCalendarDate, validCalendarInstant } from "./agenda";
 // Timestamp formatting. Pure and timezone-aware.
 //
 // Key rule: a detection time is never shown as an upload time. If Quanta does
@@ -33,9 +34,14 @@ export function parseTimestamp(value?: string | null): Date | null {
   const v = value.trim();
   if (!v) return null;
   if (DATE_ONLY.test(v)) {
+    if (!validCalendarDate(v)) return null;
     const [y, m, d] = v.split("-").map(Number);
-    return new Date(y, m - 1, d);
+    const date = new Date(0);
+    date.setFullYear(y, m - 1, d);
+    date.setHours(0, 0, 0, 0);
+    return date;
   }
+  if (!validCalendarInstant(v)) return null;
   const dt = new Date(v);
   return Number.isNaN(dt.getTime()) ? null : dt;
 }
