@@ -259,6 +259,7 @@ export interface ScanOutcome {
   errors: string[];
   authExpired: boolean;
   cancelled: boolean;
+  committed: boolean;
 }
 
 export interface DbInfo {

@@ -302,7 +302,12 @@ pub async fn discover_all(
                     &page_url,
                     parent_path.last().map(String::as_str),
                 ));
+                let mut hit_resource_cap = false;
                 for mut resource in page_resources {
+                    if found.len() >= max_res {
+                        hit_resource_cap = true;
+                        break;
+                    }
                     let mut path = parent_path.clone();
                     if !resource.section_path.is_empty() {
                         append_section_context(&mut path, &resource.section_path);
@@ -326,9 +331,12 @@ pub async fn discover_all(
                     found
                         .entry(resource.external_id.clone())
                         .or_insert(resource);
-                    if found.len() >= max_res {
-                        break;
-                    }
+                }
+                if hit_resource_cap {
+                    page_errors.push(
+                        "course resource limit reached; some resources were not scanned".into(),
+                    );
+                    pending.clear();
                 }
                 for next in parse::parse_pagination_links(&fetched.body, &page_url) {
                     enqueue_page(&mut pending, &visited, next, parent_path.clone());
@@ -605,32 +613,37 @@ pub async fn discover_all(
                 done: detail_done,
                 total: detail_total,
             });
-            if let Ok((id, course_external_id, detail, succeeded)) = joined {
-                if succeeded {
-                    *successful_detail_counts
-                        .entry(course_external_id)
-                        .or_default() += 1;
+            match joined {
+                Ok((id, course_external_id, detail, succeeded)) => {
+                    if succeeded {
+                        *successful_detail_counts
+                            .entry(course_external_id)
+                            .or_default() += 1;
+                    }
+                    match detail {
+                        Detail::Keep(r) | Detail::Single(r) => keep.push(*r),
+                        Detail::Failed(r, error, auth_expired) => {
+                            if auth_expired {
+                                result.auth_expired = true;
+                            }
+                            result.errors.push(format!("resource {id}: {error}"));
+                            keep.push(*r);
+                        }
+                        Detail::Forum(items) => {
+                            replaced.insert(id);
+                            extras.extend(items);
+                        }
+                        Detail::Multi(mut items, path) => {
+                            replaced.insert(id);
+                            for resource in &mut items {
+                                resource.section_path = path.clone();
+                            }
+                            extras.extend(items);
+                        }
+                    }
                 }
-                match detail {
-                    Detail::Keep(r) | Detail::Single(r) => keep.push(*r),
-                    Detail::Failed(r, error, auth_expired) => {
-                        if auth_expired {
-                            result.auth_expired = true;
-                        }
-                        result.errors.push(format!("resource {id}: {error}"));
-                        keep.push(*r);
-                    }
-                    Detail::Forum(items) => {
-                        replaced.insert(id);
-                        extras.extend(items);
-                    }
-                    Detail::Multi(mut items, path) => {
-                        replaced.insert(id);
-                        for resource in &mut items {
-                            resource.section_path = path.clone();
-                        }
-                        extras.extend(items);
-                    }
+                Err(join_err) => {
+                    result.errors.push(format!("detail task failed: {join_err}"));
                 }
             }
         }
@@ -682,8 +695,7 @@ async fn fetch_courses(
         if let Ok(url) = origin.join("/my/courses.php") {
             match client.fetch(&url).await {
                 Ok(page) => courses = parse::parse_courses(&page.body, origin),
-                Err(QuantaError::AuthExpired) => return Err(QuantaError::AuthExpired),
-                Err(_) => {}
+                Err(e) => return Err(e),
             }
         }
     }
