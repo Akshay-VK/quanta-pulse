@@ -1,7 +1,7 @@
 import { Select } from "./ui/Select";
 import { useMemo } from "react";
 import type { Course, Resource } from "../lib/types";
-import { parsePaletteQuery } from "../lib/paletteQuery";
+import { paletteQueryFilterValues, parsePaletteQuery, replacePaletteQueryFilter, type PaletteTokenKey } from "../lib/paletteQuery";
 import { searchDesktop, type SearchScope, type SearchFilters } from "../lib/desktopSearch";
 
 /** Controls edit the same query tokens accepted by every search surface. */
@@ -18,12 +18,9 @@ export function SearchControls({ raw, onRaw, scope, onScope, filters, onFilters,
     ...folders.map(f => ({ scope: { kind: "folder", courseId: f.courseId, path: f.path } as SearchScope, label: `Folder · ${courses.find(c => c.id === f.courseId)?.shortName ?? f.courseId} / ${f.path.join(" / ")}` })),
   ];
   if (!options.some(o => JSON.stringify(o.scope) === value)) options.push({ scope, label: "Unavailable destination" });
-  const edit = (key: string, next: string, dimension?: string[]) => {
-    const keep = parsed.tokens.filter(t => t.key !== key || (dimension && !dimension.includes(t.value.toLowerCase())));
-    onRaw([parsed.freeRaw, ...keep.map(t => t.raw), next ? `${key}:${JSON.stringify(next)}` : ""].filter(Boolean).join(" "));
-  };
-  const selected = (key: string, dimension?: string[]) => parsed.tokens.filter(t => t.key === key && (!dimension || dimension.includes(t.value.toLowerCase()))).map(t => key === "is" || key === "due" ? t.value.toLowerCase() : key === "type" ? resources.find(r => r.resourceType.toLowerCase() === t.value.toLowerCase())?.resourceType ?? t.value : t.value);
-  const select = (label: string, key: string, values: string[], dimension?: string[]) => {
+  const edit = (key: PaletteTokenKey, next: string, dimension?: string[]) => onRaw(replacePaletteQueryFilter(parsed, key, next, dimension));
+  const selected = (key: PaletteTokenKey, dimension?: string[]) => paletteQueryFilterValues(parsed, key, resources, dimension);
+  const select = (label: string, key: PaletteTokenKey, values: string[], dimension?: string[]) => {
     const active = selected(key, dimension);
     return <label className="filter-chip"><span>{label}</span><select aria-label={label} value={active.length === 1 ? active[0] : active.length > 1 ? "multiple" : ""} onChange={e => edit(key, e.target.value, dimension)}>
       <option value="">Any</option>{active.length > 1 && <option value="multiple" disabled>Multiple</option>}

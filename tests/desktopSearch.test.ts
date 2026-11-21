@@ -97,6 +97,16 @@ it('ranks exact, prefix, title terms and metadata with source-date and stable-ID
   expect(result.files.map(r => r.id)).toEqual([3, 9, 1, 2, 5, 6, 7]);
 });
 
+it('ranks an exact canonical or short course name ahead of a display-name prefix', () => {
+  const courses = [
+    { ...course, id: 1, name: 'Calculus', shortName: 'Math', displayName: 'Vector Methods' },
+    { ...course, id: 2, name: 'Calculator', shortName: 'CALS', displayName: 'Math methods' },
+    { ...course, id: 3, name: 'Math', shortName: 'Algebra', displayName: 'Zeta' },
+  ];
+  const result = searchDesktop({ raw: 'math', scope: { kind: 'everywhere' } }, { courses, resources: [] });
+  expect(result.courses.map(c => c.id)).toEqual([1, 3, 2]);
+});
+
 it('treats zero, malformed and impossible deadlines as unusable, rather than overdue', () => {
   const resources = ['0', 'not-a-date', '2026-02-30', '2026-02-30T12:00:00Z', null].map((dueAt, i) => resource({ id: i + 1, externalResourceId: `r${i}`, dueAt }));
   const request = { raw: 'due:none', scope: { kind: 'everywhere' } as const, now: '2026-11-21T00:00:00Z', timeZone: 'UTC' };

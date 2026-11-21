@@ -151,7 +151,6 @@ export function searchDesktop(request: SearchRequest, inventory: SearchInventory
   };
 
   const fileFiltersActive = Boolean(request.filters?.category && request.filters.category !== "all") ||
-    Boolean(request.filters?.category && request.filters.category !== "all") ||
     Boolean(parsed.filters.types?.length) ||
     Boolean(parsed.filters.is?.length) ||
     Boolean(parsed.filters.due?.length) ||
@@ -162,7 +161,6 @@ export function searchDesktop(request: SearchRequest, inventory: SearchInventory
   const fileMatches = (r: Resource): boolean => {
     if (errors.length) return false;
     if (!inSearchScope(r, request.scope)) return false;
-    if (request.filters?.category && request.filters.category !== "all" && resourceCategory(r.resourceType) !== request.filters.category) return false;
     if (request.filters?.category && request.filters.category !== "all" && resourceCategory(r.resourceType) !== request.filters.category) return false;
     if (parsed.filters.courseIds && (r.courseId === null || !parsed.filters.courseIds.includes(r.courseId))) return false;
     if (parsed.filters.types && !parsed.filters.types.some(type => norm(type) === norm(r.resourceType))) return false;
@@ -298,10 +296,8 @@ export function searchDesktop(request: SearchRequest, inventory: SearchInventory
   const rankedCourses = (inventory.courses as Course[])
     .filter(courseMatches)
     .sort((a, b) => {
-      const an = inventory.displayNames?.get(a.id) ?? a.displayName ?? a.name;
-      const bn = inventory.displayNames?.get(b.id) ?? b.displayName ?? b.name;
-      const sa = scoreTitle(an);
-      const sb = scoreTitle(bn);
+      const sa = Math.min(...courseFields(a).map(scoreTitle));
+      const sb = Math.min(...courseFields(b).map(scoreTitle));
       if (sa !== sb) return sa - sb;
       return a.id - b.id;
     });
