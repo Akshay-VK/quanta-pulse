@@ -45,3 +45,5 @@ This wiki preserves dated decisions and their evidence. It is not the live track
 - [2026-11-16: Complete History read contract](2026-11-16-history-read-contract.md) — B05A acceptance, timestamp correction, native proof, and bounded task splits.
 - [2026-11-16: Row foundation acceptance](2026-11-16-row-foundation.md) — 04A geometry, cascade correction, rendered proof, and remaining keyboard scope.
 - [2026-11-16: Baseline and History acceptance checkpoint](2026-11-16-baseline-and-history-acceptance.md) — accepted backend/policy commits, proof limits, and outstanding surface/recovery work.
+
+- [2026-11-21: Prerelease backup ordering proof](2026-11-21-r1a-r1b-integration.md#2026-11-21-prerelease-backup-ordering-corrected) — numeric prerelease and build-metadata correction, red/green upgrade evidence, and remaining A0 restore gate.
