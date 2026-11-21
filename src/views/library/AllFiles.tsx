@@ -1,6 +1,7 @@
 import { SearchControls } from "../../components/SearchControls";
 import { useSessionValue } from "../../hooks/useSessionViews";
 import { buildDisplayNames, loadAliases } from "../../lib/courseName";
+import { categoryLabel } from "../../lib/courseLibrary";
 import { searchDesktop } from "../../lib/desktopSearch";
 import type { SearchQueryState, SearchScope, SearchFilters } from "../../lib/desktopSearch";
 import { useMaterialActions } from "../../hooks/useMaterialActions";
@@ -37,6 +38,7 @@ interface AllFilesProps {
   onSearchChange?: (raw: string) => void;
   initialSearchQuery?: SearchQueryState;
   timeZone?: string;
+  now?: Date;
   onOpen: (url: string) => void;
   onPreview: (resource: Resource) => void;
   details?: DetailsAdapter;
@@ -87,7 +89,7 @@ function Highlight({ text, query }: { text: string; query: string }) {
 export default function AllFiles({
   resources,
   courses,
-  search, onSearchChange, initialSearchQuery, timeZone,
+  search, onSearchChange, initialSearchQuery, timeZone, now,
   onOpen,
   onPreview,
   details,
@@ -113,7 +115,7 @@ export default function AllFiles({
   useEffect(() => {
     if (initialSearchQuery && initialSearchQuery.requestId !== appliedRequest) {
       setScope(initialSearchQuery.scope);
-      setDateFilters({ sourceFrom: initialSearchQuery.sourceFrom ?? undefined, sourceThrough: initialSearchQuery.sourceThrough ?? undefined });
+      setDateFilters({ category: initialSearchQuery.category, sourceFrom: initialSearchQuery.sourceFrom ?? undefined, sourceThrough: initialSearchQuery.sourceThrough ?? undefined });
       setSort({ id: "relevance", dir: "desc" });
       setAppliedRequest(initialSearchQuery.requestId);
     }
@@ -127,9 +129,9 @@ export default function AllFiles({
   const unreadIds = unreadResourceIds ?? EMPTY_IDS;
   const savedIds = useMemo(() => new Set(unique.filter((r) => isSaved(r)).map((r) => r.id)), [unique, mirror]);
   const searchResult = useMemo(() => searchDesktop(
-    { raw: search, scope, filters: dateFilters, timeZone },
+    { raw: search, scope, filters: dateFilters, timeZone, now },
     { courses, resources: unique, displayNames, unreadIds, savedIds },
-  ), [search, scope, unique, courses, displayNames, unreadIds, savedIds, dateFilters, timeZone]);
+  ), [search, scope, unique, courses, displayNames, unreadIds, savedIds, dateFilters, timeZone, now]);
   const searchErrors = searchResult.errors;
   const filtered = searchResult.files;
 
@@ -160,7 +162,7 @@ export default function AllFiles({
     });
   }, [filtered, sort, mirror]);
 
-  const filtersActive = Boolean(search.trim() || dateFilters.sourceFrom || dateFilters.sourceThrough);
+  const filtersActive = Boolean(search.trim() || (dateFilters.category && dateFilters.category !== "all") || dateFilters.sourceFrom || dateFilters.sourceThrough);
   const onSort = (id: string) => {
     const key = id as SortId;
     setSort(prev => prev.id === key ? { id: key, dir: prev.dir === "asc" ? "desc" : "asc" } : { id: key, dir: DEFAULT_DIR[key] ?? "asc" });
@@ -415,7 +417,7 @@ export default function AllFiles({
         {query && <Button variant="secondary" size="sm" trailingIcon={<X aria-hidden="true" />} onClick={onClearSearch}>Search “{query}”</Button>}
         <Button className="library-toolbar-end" variant="ghost" size="sm" leadingIcon={<ArrowDownUp aria-hidden="true" />} aria-expanded={showSort} onClick={() => setShowSort((open) => !open)}>Sort</Button>
       </div>
-      <div className="library-toolbar">{searchField}{filtersActive && <Button variant="ghost" size="sm" onClick={clearFilters}>Clear filters</Button>}<span>Sort: {sort.id}</span></div>
+      <div className="library-toolbar">{searchField}{filtersActive && <Button variant="ghost" size="sm" onClick={clearFilters}>Clear filters</Button>}{dateFilters.category && dateFilters.category !== "all" && <Button variant="secondary" size="sm" onClick={() => setDateFilters({ ...dateFilters, category: undefined })}>Category: {categoryLabel(dateFilters.category)} ×</Button>}<span>Sort: {sort.id}</span></div>
       <SearchControls raw={search} onRaw={onSearchChange ?? (() => {})} scope={scope} onScope={setScope} filters={dateFilters} onFilters={setDateFilters} courses={courses} resources={unique} />
       {showSort && <div className="library-toolbar">
         <Select ariaLabel="Sort files by" value={sort.id} onValueChange={(value) => onSort(value)} options={[{ value: "relevance", label: "Relevance" }, ...columns.map(({ id, header }) => ({ value: id, label: header }))]} />

@@ -102,3 +102,18 @@ it('treats zero, malformed and impossible deadlines as unusable, rather than ove
   const request = { raw: 'due:none', scope: { kind: 'everywhere' } as const, now: '2026-11-21T00:00:00Z', timeZone: 'UTC' };
   expect(searchDesktop(request, { courses: [course], resources }).files.map(r => r.id)).toEqual([1, 2, 3, 4, 5]);
 });
+
+it('reevaluates instant and date-only due membership from explicit clocks across configured-zone midnight', () => {
+  const inventory = { courses: [course], resources: [
+    resource({ id: 1, dueAt: '2026-11-21T18:30:00Z' }),
+    resource({ id: 2, dueAt: '2026-11-21' }),
+    resource({ id: 3, dueAt: '2026-11-28' }),
+  ] };
+  const files = (raw: string, now: string, timeZone = 'Asia/Kolkata') => searchDesktop({ raw, now, timeZone, scope: { kind: 'everywhere' } }, inventory).files.map(r => r.id);
+  expect(files('due:today', '2026-11-21T18:29:59Z')).toEqual([2]);
+  expect(files('due:today', '2026-11-21T18:30:01Z')).toEqual([1]);
+  expect(files('due:overdue', '2026-11-21T18:30:01Z')).toEqual([1, 2]);
+  expect(files('due:week', '2026-11-21T18:29:59Z')).toEqual([1, 2]);
+  expect(files('due:week', '2026-11-21T18:30:01Z')).toEqual([3]);
+  expect(files('due:today', '2026-11-21T18:30:01Z', 'UTC')).toEqual([1, 2]);
+});

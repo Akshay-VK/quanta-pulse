@@ -51,7 +51,7 @@ export default function CommandPalette({
   courses,
   onCourse,
   onFolder,
-  resources, timeZone, inventoryPending, inventoryError,
+  resources, timeZone, now, inventoryPending, inventoryError,
   unreadResources,
   onInspectResource,
   onSeeAllFiles,
@@ -65,11 +65,12 @@ export default function CommandPalette({
   onFolder?: (courseId: number, path: string[]) => void;
   resources: Resource[];
   timeZone?: string;
+  now?: Date;
   inventoryPending?: boolean;
   inventoryError?: string | null;
   unreadResources?: ReadonlySet<number>;
   onInspectResource: (resource: Resource) => void;
-  onSeeAllFiles: (query: string, options?: { scope?: SearchScope; sourceFrom?: string | null; sourceThrough?: string | null }) => void;
+  onSeeAllFiles: (query: string, options?: SearchFilters & { scope?: SearchScope }) => void;
   actions: PaletteAction[];
 }) {
   const mirror = useMirror();
@@ -92,9 +93,9 @@ export default function CommandPalette({
   );
   const savedIds = useMemo(() => new Set(resources.filter((r) => isSaved(r)).map((r) => r.id)), [resources, mirror]);
   const searchResult = useMemo(() => searchDesktop(
-    { raw: query, scope, filters, timeZone },
+    { raw: query, scope, filters, timeZone, now },
     { courses, resources, displayNames, unreadIds: unreadResources, savedIds, revision: undefined },
-  ), [query, courses, resources, displayNames, unreadResources, savedIds, scope, filters, timeZone]);
+  ), [query, courses, resources, displayNames, unreadResources, savedIds, scope, filters, timeZone, now]);
   const navItems = NAV.filter((item) => (!hasQuery || needle) && (!needle || item.label.toLowerCase().includes(needle)));
   const courseMatches = hasQuery && !parsed.hasKnownInvalid ? searchResult.courses : [];
   const files = hasQuery && !parsed.hasKnownInvalid ? searchResult.files.slice(0, 8) : [];

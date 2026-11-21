@@ -27,7 +27,7 @@ import { TooltipProvider } from "./components/ui/Tooltip";
 import { Toaster, type ToastItem } from "./components/ui/Toast";
 import InboxView from "./views/InboxView";
 import { useInbox, useDueInventory } from "./hooks/useAttention";
-import type { SearchQueryState, SearchScope } from "./lib/desktopSearch";
+import type { SearchQueryState, SearchScope, SearchFilters } from "./lib/desktopSearch";
 import { agendaEntries, resolveTimezone } from "./lib/agenda";
 import CalendarView from "./views/CalendarView";
 import LibraryView from "./views/LibraryView";
@@ -59,7 +59,7 @@ import type {
   DueFilter,
   AuthStatus,
   ChangeEvent,
-  Course,
+  DesktopSearchInventory,
   DbInfo,
   LocalFile,
   Resource,
@@ -111,15 +111,13 @@ function AppShell() {
 
   const [sync, setSync] = useState<SyncStatus | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [courses, setCourses] = useState<Course[]>([]);
-  const [resources, setResources] = useState<Resource[]>([]);
+  const [searchInventory, setSearchInventory] = useState<DesktopSearchInventory>({ courses: [], resources: [], unreadResourceIds: [] });
+  const { courses, resources } = searchInventory;
 
   const [historyEvents, setHistoryEvents] = useState<ChangeEvent[]>([]);
   const [eventScopeReady, setEventScopeReady] = useState(false);
   const [scans, setScans] = useState<ScanRun[]>([]);
   const inbox = useInbox();
-  const inboxRefreshRef = useRef(inbox.refresh);
-  inboxRefreshRef.current = inbox.refresh;
   const historyEventsRef = useRef(historyEvents);
   historyEventsRef.current = historyEvents;
   const inboxPageRef = useRef(inbox.page);
@@ -224,10 +222,11 @@ function AppShell() {
       go({ view: "library", courseId, folderPath: folderPath ? [...folderPath] : null }),
     [go],
   );
-  const handleSeeAllFiles = useCallback((raw: string, options?: { scope?: SearchScope; sourceFrom?: string | null; sourceThrough?: string | null }) => {
+  const handleSeeAllFiles = useCallback((raw: string, options?: SearchFilters & { scope?: SearchScope }) => {
     setLibrarySearchQuery((previous) => ({
       raw,
       scope: options?.scope ?? { kind: "everywhere" },
+      category: options?.category,
       sourceFrom: options?.sourceFrom ?? null,
       sourceThrough: options?.sourceThrough ?? null,
       requestId: (previous?.requestId ?? 0) + 1,
@@ -317,8 +316,7 @@ function AppShell() {
         if (requireSuccess) throw new Error("History refresh superseded; retry refresh.");
         return;
       }
-      setCourses(inventory.courses);
-      setResources(inventory.resources);
+      setSearchInventory(inventory);
       setHistoryEvents(he);
       setScans(s);
       setDbInfo(info);
@@ -483,9 +481,9 @@ function AppShell() {
   const handleLogout = useCallback(async () => {
     await api.logout();
     setAuth(await api.authStatus());
-    setResources([]);
+    ++refreshGeneration.current;
+    setSearchInventory({ courses: [], resources: [], unreadResourceIds: [] });
     setHistoryEvents([]);
-    setCourses([]);
   }, []);
 
   const saveSettings = useCallback(async (next: Settings) => {
@@ -500,14 +498,17 @@ function AppShell() {
     if (ids.length === 0) return;
     const previous = new Map(historyEventsRef.current.filter((event) => ids.includes(event.id)).map((event) => [event.id, event.read]));
     setHistoryEvents((current) => current.map((event) => (ids.includes(event.id) ? { ...event, read: true } : event)));
+    // Search keeps its last complete metadata/read snapshot during the write.
+    // Invalidate earlier refreshes, then replace all facts atomically on success.
+    ++refreshGeneration.current;
     void api.setEventReadState(ids, true).then(() => {
-      void inboxRefreshRef.current();
+      void refresh();
     }).catch((err) => {
       setHistoryEvents((current) => current.map((event) => (previous.has(event.id) ? { ...event, read: previous.get(event.id)! } : event)));
-      void inboxRefreshRef.current();
+      void refresh();
       notify(String(err), true);
     });
-  }, [notify]);
+  }, [notify, refresh]);
 
   const selectDetails = useCallback((owner: ViewId, subject: DetailSubject, origin: HTMLElement, restoreFocus?: RestoreDetailFocus) => {
     const next = { ...subject, owner, identity: detailIdentity(subject) };
@@ -909,10 +910,7 @@ function AppShell() {
     }
   };
 
-  const unreadResources = useMemo(() => new Set<number>([
-    ...historyEvents.flatMap((event) => event.resourceId != null && !event.read ? [event.resourceId] : []),
-    ...(inbox.page?.items ?? []).flatMap((item) => item.resourceId != null && item.unread ? [item.resourceId] : []),
-  ]), [historyEvents, inbox.page]);
+  const unreadResources = useMemo(() => new Set(searchInventory.unreadResourceIds), [searchInventory]);
 
   const paletteActions: PaletteAction[] = useMemo(
     () => [
@@ -1203,7 +1201,7 @@ function AppShell() {
                     onChanged={refresh}
                     onActivityChanged={() => refresh(true)}
                     onOpen={(url) => void open(url)}
-                    timeZone={timeZone}
+                    timeZone={timeZone} now={now}
                     initialSearch={librarySearchQuery?.raw}
                     initialSearchQuery={librarySearchQuery}
                     initialSearchKey={librarySearchQuery?.requestId ?? 0}
@@ -1294,7 +1292,7 @@ function AppShell() {
           inventoryPending={loading}
           inventoryError={loadError}
           unreadResources={unreadResources}
-          timeZone={timeZone}
+          timeZone={timeZone} now={now}
           onInspectResource={(resource) => { setPendingPaletteInspection(resource); navigate("library"); }}
           onSeeAllFiles={handleSeeAllFiles}
           actions={paletteActions}

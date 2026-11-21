@@ -33,7 +33,7 @@ describe("attention command contracts", () => {
 });
 
 it('requests the complete atomic desktop inventory without offsets or limits', async () => {
-  const snapshot = { courses: [], resources: [] };
+  const snapshot = { courses: [], resources: [], unreadResourceIds: [2501] };
   invoke.mockResolvedValueOnce(snapshot);
   await expect(api.listSearchInventory()).resolves.toBe(snapshot);
   expect(invoke).toHaveBeenLastCalledWith('list_search_inventory');

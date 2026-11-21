@@ -5,8 +5,8 @@ use crate::db::{self, ResourceFilter};
 use crate::models::{Course, DesktopSearchInventory, Resource};
 use rusqlite::Connection;
 
-/// Read courses and resources under one connection without paging, so a
-/// concurrent scan cannot split the inventory between pages.
+/// Read complete metadata and canonical unread facts in one SQLite transaction,
+/// so scans and read mutations cannot split the published search state.
 pub fn desktop_inventory(conn: &Connection) -> rusqlite::Result<DesktopSearchInventory> {
     // A read transaction also fences writers using a different SQLite connection.
     let tx = conn.unchecked_transaction()?;
@@ -20,8 +20,13 @@ pub fn desktop_inventory(conn: &Connection) -> rusqlite::Result<DesktopSearchInv
             ..ResourceFilter::default()
         },
     )?;
+    let unread_resource_ids = crate::attention::unread_resource_ids(&tx)?;
     tx.commit()?;
-    Ok(DesktopSearchInventory { courses, resources })
+    Ok(DesktopSearchInventory {
+        courses,
+        resources,
+        unread_resource_ids,
+    })
 }
 
 #[cfg(test)]
@@ -77,7 +82,7 @@ mod tests {
         for id in 1..=2501 {
             conn.execute("INSERT INTO resources(id,external_resource_id,course_id,title,url,resource_type,first_seen_at) VALUES(?1,?2,1,'0','https://example.test','pdf','2026-11-21T00:00:00Z')", rusqlite::params![id, format!("r{id}")]).unwrap();
         }
-        conn.execute_batch("COMMIT").unwrap();
+        conn.execute_batch("INSERT INTO change_events(id,resource_id,course_id,change_type,title,detected_at,deduplication_key) VALUES(1,2501,1,'new','New','2026-11-21T00:00:00Z','canonical'); COMMIT;").unwrap();
         let barrier = Arc::new(Barrier::new(2));
         let writer_barrier = barrier.clone();
         let writer = std::thread::spawn(move || {
@@ -97,6 +102,7 @@ mod tests {
                     .unwrap();
                 let id = if generation % 2 == 0 { 1 } else { 3000 };
                 tx.execute("INSERT INTO resources(id,external_resource_id,course_id,title,url,resource_type,first_seen_at) VALUES(?1,?2,1,?3,'https://example.test','pdf','2026-11-21T00:00:00Z')", rusqlite::params![id, format!("r{id}"), marker]).unwrap();
+                tx.execute("UPDATE change_events SET read_at=CASE WHEN ?1 % 2 = 0 THEN NULL ELSE '2026-11-21T00:01:00Z' END", [generation]).unwrap();
                 tx.commit().unwrap();
                 std::thread::yield_now();
             }
@@ -122,6 +128,17 @@ mod tests {
                     .all(|r| &r.title == marker && r.course_name.as_ref() == Some(marker)),
                 "mixed course/resource generations"
             );
+            let wire = serde_json::to_value(&snapshot).unwrap();
+            let expected = if marker.parse::<u32>().unwrap() % 2 == 0 {
+                serde_json::json!([2501])
+            } else {
+                serde_json::json!([])
+            };
+            assert_eq!(
+                wire.get("unreadResourceIds"),
+                Some(&expected),
+                "mixed metadata/read-fact generations"
+            );
             let changed_id = if marker.parse::<u32>().unwrap() % 2 == 0 {
                 1
             } else {
@@ -130,5 +147,119 @@ mod tests {
             assert!(snapshot.resources.iter().any(|r| r.id == changed_id));
         }
         writer.join().unwrap();
+    }
+    #[test]
+    fn desktop_inventory_uses_canonical_attention_without_visibility_or_page_limits() {
+        let conn = Connection::open_in_memory().unwrap();
+        db::migrate(&conn).unwrap();
+        conn.execute_batch("INSERT INTO courses(id,external_course_id,name,url,first_seen_at) VALUES(1,'c1','Course','https://example.test','2026-11-21T00:00:00Z');").unwrap();
+        for id in 1..=2501 {
+            conn.execute("INSERT INTO resources(id,external_resource_id,course_id,title,url,resource_type,first_seen_at) VALUES(?1,?2,1,'Lecture','https://example.test','pdf','2026-11-21T00:00:00Z')", rusqlite::params![id, format!("r{id}")]).unwrap();
+            conn.execute("INSERT INTO change_events(id,resource_id,course_id,change_type,title,detected_at,deduplication_key) VALUES(?1,?1,1,'updated','Changed','2026-11-21T00:00:00Z',?2)", rusqlite::params![id, format!("e{id}")]).unwrap();
+        }
+        conn.execute_batch(
+            "UPDATE change_events SET change_type='baseline' WHERE id=1;
+          UPDATE change_events SET calendar_suppressed=1 WHERE id=2;
+          UPDATE change_events SET read_at='2026-11-21T00:01:00Z' WHERE id=3;
+          INSERT INTO inbox_dismissals VALUES(4,'2026-11-21T00:02:00Z');",
+        )
+        .unwrap();
+        db::clear_history_activity(&conn).unwrap();
+        let snapshot = desktop_inventory(&conn).unwrap();
+        let wire = serde_json::to_value(snapshot).unwrap();
+        assert_eq!(
+            wire.get("unreadResourceIds"),
+            Some(&serde_json::json!((4..=2501).collect::<Vec<i64>>()))
+        );
+        assert_eq!(
+            crate::attention::snapshot_resource_unread_event_ids(&conn, 4).unwrap(),
+            vec![4]
+        );
+    }
+
+    #[test]
+    fn desktop_inventory_fences_a_wal_commit_between_metadata_and_unread_reads() {
+        use rusqlite::ffi;
+        use std::ffi::{c_char, c_int, c_void, CStr};
+        struct Interleave {
+            writer: Connection,
+            committed: bool,
+            error: Option<String>,
+        }
+        // SQLite calls the authorizer when preparing the attention SELECT, after
+        // the public snapshot has read metadata. Commit on a real second WAL
+        // connection at that exact boundary; no production test hook is needed.
+        unsafe extern "C" fn commit_before_attention(
+            context: *mut c_void,
+            action: c_int,
+            table: *const c_char,
+            _: *const c_char,
+            _: *const c_char,
+            _: *const c_char,
+        ) -> c_int {
+            let interleave = &mut *(context as *mut Interleave);
+            if !interleave.committed
+                && action == ffi::SQLITE_READ
+                && !table.is_null()
+                && CStr::from_ptr(table).to_bytes() == b"change_events"
+            {
+                interleave.committed = true;
+                if let Err(error) = interleave.writer.execute_batch("BEGIN; UPDATE resources SET title='New'; UPDATE change_events SET read_at='2026-11-21T00:01:00Z'; COMMIT;") {
+                    interleave.error = Some(error.to_string());
+                }
+            }
+            ffi::SQLITE_OK
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("interleave.sqlite");
+        let conn = Connection::open(&path).unwrap();
+        conn.pragma_update(None, "journal_mode", "WAL").unwrap();
+        db::migrate(&conn).unwrap();
+        conn.execute_batch("INSERT INTO courses(id,external_course_id,name,url,first_seen_at) VALUES(1,'c1','Course','https://example.test','2026-11-21T00:00:00Z');
+            INSERT INTO resources(id,external_resource_id,course_id,title,url,resource_type,first_seen_at) VALUES(1,'r1',1,'Old','https://example.test','pdf','2026-11-21T00:00:00Z');
+            INSERT INTO change_events(id,resource_id,course_id,change_type,title,detected_at,deduplication_key) VALUES(1,1,1,'new','New','2026-11-21T00:00:00Z','event');").unwrap();
+        let mut interleave = Box::new(Interleave {
+            writer: Connection::open(path).unwrap(),
+            committed: false,
+            error: None,
+        });
+        // The context outlives the callback registration. SQLite invokes it on
+        // this thread; it only operates on the independent writer connection.
+        unsafe {
+            assert_eq!(
+                ffi::sqlite3_set_authorizer(
+                    conn.handle(),
+                    Some(commit_before_attention),
+                    (&mut *interleave as *mut Interleave).cast()
+                ),
+                ffi::SQLITE_OK
+            );
+        }
+        let during = desktop_inventory(&conn);
+        unsafe {
+            assert_eq!(
+                ffi::sqlite3_set_authorizer(conn.handle(), None, std::ptr::null_mut()),
+                ffi::SQLITE_OK
+            );
+        }
+        assert!(
+            interleave.committed,
+            "writer must commit inside the metadata/read-facts boundary"
+        );
+        assert!(
+            interleave.error.is_none(),
+            "writer failed: {:?}",
+            interleave.error
+        );
+        let during = during.unwrap();
+        assert_eq!(during.resources[0].title, "Old");
+        assert_eq!(
+            during.unread_resource_ids,
+            vec![1],
+            "Old/read never existed in SQLite"
+        );
+        let after = desktop_inventory(&conn).unwrap();
+        assert_eq!(after.resources[0].title, "New");
+        assert!(after.unread_resource_ids.is_empty());
     }
 }

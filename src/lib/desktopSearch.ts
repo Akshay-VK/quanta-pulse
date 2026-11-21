@@ -13,7 +13,7 @@ export type SearchScope =
   | { kind: "course"; courseId: number }
   | { kind: "folder"; courseId: number; path: string[] };
 
-export interface SearchQueryState {
+export interface SearchQueryState extends SearchFilters {
   raw: string;
   scope: SearchScope;
   sourceFrom?: string | null;

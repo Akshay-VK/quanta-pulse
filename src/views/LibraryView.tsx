@@ -8,7 +8,7 @@ import PreviewDialog from "../components/PreviewDialog";
 import { SearchField } from "../components/ui/SearchField";
 import { ToggleGroup } from "../components/ui/ToggleGroup";
 import type { ChangeEvent, Course, Resource } from "../lib/types";
-import type { SearchQueryState, SearchScope } from "../lib/desktopSearch";
+import type { SearchQueryState, SearchScope, SearchFilters } from "../lib/desktopSearch";
 import type { DetailsAdapter } from "../lib/details";
 import { Banner } from "../components/ui/Banner";
 import { Skeleton } from "../components/ui/Skeleton";
@@ -46,11 +46,12 @@ export interface LibraryViewProps {
   error?: string | null;
   onRetry?: () => void;
   timeZone?: string;
+  now?: Date;
   initialSearch?: string;
   initialSearchQuery?: SearchQueryState;
   /** Distinguishes repeated palette requests with the same query. */
   initialSearchKey?: number;
-  onSeeAllFiles?: (raw: string, options?: { scope?: SearchScope; sourceFrom?: string | null; sourceThrough?: string | null }) => void;
+  onSeeAllFiles?: (raw: string, options?: SearchFilters & { scope?: SearchScope }) => void;
   headerActions?: ReactNode;
   compact?: boolean;
   unreadResourceIds?: ReadonlySet<number>;
@@ -76,7 +77,7 @@ export default function LibraryView({
   loading = false,
   error = null,
   onRetry,
-  initialSearch, timeZone,
+  initialSearch, timeZone, now,
   initialSearchQuery,
   initialSearchKey = 0,
   onSeeAllFiles,
@@ -148,7 +149,7 @@ export default function LibraryView({
           onNavigate={onNavigate}
           searchCourses={courses}
           searchUnreadIds={unreadResourceIds}
-          timeZone={timeZone}
+          timeZone={timeZone} now={now}
           onSeeAllFiles={onSeeAllFiles}
         />
         <PreviewDialog
@@ -227,7 +228,7 @@ export default function LibraryView({
             details={details}
             initialSearchQuery={initialSearchQuery}
             onSearchChange={setSearch}
-            timeZone={timeZone}
+            timeZone={timeZone} now={now}
             unreadResourceIds={unreadResourceIds}
             onCourse={(id) => onNavigate(id)}
             onClearSearch={() => setSearch("")}

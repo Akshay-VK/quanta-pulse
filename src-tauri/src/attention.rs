@@ -156,6 +156,20 @@ pub fn snapshot_inbox(conn: &Connection, f: &InboxFilter) -> Result<Vec<i64>, St
     Ok(ids.into_iter().collect())
 }
 
+// Shared by resource inspection and the atomic desktop metadata snapshot.
+const UNREAD_RESOURCE_EVENTS: &str =
+    "read_at IS NULL AND change_type <> 'baseline' AND calendar_suppressed=0";
+
+/// Complete canonical resource unread membership, independent of Inbox dismissal,
+/// History visibility and collection pagination. The caller owns the read transaction.
+pub fn unread_resource_ids(conn: &Connection) -> rusqlite::Result<Vec<i64>> {
+    let mut statement = conn.prepare(&format!(
+        "SELECT DISTINCT resource_id FROM change_events WHERE resource_id IS NOT NULL AND {UNREAD_RESOURCE_EVENTS} ORDER BY resource_id"
+    ))?;
+    let ids = statement.query_map([], |row| row.get(0))?.collect();
+    ids
+}
+
 /// Capture every unread eligible event for one resource. This inspection
 /// scope intentionally ignores Inbox dismissals and History's clear watermark;
 /// neither action acknowledges an event. Pagination is not applied here.
@@ -168,10 +182,7 @@ pub fn snapshot_resource_unread_event_ids(
     }
     let mut statement = conn
         .prepare(
-            "SELECT id FROM change_events
-                  WHERE resource_id=?1 AND read_at IS NULL
-                    AND change_type <> 'baseline' AND calendar_suppressed=0
-                  ORDER BY id",
+            &format!("SELECT id FROM change_events WHERE resource_id=?1 AND {UNREAD_RESOURCE_EVENTS} ORDER BY id"),
         )
         .map_err(|error| error.to_string())?;
     let ids = statement

@@ -20,6 +20,8 @@ export interface Course {
 export interface DesktopSearchInventory {
   courses: Course[];
   resources: Resource[];
+  /** Canonical resource attention, from the same SQLite read transaction. */
+  unreadResourceIds: number[];
 }
 
 export interface Resource {
