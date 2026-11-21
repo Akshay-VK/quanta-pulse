@@ -13,7 +13,9 @@ use tokio::sync::Semaphore;
 use url::Url;
 
 use crate::quanta::client::{QuantaClient, QuantaError};
-use crate::quanta::parse;
+use crate::quanta::{
+    announcement_collector, collection::DetailCollection, material_collector, parse,
+};
 use crate::quanta::{DiscoveredCourse, DiscoveredResource};
 
 #[derive(Debug, Clone)]
@@ -116,19 +118,6 @@ fn enqueue_page(
     true
 }
 
-fn container_resource_path(item: &DiscoveredResource) -> Vec<String> {
-    let mut path = item.section_path.clone();
-    if path.is_empty() {
-        if let Some(section) = item.section.as_ref() {
-            path.push(section.clone());
-        }
-    }
-    if path.last() != Some(&item.title) {
-        path.push(item.title.clone());
-    }
-    path
-}
-
 fn append_section_context(path: &mut Vec<String>, section_path: &[String]) {
     let shared_prefix = path
         .iter()
@@ -136,37 +125,6 @@ fn append_section_context(path: &mut Vec<String>, section_path: &[String]) {
         .take_while(|(existing, section)| existing == section)
         .count();
     path.extend(section_path[shared_prefix..].iter().cloned());
-}
-
-enum Detail {
-    /// A forum container replaced by its discussions.
-    Forum(Vec<DiscoveredResource>),
-    /// A single-file material, enriched in place.
-    Single(Box<DiscoveredResource>),
-    /// A folder replaced by its child files.
-    Multi(Vec<DiscoveredResource>, Vec<String>),
-    /// Nothing usable was found; keep the container as-is.
-    Keep(Box<DiscoveredResource>),
-    Failed(Box<DiscoveredResource>, String, bool),
-}
-
-fn is_material(t: &str) -> bool {
-    matches!(
-        t,
-        "pdf"
-            | "presentation"
-            | "document"
-            | "spreadsheet"
-            | "archive"
-            | "image"
-            | "video"
-            | "audio"
-            | "notebook"
-            | "file"
-            | "folder"
-            | "page"
-            | "book"
-    )
 }
 
 /// Discover everything visible to the authenticated account.
@@ -427,9 +385,9 @@ pub async fn discover_all(
     }
 
     // ---- Phase 3: details (announcements, files, folders) ---------------
-    let (detail_targets, keep): (Vec<_>, Vec<_>) = discovered
-        .into_iter()
-        .partition(|r| r.resource_type == "announcement" || is_material(&r.resource_type));
+    let (detail_targets, keep): (Vec<_>, Vec<_>) = discovered.into_iter().partition(|r| {
+        r.resource_type == "announcement" || material_collector::accepts(&r.resource_type)
+    });
 
     let mut required_detail_counts = BTreeMap::<String, usize>::new();
     for item in &detail_targets {
@@ -440,7 +398,6 @@ pub async fn discover_all(
     let mut successful_detail_counts = BTreeMap::<String, usize>::new();
 
     let mut keep = keep;
-    let mut replaced: HashSet<String> = HashSet::new();
     let mut extras: Vec<DiscoveredResource> = Vec::new();
 
     let mut targets = detail_targets;
@@ -486,102 +443,12 @@ pub async fn discover_all(
                     &course_name,
                     ObservationBoundary::DetailStarted,
                 );
-                let url = match Url::parse(&item.url) {
-                    Ok(u) => u,
-                    Err(_) => {
-                        let terminal_status = crate::models::ScanCourseStatus::Partial;
-                        observe(
-                            &observer,
-                            &course_external_id,
-                            &course_name,
-                            ObservationBoundary::DetailTerminal {
-                                status: terminal_status,
-                                error: Some("invalid material URL".into()),
-                            },
-                        );
-                        return (id, course_external_id, Detail::Keep(Box::new(item)), false);
-                    }
+                let detail = if item.resource_type == "announcement" {
+                    announcement_collector::collect(&client, &origin, item).await
+                } else {
+                    material_collector::collect(&client, &origin, item).await
                 };
-                let response = match client.fetch(&url).await {
-                    Ok(f) => {
-                        let detail = if item.resource_type == "announcement" {
-                            let mut discussions = parse::parse_forum_page(
-                                &f.body,
-                                &item.course_external_id,
-                                &origin,
-                                item.section.as_deref(),
-                            );
-                            // Discussions are listed on the forum page itself.
-                            for d in &mut discussions {
-                                if d.source_page_url.is_none() {
-                                    d.source_page_url = Some(url.to_string());
-                                }
-                            }
-                            if discussions.is_empty() {
-                                Detail::Keep(Box::new(item))
-                            } else {
-                                Detail::Forum(discussions)
-                            }
-                        } else {
-                            let mut files = parse::parse_file_page(
-                                &f.body,
-                                &item.course_external_id,
-                                &origin,
-                                item.section.as_deref(),
-                            );
-                            // Files inside a folder are listed on the folder
-                            // page, so that page is their source. A single file
-                            // below keeps the listing page captured on the
-                            // course/section page instead (the folder pattern).
-                            for file in &mut files {
-                                if file.source_page_url.is_none() {
-                                    file.source_page_url = Some(url.to_string());
-                                }
-                            }
-                            match files.len() {
-                                0 => {
-                                    // Page/book without files: keep, but adopt any date.
-                                    let mut kept = item;
-                                    if kept.modified_at.is_none() {
-                                        kept.modified_at = parse::parse_recent_activity(
-                                            &f.body,
-                                            &kept.course_external_id,
-                                            &origin,
-                                        )
-                                        .into_iter()
-                                        .find_map(|r| r.modified_at);
-                                    }
-                                    Detail::Keep(Box::new(kept))
-                                }
-                                1 => {
-                                    let file = files.into_iter().next().unwrap();
-                                    let mut enriched = item;
-                                    enriched.size_bytes = file.size_bytes.or(enriched.size_bytes);
-                                    enriched.modified_at =
-                                        file.modified_at.or(enriched.modified_at);
-                                    enriched.url = file.url;
-                                    enriched.resource_type = file.resource_type;
-                                    enriched.available = file.available;
-                                    Detail::Single(Box::new(enriched))
-                                }
-                                _ => {
-                                    let path = container_resource_path(&item);
-                                    Detail::Multi(files, path)
-                                }
-                            }
-                        };
-                        (detail, None)
-                    }
-                    Err(e) => (
-                        Detail::Failed(
-                            Box::new(item),
-                            e.to_string(),
-                            matches!(e, QuantaError::AuthExpired),
-                        ),
-                        Some(e.to_string()),
-                    ),
-                };
-                let (detail, error) = response;
+                let error = detail.error();
                 let terminal_status = if error.is_some() {
                     crate::models::ScanCourseStatus::Partial
                 } else {
@@ -621,29 +488,21 @@ pub async fn discover_all(
                             .or_default() += 1;
                     }
                     match detail {
-                        Detail::Keep(r) | Detail::Single(r) => keep.push(*r),
-                        Detail::Failed(r, error, auth_expired) => {
+                        DetailCollection::Keep(r) => keep.push(*r),
+                        DetailCollection::Failed(r, error, auth_expired) => {
                             if auth_expired {
                                 result.auth_expired = true;
                             }
                             result.errors.push(format!("resource {id}: {error}"));
                             keep.push(*r);
                         }
-                        Detail::Forum(items) => {
-                            replaced.insert(id);
-                            extras.extend(items);
-                        }
-                        Detail::Multi(mut items, path) => {
-                            replaced.insert(id);
-                            for resource in &mut items {
-                                resource.section_path = path.clone();
-                            }
-                            extras.extend(items);
-                        }
+                        DetailCollection::Replace(items) => extras.extend(items),
                     }
                 }
                 Err(join_err) => {
-                    result.errors.push(format!("detail task failed: {join_err}"));
+                    result
+                        .errors
+                        .push(format!("detail task failed: {join_err}"));
                 }
             }
         }
@@ -666,9 +525,6 @@ pub async fn discover_all(
             })
             .collect();
     }
-
-    // Containers that were replaced (forums, folders) must not survive.
-    keep.retain(|r| !replaced.contains(&r.external_id));
 
     // ---- Merge & dedupe --------------------------------------------------
     let mut by_id: BTreeMap<String, DiscoveredResource> = BTreeMap::new();
@@ -718,10 +574,9 @@ mod expiry_tests;
 #[cfg(test)]
 mod tests {
     use super::{
-        append_section_context, container_resource_path, discover_all, enqueue_page, CrawlLimits,
-        ObservationBoundary,
+        append_section_context, discover_all, enqueue_page, CrawlLimits, ObservationBoundary,
     };
-    use crate::quanta::DiscoveredResource;
+    use crate::quanta::{material_collector::container_resource_path, DiscoveredResource};
     use std::{
         collections::HashSet,
         io::{Read, Write},
