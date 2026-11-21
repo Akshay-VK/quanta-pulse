@@ -27,7 +27,7 @@ import { TooltipProvider } from "./components/ui/Tooltip";
 import { Toaster, type ToastItem } from "./components/ui/Toast";
 import InboxView from "./views/InboxView";
 import { useInbox, useDueInventory } from "./hooks/useAttention";
-import type { SearchQueryState, SearchScope } from "./lib/desktopSearch";
+import type { SearchQueryState, SearchScope, SearchFilters } from "./lib/desktopSearch";
 import { agendaEntries, resolveTimezone } from "./lib/agenda";
 import CalendarView from "./views/CalendarView";
 import LibraryView from "./views/LibraryView";
@@ -59,7 +59,7 @@ import type {
   DueFilter,
   AuthStatus,
   ChangeEvent,
-  Course,
+  DesktopSearchInventory,
   DbInfo,
   LocalFile,
   Resource,
@@ -111,8 +111,10 @@ function AppShell() {
 
   const [sync, setSync] = useState<SyncStatus | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [courses, setCourses] = useState<Course[]>([]);
-  const [resources, setResources] = useState<Resource[]>([]);
+  const [searchInventory, setSearchInventory] = useState<DesktopSearchInventory>({ courses: [], resources: [], unreadResourceIds: [] });
+  const { courses, resources } = searchInventory;
+  const [searchPending, setSearchPending] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
   const [historyEvents, setHistoryEvents] = useState<ChangeEvent[]>([]);
   const [eventScopeReady, setEventScopeReady] = useState(false);
@@ -224,10 +226,11 @@ function AppShell() {
       go({ view: "library", courseId, folderPath: folderPath ? [...folderPath] : null }),
     [go],
   );
-  const handleSeeAllFiles = useCallback((raw: string, options?: { scope?: SearchScope; sourceFrom?: string | null; sourceThrough?: string | null }) => {
+  const handleSeeAllFiles = useCallback((raw: string, options?: SearchFilters & { scope?: SearchScope }) => {
     setLibrarySearchQuery((previous) => ({
       raw,
       scope: options?.scope ?? { kind: "everywhere" },
+      category: options?.category,
       sourceFrom: options?.sourceFrom ?? null,
       sourceThrough: options?.sourceThrough ?? null,
       requestId: (previous?.requestId ?? 0) + 1,
@@ -300,9 +303,29 @@ function AppShell() {
     setToasts((current) => current.filter((toast) => toast.id !== id));
   }, []);
 
+  const searchGeneration = useRef(0);
+  // Inspection acknowledges captured events without changing History's complete
+  // collection readiness. Search still replaces metadata/read facts together.
+  const refreshSearchInventory = useCallback(async () => {
+    const generation = ++searchGeneration.current;
+    setSearchPending(true);
+    try {
+      const inventory = await api.listSearchInventory();
+      if (generation !== searchGeneration.current) return;
+      setSearchInventory(inventory);
+      setSearchError(null);
+    } catch (error) {
+      if (generation === searchGeneration.current) setSearchError(String(error));
+    } finally {
+      if (generation === searchGeneration.current) setSearchPending(false);
+    }
+  }, []);
+
   const refreshGeneration = useRef(0);
   const refresh = useCallback(async (requireSuccess = false) => {
     const generation = ++refreshGeneration.current;
+    const searchRequest = ++searchGeneration.current;
+    setSearchPending(false);
     setLoading(true);
     setEventScopeReady(false);
     try {
@@ -317,8 +340,10 @@ function AppShell() {
         if (requireSuccess) throw new Error("History refresh superseded; retry refresh.");
         return;
       }
-      setCourses(inventory.courses);
-      setResources(inventory.resources);
+      if (searchRequest === searchGeneration.current) {
+        setSearchInventory(inventory);
+        setSearchError(null);
+      }
       setHistoryEvents(he);
       setScans(s);
       setDbInfo(info);
@@ -483,9 +508,12 @@ function AppShell() {
   const handleLogout = useCallback(async () => {
     await api.logout();
     setAuth(await api.authStatus());
-    setResources([]);
+    ++refreshGeneration.current;
+    ++searchGeneration.current;
+    setSearchPending(false);
+    setSearchError(null);
+    setSearchInventory({ courses: [], resources: [], unreadResourceIds: [] });
     setHistoryEvents([]);
-    setCourses([]);
   }, []);
 
   const saveSettings = useCallback(async (next: Settings) => {
@@ -500,14 +528,20 @@ function AppShell() {
     if (ids.length === 0) return;
     const previous = new Map(historyEventsRef.current.filter((event) => ids.includes(event.id)).map((event) => [event.id, event.read]));
     setHistoryEvents((current) => current.map((event) => (ids.includes(event.id) ? { ...event, read: true } : event)));
+    // Search keeps its last complete metadata/read snapshot during the write.
+    // Invalidate earlier refreshes, then replace all facts atomically on success.
+    ++searchGeneration.current;
+    setSearchPending(true);
     void api.setEventReadState(ids, true).then(() => {
+      void refreshSearchInventory();
       void inboxRefreshRef.current();
     }).catch((err) => {
       setHistoryEvents((current) => current.map((event) => (previous.has(event.id) ? { ...event, read: previous.get(event.id)! } : event)));
+      void refreshSearchInventory();
       void inboxRefreshRef.current();
       notify(String(err), true);
     });
-  }, [notify]);
+  }, [notify, refreshSearchInventory]);
 
   const selectDetails = useCallback((owner: ViewId, subject: DetailSubject, origin: HTMLElement, restoreFocus?: RestoreDetailFocus) => {
     const next = { ...subject, owner, identity: detailIdentity(subject) };
@@ -909,10 +943,7 @@ function AppShell() {
     }
   };
 
-  const unreadResources = useMemo(() => new Set<number>([
-    ...historyEvents.flatMap((event) => event.resourceId != null && !event.read ? [event.resourceId] : []),
-    ...(inbox.page?.items ?? []).flatMap((item) => item.resourceId != null && item.unread ? [item.resourceId] : []),
-  ]), [historyEvents, inbox.page]);
+  const unreadResources = useMemo(() => new Set(searchInventory.unreadResourceIds), [searchInventory]);
 
   const paletteActions: PaletteAction[] = useMemo(
     () => [
@@ -1197,13 +1228,13 @@ function AppShell() {
                     onSeeAllFiles={handleSeeAllFiles}
                     unreadByCourse={unreadByCourse}
                     details={detailsAdapters.library}
-                    loading={loading}
-                    error={loadError}
+                    loading={loading || searchPending}
+                    error={loadError ?? searchError}
                     onRetry={() => void refresh()}
                     onChanged={refresh}
                     onActivityChanged={() => refresh(true)}
                     onOpen={(url) => void open(url)}
-                    timeZone={timeZone}
+                    timeZone={timeZone} now={now}
                     initialSearch={librarySearchQuery?.raw}
                     initialSearchQuery={librarySearchQuery}
                     initialSearchKey={librarySearchQuery?.requestId ?? 0}
@@ -1291,10 +1322,10 @@ function AppShell() {
           onCourse={navigateToCourse}
           onFolder={navigateToCourse}
           resources={resources}
-          inventoryPending={loading}
-          inventoryError={loadError}
+          inventoryPending={loading || searchPending}
+          inventoryError={loadError ?? searchError}
           unreadResources={unreadResources}
-          timeZone={timeZone}
+          timeZone={timeZone} now={now}
           onInspectResource={(resource) => { setPendingPaletteInspection(resource); navigate("library"); }}
           onSeeAllFiles={handleSeeAllFiles}
           actions={paletteActions}

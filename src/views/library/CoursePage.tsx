@@ -67,6 +67,7 @@ interface CoursePageProps {
   searchCourses?: Course[];
   searchUnreadIds?: ReadonlySet<number>;
   timeZone?: string;
+  now?: Date;
   folderPath?: string[] | null;
   /** Last complete inventory published by App; never queried again here. */
   inventory?: Resource[];
@@ -88,10 +89,11 @@ interface CoursePageProps {
   sidebarNavigation?: boolean;
   headerActions?: ReactNode;
   compact?: boolean;
-  onSeeAllFiles?: (raw: string, options?: { scope?: SearchScope; sourceFrom?: string | null; sourceThrough?: string | null }) => void;
+  onSeeAllFiles?: (raw: string, options?: SearchFilters & { scope?: SearchScope }) => void;
   onNavigate?: (courseId: number | null, folderPath?: string[] | null) => void;
 }
 
+const EMPTY_UNREAD_IDS: ReadonlySet<number> = new Set();
 const identity = (resource: Resource) => `resource:${resource.externalResourceId || `local:${resource.id}`}`;
 const modalOpen = () => Boolean(document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], .sidebar-drawer'));
 interface Capture {
@@ -146,7 +148,7 @@ function latestIn(node: CourseTreeNode): number {
 
 /** One course's page: contents tree and per-course activity. */
 export default function CoursePage({
-  course, searchCourses, searchUnreadIds, timeZone,
+  course, searchCourses, searchUnreadIds, timeZone, now,
   folderPath,
   inventory,
   inventoryPending = false,
@@ -177,7 +179,7 @@ export default function CoursePage({
     const byDay = groupEventsByDay(activityEventsList);
     return [...byDay.entries()].sort((a, b) => b[0].localeCompare(a[0]));
   }, [activityEventsList]);
-  const unreadResourceIds = useMemo(() => new Set(activityEventsList.filter((event) => !event.read).map((event) => event.resourceId)), [activityEventsList]);
+  const unreadResourceIds = searchUnreadIds ?? EMPTY_UNREAD_IDS;
   const activityIds = useMemo(() => activityGroups.flatMap(([, group]) => group.map((event) => `change:${event.id}`)), [activityGroups]);
   const activityScopeReadyEffective = activityMatchingCourse && Boolean(activityScopeReady) && !activityPending && !activityError && Array.isArray(activityEvents);
   const loading = inventoryPending;
@@ -213,9 +215,9 @@ export default function CoursePage({
   const courses = useMemo(() => searchCourses ?? [course], [searchCourses, course]);
   const displayNames = useMemo(() => buildDisplayNames(courses, loadAliases()), [courses]);
   const savedIds = useMemo(() => new Set(unique.filter(r => !r.isExternal && mirror && isLocal(mirror.statusOf(r.id))).map(r => r.id)), [unique, mirror]);
-  const result = useMemo(() => searchDesktop({ raw: search, scope: searchScope, filters: { ...dateFilters, category }, timeZone }, {
-    courses, resources: inventory ?? unique, displayNames, savedIds, unreadIds: searchUnreadIds ?? new Set([...unreadResourceIds].filter((id): id is number => id !== null)),
-  }), [search, searchScope, dateFilters, category, timeZone, courses, inventory, unique, displayNames, savedIds, searchUnreadIds, unreadResourceIds]);
+  const result = useMemo(() => searchDesktop({ raw: search, scope: searchScope, filters: { ...dateFilters, category }, timeZone, now }, {
+    courses, resources: inventory ?? unique, displayNames, savedIds, unreadIds: unreadResourceIds,
+  }), [search, searchScope, dateFilters, category, timeZone, now, courses, inventory, unique, displayNames, savedIds, unreadResourceIds]);
   const filtered = result.files;
   const searchResults = useMemo(() => sort === "relevance" ? filtered : sortResources(filtered, sort), [filtered, sort]);
   const categories = useMemo(() => categoryOptions(unique), [unique]);
@@ -829,8 +831,8 @@ export default function CoursePage({
     setDateFilters({});
   };
   const handleSearchScopeChange = (scope: SearchScope) => {
-    if (scope.kind === "everywhere") { onSeeAllFiles?.(search, { scope, ...dateFilters }); return; }
-    if (scope.courseId !== course.id) { onSeeAllFiles?.(search, { scope, ...dateFilters }); return; }
+    if (scope.kind === "everywhere") { onSeeAllFiles?.(search, { scope, ...dateFilters, category }); return; }
+    if (scope.courseId !== course.id) { onSeeAllFiles?.(search, { scope, ...dateFilters, category }); return; }
     if (scope.kind === "folder") {
       setExplicitScope(null);
       onNavigate?.(scope.courseId, scope.kind === "folder" ? scope.path : null);

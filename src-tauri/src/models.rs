@@ -66,6 +66,8 @@ pub struct Resource {
 pub struct DesktopSearchInventory {
     pub courses: Vec<Course>,
     pub resources: Vec<Resource>,
+    /// Canonical attention membership from the same read transaction.
+    pub unread_resource_ids: Vec<i64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

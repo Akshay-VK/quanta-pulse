@@ -88,6 +88,7 @@ export const api = {
   },
   listResources: (filter: ResourceFilter = {}) =>
     invoke<Resource[]>("list_resources", { filter }),
+  /** Metadata and canonical unread membership from one SQLite read transaction. */
   listSearchInventory: () => invoke<DesktopSearchInventory>("list_search_inventory"),
   listDashboardResources: () => invoke<Resource[]>("list_dashboard_resources"),
   listEvents: (unreadOnly = false, limit = 200) =>
