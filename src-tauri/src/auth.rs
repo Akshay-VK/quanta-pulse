@@ -410,20 +410,14 @@ async fn run_sso_login_inner(
 
 /* ---------------------------------------------------------------- shared */
 
-async fn finalize_session(
-    app: &AppHandle,
-    session: SessionInfo,
+/// Verify the candidate transport before publishing it to application state.
+/// The SSO ownership check and installation remain one synchronous commit.
+async fn verify_and_install_session(
+    state: &AppState,
+    mut client: QuantaClient,
     sso_attempt: Option<&str>,
-) -> Result<AuthStatus, String> {
-    let timeout = app.state::<AppState>().settings().request_timeout_secs;
-    // Build the client before verification so its cookie jar can absorb any
-    // session cookie rotation performed by the verification response. The
-    // verified facts are published into this same client below instead of
-    // constructing a second one from a stale cookie.
-    let mut client =
-        QuantaClient::from_session(session.clone(), timeout).map_err(|e| e.to_string())?;
-
-    // Verify the session actually works before storing it.
+) -> Result<(), String> {
+    let mut session = client.session.clone();
     let my = client.origin().join("/my/").map_err(|e| e.to_string())?;
     let page = client.fetch(&my).await.map_err(|e| match e {
         QuantaError::AuthExpired => "Sign-in did not establish a usable session.".to_string(),
@@ -431,7 +425,6 @@ async fn finalize_session(
     })?;
 
     let (uid, sesskey, fullname) = parse::parse_session_facts(&page.body);
-    let mut session = session;
     if uid.is_some() {
         session.user_id = uid;
     }
@@ -455,10 +448,8 @@ async fn finalize_session(
     }
     // Publish the fully verified session facts into the active client.
     client.session = session.clone();
-
     let client = Arc::new(client);
 
-    let state = app.state::<AppState>();
     let install = || {
         let conn = state.conn();
         let _ = db::set_kv(&conn, "current_email", &session.email);
@@ -477,9 +468,19 @@ async fn finalize_session(
         install();
     }
 
-    let _ = app.emit("auth:changed", ());
+    Ok(())
+}
 
+async fn finalize_session(
+    app: &AppHandle,
+    session: SessionInfo,
+    sso_attempt: Option<&str>,
+) -> Result<AuthStatus, String> {
     let state = app.state::<AppState>();
+    let client = QuantaClient::from_session(session, state.settings().request_timeout_secs)
+        .map_err(|e| e.to_string())?;
+    verify_and_install_session(&state, client, sso_attempt).await?;
+    let _ = app.emit("auth:changed", ());
     Ok(auth_status(&state))
 }
 
@@ -1231,3 +1232,7 @@ mod tests {
         ));
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/auth_session_publication.rs"]
+mod session_publication_tests;
