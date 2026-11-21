@@ -438,7 +438,7 @@ export default function AllFiles({
       <div className="library-toolbar">{searchField}{filtersActive && <Button variant="ghost" size="sm" onClick={clearFilters}>Clear filters</Button>}<span>Sort: {sortLabel}</span></div>
       <SearchControls raw={search} onRaw={onSearchChange ?? (() => {})} scope={scope} onScope={setScope} filters={dateFilters} onFilters={setDateFilters} courses={courses} resources={unique} />
       {showSort && <div className="library-toolbar">
-        <Select ariaLabel="Sort files by" value={sort.id} onValueChange={(value) => onSort(value)} options={[{ value: "relevance", label: "Relevance" }, { value: "type", label: "File type" }, ...columns.map(({ id, header }) => ({ value: id, label: header }))]} />
+        <Select ariaLabel="Sort files by" value={sort.id} onValueChange={(value) => onSort(value)} options={[{ value: "relevance", label: hasTextTerms ? "Relevance" : sort.id === "relevance" ? sortLabel : "Newest (activity date)" }, { value: "type", label: "File type" }, ...columns.map(({ id, header }) => ({ value: id, label: header }))]} />
         <Button variant="ghost" size="sm" aria-label="Sort direction" disabled={relevance} onClick={() => onSort(sort.id)}>{relevance ? "Best match first" : sort.dir === "asc" ? "Ascending" : "Descending"}</Button>
       </div>}
 

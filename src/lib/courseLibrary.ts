@@ -70,8 +70,8 @@ export function categoryLabel(id: ResourceCategoryId): string {
 export type ResourceSort = "newest" | "oldest" | "name" | "type";
 
 export const RESOURCE_SORTS: { id: ResourceSort; label: string }[] = [
-  { id: "newest", label: "Newest (activity date)" },
-  { id: "oldest", label: "Oldest (activity date)" },
+  { id: "newest", label: "Newest first (activity date)" },
+  { id: "oldest", label: "Oldest first (activity date)" },
   { id: "name", label: "Name (A–Z)" },
   { id: "type", label: "File type" },
 ];
