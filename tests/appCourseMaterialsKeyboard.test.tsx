@@ -183,29 +183,33 @@ describe('Course Materials keyboard in the real App', () => {
     expect(document.activeElement?.getAttribute('role')).not.toBe('treeitem');
   });
 
-  it('keeps folder actions inert and captures collapsed matching descendants with Shift+A',async()=>{
+  it('keeps sidebar folder actions inert and captures matching descendants with Shift+A from Materials',async()=>{
     appApi.listResources.mockResolvedValue([resource({sectionPath:['Unit','Notes']}), resource({id:2,externalResourceId:'r2',sectionPath:['Unit','Notes']})]);
     await open();
-    await click(button('Collapse all'));
-    const folder=document.querySelector<HTMLElement>('[role="treeitem"]')!;
+    const folder=button('Unit', document.querySelector('nav[aria-label="Courses"]')!);
     act(()=>folder.focus());
     for(const value of ['x','e','u','Delete',' ']) await key(value);
     expect(appApi.snapshotResourceEventIds).not.toHaveBeenCalled();
     expect(appApi.previewResource).not.toHaveBeenCalled();
+    await key('ArrowRight');
+    expect(button('Collapse Unit').getAttribute('aria-expanded')).toBe('true');
+    await key('ArrowRight');
+    expect(document.activeElement).toBe(button('Notes'));
+    await key('ArrowLeft');
+    expect(document.activeElement).toBe(folder);
+    await key('ArrowLeft');
+    expect(button('Expand Unit').getAttribute('aria-expanded')).toBe('false');
+    act(()=>row().focus());
     await key('A',{shiftKey:true});
     expect(appApi.snapshotResourceEventIds).toHaveBeenCalledWith([1,2]);
-    await click(button('Cancel'));
-    await key('Enter'); expect(folder.getAttribute('aria-expanded')).toBe('true');
-    const nested=button('Collapse Unit');
-    act(()=>nested.focus()); await key('Enter',{},nested);
-    expect(folder.getAttribute('aria-expanded')).toBe('true');
   });
-  it('keeps collapsed selections eligible, restores an ancestor after collapse and prunes removed resources',async()=>{
+  it('preserves material selections when collapsing a sidebar branch and prunes removed resources',async()=>{
     let resources=[resource({sectionPath:['Unit']}),resource({id:2,externalResourceId:'r2',title:'Second',sectionPath:['Other']})];
     appApi.listResources.mockImplementation(async()=>resources);
     await open(); const first=document.querySelector<HTMLElement>('[data-row-key="resource:r1"]')!; act(()=>first.focus()); await key('x');
-    await click(button('Collapse Unit'));
-    act(()=>document.querySelector<HTMLElement>('[role="treeitem"][data-row-key^="folder:"]')!.focus());
+    await click(button('Collapse MATH F111'));
+    expect(document.body.textContent).toContain('1 material selected');
+    act(()=>first.focus());
     await key('A',{shiftKey:true}); expect(appApi.snapshotResourceEventIds).toHaveBeenLastCalledWith([1,2]); await click(button('Cancel'));
     resources=[resources[1]]; await emitAppEvent('sync:done',{});
     expect(document.body.textContent).toContain('0 materials selected');

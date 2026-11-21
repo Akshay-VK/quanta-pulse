@@ -222,7 +222,7 @@ function AppShell() {
 
   const navigateToCourse = useCallback(
     (courseId: number | null, folderPath: string[] | null = null) =>
-      go({ view: "library", courseId, folderPath }),
+      go({ view: "library", courseId, folderPath: folderPath ? [...folderPath] : null }),
     [go],
   );
 
@@ -1103,11 +1103,13 @@ function AppShell() {
             if (narrow) setDrawerOpen(false);
           }}
           courses={courses}
+          resources={resources}
           unreadByCourse={unreadByCourse}
           unreadTotal={inbox.countError ? "–" : unread}
           activeCourseId={route.courseId}
-          onCourse={(courseId) => {
-            navigateToCourse(courseId);
+          activeFolderPath={route.folderPath}
+          onCourse={(courseId, folderPath) => {
+            navigateToCourse(courseId, folderPath);
             if (narrow) setDrawerOpen(false);
           }}
           sync={sync}

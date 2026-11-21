@@ -129,9 +129,7 @@ export default function LibraryView({
           onOpen={onOpen}
           onPreview={setPreviewResource}
           onChanged={onChanged}
-          allCourses={courses}
-          onNavigate={onNavigate}
-          onAllFiles={() => { setTab("files"); onNavigate(null); }}
+          sidebarNavigation
           headerActions={headerActions}
           compact={compact}
           activityEvents={activityPublication.items}
