@@ -78,7 +78,7 @@ it('opens the exact duplicate folder, reveals ancestors, preserves explicit scop
   expect(main.textContent).toContain('Physics tutorial');
   expect(JSON.parse(document.querySelector<HTMLSelectElement>('main select[aria-label="Search scope"]')!.value)).toEqual({ kind: 'course', courseId: 2 });
   expect(appApi.openExternal).not.toHaveBeenCalled();
-  
+
 });
 
 it('reevaluates See all after refresh, retains results on failure and reapplies repeated requests', async () => {
