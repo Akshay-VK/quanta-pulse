@@ -121,7 +121,13 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
     let scan_id = {
         let state = app.state::<AppState>();
         let conn = state.conn();
-        db::start_scan(&conn, &db::now_rfc3339()).unwrap_or(0)
+        match db::start_scan(&conn, &db::now_rfc3339()) {
+            Ok(id) => id,
+            Err(e) => {
+                outcome.errors.push(format!("scan start failed: {e}"));
+                0
+            }
+        }
     };
 
     // Progress reporting.
@@ -240,207 +246,30 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
     let mut seen_ids: Vec<String> = Vec::new();
     let mut missing_ids: Vec<String> = Vec::new();
 
-    {
+    let mut commit_ok = false;
+    let reconcile_result = {
         let state = app.state::<AppState>();
         let conn = state.conn();
-        let tx = match conn.unchecked_transaction() {
-            Ok(tx) => tx,
-            Err(e) => {
-                outcome.errors.push(format!("transaction failed: {e}"));
-                return outcome;
-            }
-        };
-
-        // Courses
-        let mut course_ids: HashMap<String, i64> = HashMap::new();
-        for course in &discovery.courses {
-            match db::upsert_course(
-                &conn,
-                &course.external_id,
-                &course.name,
-                course.short_name.as_deref(),
-                &course.url,
-                &now,
-            ) {
-                Ok(id) => {
-                    course_ids.insert(course.external_id.clone(), id);
-                }
-                Err(e) => outcome
-                    .errors
-                    .push(format!("course {}: {e}", course.external_id)),
-            }
-        }
-
-        // Paused courses are still recorded but never report changes.
-        let paused: HashSet<i64> = db::paused_course_ids(&conn).into_iter().collect();
-
-        // Resources + change detection
-        for r in &discovery.resources {
-            let course_id = course_ids.get(&r.course_external_id).copied();
-            let previous = db::get_resource(&conn, &r.external_id);
-            let availability = if r.available {
-                "available"
-            } else {
-                "unavailable"
-            };
-            let section_path_json = if r.section_path.is_empty() {
-                None
-            } else {
-                serde_json::to_string(&r.section_path).ok()
-            };
-
-            let write = ResourceWrite {
-                external_id: &r.external_id,
-                course_id,
-                title: &r.title,
-                url: &r.url,
-                source_page_url: r.source_page_url.as_deref(),
-                section_path: section_path_json.as_deref(),
-                resource_type: &r.resource_type,
-                uploaded_at: r.uploaded_at.as_deref(),
-                published_at: r.published_at.as_deref(),
-                modified_at: r.modified_at.as_deref(),
-                due_at: r.due_at.as_deref(),
-                fingerprint: &r.fingerprint(),
-                size_bytes: r.size_bytes,
-                section: r.section.as_deref(),
-                is_external: r.is_external,
-                availability,
-            };
-
-            let resource_id = match db::upsert_resource(&conn, &write, &now) {
-                Ok(id) => id,
-                Err(e) => {
-                    outcome
-                        .errors
-                        .push(format!("resource {}: {e}", r.external_id));
-                    continue;
-                }
-            };
-            seen_ids.push(r.external_id.clone());
-
-            let effective_baseline = course_is_baseline(baseline, &rebaseline, &paused, course_id);
-            let prev_state = previous.as_ref().map(Into::into);
-            let detected = diff::classify(prev_state.as_ref(), r, effective_baseline);
-            let kind = if r.resource_type == "announcement" && detected == Detected::New {
-                "announcement"
-            } else {
-                match &detected {
-                    Detected::New => "new",
-                    Detected::Updated { .. } => "updated",
-                    Detected::DeadlineChanged { .. } => "deadline",
-                    Detected::Unavailable => "unavailable",
-                    Detected::Restored => "restored",
-                    Detected::Unchanged => "",
-                }
-            };
-
-            if kind.is_empty() {
-                continue;
-            }
-
-            let (title, description) = event_copy(kind, r, &detected);
-            let discriminator = match &detected {
-                Detected::Updated { .. } => r.fingerprint(),
-                Detected::DeadlineChanged { to, .. } => to.clone().unwrap_or_default(),
-                Detected::Unavailable => "unavailable".to_string(),
-                Detected::Restored => r.fingerprint(),
-                _ => r.fingerprint(),
-            };
-            let key = diff::dedup_key(kind, &r.external_id, &discriminator);
-
-            match db::insert_event(
-                &conn,
-                Some(resource_id),
-                course_id,
-                kind,
-                &title,
-                Some(&description),
-                &key,
-                &now,
-            ) {
-                Ok(true) => match kind {
-                    "new" | "announcement" => new_count += 1,
-                    "updated" | "deadline" => updated_count += 1,
-                    "unavailable" | "restored" => unavailable_count += 1,
-                    _ => {}
-                },
-                Ok(false) => {}
-                Err(e) => outcome.errors.push(format!("event {}: {e}", r.external_id)),
-            }
-        }
-
-        // Missing resources: never deleted, only marked after repeated misses.
-        // Computed here but applied after commit (a nested transaction would
-        // fail while this one is open).
-        if discovery.errors.is_empty() && !discovery.cancelled {
-            let seen: HashSet<&String> = seen_ids.iter().collect();
-            missing_ids = db::all_resource_external_ids(&conn)
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|id| !seen.contains(id))
-                .collect();
-        }
-
-        // Upcoming deadline reminders (one notification per deadline).
-        if !baseline {
-            for r in &discovery.resources {
-                let cid = course_ids.get(&r.course_external_id).copied().unwrap_or(-1);
-                if rebaseline.contains(&cid) || paused.contains(&cid) {
-                    continue;
-                }
-                if let Some(due) = r.due_at.as_deref() {
-                    if let Some(instant) = due_instant(due) {
-                        let now_utc = chrono::Utc::now();
-                        let window = chrono::Duration::hours(reminder_hours);
-                        if instant > now_utc && instant <= now_utc + window {
-                            let key = diff::dedup_key("deadline-reminder", &r.external_id, due);
-                            if !db::event_exists(&conn, &key) {
-                                let course_id = course_ids.get(&r.course_external_id).copied();
-                                let resource_id =
-                                    db::get_resource(&conn, &r.external_id).map(|x| x.id);
-                                let _ = db::insert_event(
-                                    &conn,
-                                    resource_id,
-                                    course_id,
-                                    "deadline",
-                                    &format!("Deadline approaching: {}", r.title),
-                                    Some("An upcoming deadline is within your reminder window."),
-                                    &key,
-                                    &now,
-                                );
-                                updated_count += 1;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Mark course scan status.
-        for course in &discovery.courses {
-            if let Some(id) = course_ids.get(&course.external_id) {
-                let partial_prefix = format!("course {} page:", course.external_id);
-                let status = if discovery
-                    .errors
-                    .iter()
-                    .any(|error| error.starts_with(&partial_prefix))
-                {
-                    "partial"
-                } else {
-                    "ok"
-                };
-                let _ = db::mark_course_scanned(&conn, *id, &now, status);
-            }
-        }
-
-        if let Err(e) = tx.commit() {
-            outcome.errors.push(format!("commit failed: {e}"));
-        }
-    }
+        reconcile_scan(
+            &conn,
+            &discovery,
+            baseline,
+            baseline_generation,
+            global_generation,
+            &rebaseline,
+            reminder_hours,
+            &now,
+        )
+    };
+    outcome.errors.extend(reconcile_result.errors);
+    commit_ok = reconcile_result.committed;
+    new_count = reconcile_result.new as i64;
+    updated_count = reconcile_result.updated as i64;
+    unavailable_count = reconcile_result.unavailable as i64;
+    missing_ids = reconcile_result.missing_ids;
 
     // Apply miss-streak bumps after the inventory transaction has committed.
-    if !missing_ids.is_empty() {
+    if commit_ok && !missing_ids.is_empty() {
         let state = app.state::<AppState>();
         let conn = state.conn();
         if let Err(e) = db::bump_miss_streak(&conn, &missing_ids, MISS_THRESHOLD) {
@@ -453,7 +282,7 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
 
     // Hand the scan's findings to the mirror. Only when the scan completed:
     // a cancelled half-scan must not push the backfill ahead of a full one.
-    if !discovery.cancelled {
+    if commit_ok && !discovery.cancelled {
         let state = app.state::<AppState>();
         let conn = state.conn();
         let queued = state.mirror.enqueue_all(&conn);
@@ -462,17 +291,10 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
         }
     }
 
-    // Persist the baseline marker after a successful, complete first scan.
-    if baseline && !discovery.cancelled && discovery.errors.is_empty() {
-        let state = app.state::<AppState>();
-        let conn = state.conn();
-        let mut conn = conn;
-        let _ = db::establish_baseline_if_generation(&mut conn, global_generation, &now);
-    }
     // Consume only courses that were pending at scan start and whose complete
     // page plus detail traversal reached success. Re-read the setting so a
     // reset queued while discovery was running remains pending.
-    if !rebaseline.is_empty() {
+    if commit_ok && !rebaseline.is_empty() {
         let state = app.state::<AppState>();
         let mut conn = state.conn();
         let completed_course_ids: HashSet<i64> = discovery
@@ -500,7 +322,11 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
         let conn = state.conn();
         let status = if discovery.cancelled {
             "cancelled"
-        } else if discovery.courses_failed > 0 || !discovery.errors.is_empty() {
+        } else if !commit_ok
+            || discovery.courses_failed > 0
+            || !discovery.errors.is_empty()
+            || !outcome.errors.is_empty()
+        {
             "partial"
         } else {
             "ok"
@@ -510,20 +336,22 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
         } else {
             Some(outcome.errors.join("; "))
         };
-        let _ = db::finish_scan(
+        if let Err(e) = db::finish_scan(
             &conn,
             scan_id,
             status,
             discovery.resources.len() as i64,
-            new_count,
-            updated_count,
-            unavailable_count,
+            if commit_ok { new_count } else { 0 },
+            if commit_ok { updated_count } else { 0 },
+            if commit_ok { unavailable_count } else { 0 },
             discovery.courses_scanned as i64,
             discovery.courses_failed as i64,
             summary.as_deref(),
             baseline,
             &now,
-        );
+        ) {
+            outcome.errors.push(format!("scan finish failed: {e}"));
+        }
         *state.sync.last_error.lock().unwrap() = if status == "ok" { None } else { summary };
     }
 
@@ -552,12 +380,21 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
     // This helper claims the durable scan row before making a native attempt.
     notify::notify_scan_failure(app, scan_id);
 
-    outcome.new = new_count as usize;
-    outcome.updated = updated_count as usize;
-    outcome.unavailable = unavailable_count as usize;
+    if commit_ok {
+        outcome.new = new_count as usize;
+        outcome.updated = updated_count as usize;
+        outcome.unavailable = unavailable_count as usize;
+    } else {
+        outcome.new = 0;
+        outcome.updated = 0;
+        outcome.unavailable = 0;
+    }
+    outcome.committed = commit_ok;
 
     // Native notifications for genuinely new changes.
-    notify::dispatch(app);
+    if commit_ok {
+        notify::dispatch(app);
+    }
 
     outcome
 }
@@ -731,6 +568,261 @@ pub fn due_instant(due: &str) -> Option<chrono::DateTime<chrono::Utc>> {
 fn emit_status(app: &AppHandle) {
     let status = app.state::<AppState>().sync_status();
     let _ = app.emit("sync:status", status);
+}
+
+
+/// Result of reconciling one discovered scan into SQLite.
+#[derive(Debug, Clone, Default)]
+pub struct ReconcileResult {
+    pub committed: bool,
+    pub errors: Vec<String>,
+    pub new: usize,
+    pub updated: usize,
+    pub unavailable: usize,
+    pub missing_ids: Vec<String>,
+}
+
+/// Small production collection-to-commit boundary used by `run_scan` and by
+/// backend regressions driven through loopback HTTP and real SQLite.
+pub fn reconcile_scan(
+    conn: &rusqlite::Connection,
+    discovery: &discover::Discovery,
+    baseline: bool,
+    baseline_generation: i64,
+    global_generation: i64,
+    rebaseline: &HashSet<i64>,
+    reminder_hours: i64,
+    now: &str,
+) -> ReconcileResult {
+    let mut result = ReconcileResult::default();
+    let mut new_count = 0i64;
+    let mut updated_count = 0i64;
+    let mut unavailable_count = 0i64;
+    let mut seen_ids: Vec<String> = Vec::new();
+    let mut missing_ids: Vec<String> = Vec::new();
+    let mut commit_ok = false;
+
+    let tx = match conn.unchecked_transaction() {
+        Ok(tx) => tx,
+        Err(e) => {
+            result.errors.push(format!("transaction failed: {e}"));
+            return result;
+        }
+    };
+
+    // Courses
+    let mut course_ids: HashMap<String, i64> = HashMap::new();
+    for course in &discovery.courses {
+        match db::upsert_course(
+            &tx,
+            &course.external_id,
+            &course.name,
+            course.short_name.as_deref(),
+            &course.url,
+            now,
+        ) {
+            Ok(id) => {
+                course_ids.insert(course.external_id.clone(), id);
+            }
+            Err(e) => result.errors.push(format!("course {}: {e}", course.external_id)),
+        }
+    }
+
+    let paused: HashSet<i64> = db::paused_course_ids(&tx).into_iter().collect();
+
+    for r in &discovery.resources {
+        let course_id = course_ids.get(&r.course_external_id).copied();
+        let previous = db::get_resource(&tx, &r.external_id);
+        let availability = if r.available { "available" } else { "unavailable" };
+        let section_path_json = if r.section_path.is_empty() {
+            None
+        } else {
+            serde_json::to_string(&r.section_path).ok()
+        };
+
+        let write = ResourceWrite {
+            external_id: &r.external_id,
+            course_id,
+            title: &r.title,
+            url: &r.url,
+            source_page_url: r.source_page_url.as_deref(),
+            section_path: section_path_json.as_deref(),
+            resource_type: &r.resource_type,
+            uploaded_at: r.uploaded_at.as_deref(),
+            published_at: r.published_at.as_deref(),
+            modified_at: r.modified_at.as_deref(),
+            due_at: r.due_at.as_deref(),
+            fingerprint: &r.fingerprint(),
+            size_bytes: r.size_bytes,
+            section: r.section.as_deref(),
+            is_external: r.is_external,
+            availability,
+        };
+
+        let resource_id = match db::upsert_resource(&tx, &write, now) {
+            Ok(id) => id,
+            Err(e) => {
+                result.errors.push(format!("resource {}: {e}", r.external_id));
+                continue;
+            }
+        };
+        seen_ids.push(r.external_id.clone());
+
+        let effective_baseline = course_is_baseline(baseline, rebaseline, &paused, course_id);
+        let prev_state = previous.as_ref().map(Into::into);
+        let detected = diff::classify(prev_state.as_ref(), r, effective_baseline);
+        let kind = if r.resource_type == "announcement" && detected == Detected::New {
+            "announcement"
+        } else {
+            match &detected {
+                Detected::New => "new",
+                Detected::Updated { .. } => "updated",
+                Detected::DeadlineChanged { .. } => "deadline",
+                Detected::Unavailable => "unavailable",
+                Detected::Restored => "restored",
+                Detected::Unchanged => "",
+            }
+        };
+
+        if kind.is_empty() {
+            continue;
+        }
+
+        let (title, description) = event_copy(kind, r, &detected);
+        let discriminator = match &detected {
+            Detected::Updated { .. } => r.fingerprint(),
+            Detected::DeadlineChanged { to, .. } => to.clone().unwrap_or_default(),
+            Detected::Unavailable => "unavailable".to_string(),
+            Detected::Restored => r.fingerprint(),
+            _ => r.fingerprint(),
+        };
+        let key = diff::dedup_key(kind, &r.external_id, &discriminator);
+
+        match db::insert_event(
+            &tx,
+            Some(resource_id),
+            course_id,
+            kind,
+            &title,
+            Some(&description),
+            &key,
+            now,
+        ) {
+            Ok(true) => match kind {
+                "new" | "announcement" => new_count += 1,
+                "updated" | "deadline" => updated_count += 1,
+                "unavailable" | "restored" => unavailable_count += 1,
+                _ => {}
+            },
+            Ok(false) => {}
+            Err(e) => result.errors.push(format!("event {}: {e}", r.external_id)),
+        }
+    }
+
+    if discovery.errors.is_empty() && !discovery.cancelled && result.errors.is_empty() {
+        let seen: HashSet<&String> = seen_ids.iter().collect();
+        missing_ids = db::all_resource_external_ids(&tx)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|id| !seen.contains(id))
+            .collect();
+    }
+
+    if !baseline && result.errors.is_empty() {
+        for r in &discovery.resources {
+            let cid = course_ids.get(&r.course_external_id).copied().unwrap_or(-1);
+            if rebaseline.contains(&cid) || paused.contains(&cid) {
+                continue;
+            }
+            if let Some(due) = r.due_at.as_deref() {
+                if let Some(instant) = due_instant(due) {
+                    let now_utc = chrono::Utc::now();
+                    let window = chrono::Duration::hours(reminder_hours);
+                    if instant > now_utc && instant <= now_utc + window {
+                        let key = diff::dedup_key("deadline-reminder", &r.external_id, due);
+                        if !db::event_exists(&tx, &key) {
+                            let course_id = course_ids.get(&r.course_external_id).copied();
+                            let resource_id = db::get_resource(&tx, &r.external_id).map(|x| x.id);
+                            let _ = db::insert_event(
+                                &tx,
+                                resource_id,
+                                course_id,
+                                "deadline",
+                                &format!("Deadline approaching: {}", r.title),
+                                Some("An upcoming deadline is within your reminder window."),
+                                &key,
+                                now,
+                            );
+                            updated_count += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for course in &discovery.courses {
+        if let Some(id) = course_ids.get(&course.external_id) {
+            let partial_prefix = format!("course {} page:", course.external_id);
+            let status = if discovery.errors.iter().any(|e| e.starts_with(&partial_prefix)) {
+                "partial"
+            } else {
+                "ok"
+            };
+            let _ = db::mark_course_scanned(&tx, *id, now, status);
+        }
+    }
+
+    if baseline
+        && !discovery.cancelled
+        && discovery.errors.is_empty()
+        && result.errors.is_empty()
+    {
+        let current_generation = db::get_kv(&tx, "baseline_global_reset_generation")
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(0);
+        if current_generation == global_generation {
+            let _ = db::set_kv(&tx, "baseline_established", now);
+        }
+    }
+
+    if result.errors.is_empty() {
+        match tx.commit() {
+            Ok(()) => commit_ok = true,
+            Err(e) => result.errors.push(format!("commit failed: {e}")),
+        }
+    } else {
+        let _ = tx.rollback();
+    }
+
+    if commit_ok {
+        result.committed = true;
+        result.new = new_count as usize;
+        result.updated = updated_count as usize;
+        result.unavailable = unavailable_count as usize;
+        result.missing_ids = missing_ids;
+    } else {
+        result.committed = false;
+        result.new = 0;
+        result.updated = 0;
+        result.unavailable = 0;
+        result.missing_ids.clear();
+    }
+    result
+}
+
+// Aliases for common collection-to-commit seam names.
+pub fn reconcile(conn: &rusqlite::Connection, discovery: &discover::Discovery, baseline: bool, baseline_generation: i64, global_generation: i64, rebaseline: &HashSet<i64>, reminder_hours: i64, now: &str) -> ReconcileResult {
+    reconcile_scan(conn, discovery, baseline, baseline_generation, global_generation, rebaseline, reminder_hours, now)
+}
+pub fn commit_scan(conn: &rusqlite::Connection, discovery: &discover::Discovery, baseline: bool, baseline_generation: i64, global_generation: i64, rebaseline: &HashSet<i64>, reminder_hours: i64, now: &str) -> ReconcileResult {
+    reconcile_scan(conn, discovery, baseline, baseline_generation, global_generation, rebaseline, reminder_hours, now)
+}
+pub fn persist_scan(conn: &rusqlite::Connection, discovery: &discover::Discovery, baseline: bool, baseline_generation: i64, global_generation: i64, rebaseline: &HashSet<i64>, reminder_hours: i64, now: &str) -> ReconcileResult {
+    reconcile_scan(conn, discovery, baseline, baseline_generation, global_generation, rebaseline, reminder_hours, now)
+}
+pub fn apply_discovery(conn: &rusqlite::Connection, discovery: &discover::Discovery, baseline: bool, baseline_generation: i64, global_generation: i64, rebaseline: &HashSet<i64>, reminder_hours: i64, now: &str) -> ReconcileResult {
+    reconcile_scan(conn, discovery, baseline, baseline_generation, global_generation, rebaseline, reminder_hours, now)
 }
 
 #[cfg(test)]
