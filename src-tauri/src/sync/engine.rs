@@ -826,6 +826,10 @@ pub fn apply_discovery(conn: &rusqlite::Connection, discovery: &discover::Discov
 }
 
 #[cfg(test)]
+#[path = "../../../tests/scan_reconciliation_r1a.rs"]
+mod scan_reconciliation_r1a_tests;
+
+#[cfg(test)]
 mod tests {
     use super::{consume_completed_rebaseline_markers, course_is_baseline, due_instant};
     use crate::{db, sync::diff};
