@@ -142,7 +142,8 @@ impl QuantaClient {
     /// Local HTTP fixture client; production always uses the official origin.
     #[cfg(test)]
     pub(crate) fn fixture_client(address: std::net::SocketAddr) -> Self {
-        let mut client = Self::from_session(
+        Self::fixture_session_client(
+            address,
             SessionInfo {
                 email: "fixture".into(),
                 method: "password".into(),
@@ -152,19 +153,40 @@ impl QuantaClient {
                 sesskey: None,
                 acquired_at: String::new(),
             },
-            5,
-        ).unwrap();
+        )
+    }
+
+    /// Local session fixture with the real shared cookie transport. HTTP fixture
+    /// cookies omit Secure because the loopback server does not terminate TLS.
+    #[cfg(test)]
+    pub(crate) fn fixture_session_client(
+        address: std::net::SocketAddr,
+        session: SessionInfo,
+    ) -> Self {
+        let mut client = Self::from_session(session, 5).unwrap();
         client.origin = Url::parse(&format!(
-            "http://quanta.bits-pilani.ac.in:{}", address.port(),
-        )).unwrap();
+            "http://quanta.bits-pilani.ac.in:{}",
+            address.port(),
+        ))
+        .unwrap();
+        client.jar = Arc::new(Jar::default());
+        client.jar.add_cookie_str(
+            &format!(
+                "MoodleSession={}; Path=/; HttpOnly",
+                client.session.session_cookie
+            ),
+            &client.origin,
+        );
         client.http = Client::builder()
             .no_proxy()
+            .cookie_provider(client.jar.clone())
             .resolve("quanta.bits-pilani.ac.in", address)
             .timeout(Duration::from_secs(5))
             .build()
             .unwrap();
         client.download_http = Client::builder()
             .no_proxy()
+            .cookie_provider(client.jar.clone())
             .resolve("quanta.bits-pilani.ac.in", address)
             .connect_timeout(Duration::from_secs(5))
             .build()
