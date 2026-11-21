@@ -1,3 +1,6 @@
+import { SearchControls } from "../../components/SearchControls";
+import { searchDesktop, type SearchScope, type SearchFilters } from "../../lib/desktopSearch";
+import { buildDisplayNames, loadAliases } from "../../lib/courseName";
 import { resourceSectionPath } from "../../lib/sectionPath";
 import { useMaterialActions } from "../../hooks/useMaterialActions";
 import { getListNavigationIntent, recoverFocusedId, type ListNavigationInput } from "../../lib/listNavigation";
@@ -31,9 +34,7 @@ import {
 import {
   RESOURCE_SORTS,
   categoryOptions,
-  filterCourseResources,
   sortResources,
-  typeOptions,
   type ResourceCategoryId,
   type ResourceSort,
 } from "../../lib/courseLibrary";
@@ -63,6 +64,9 @@ import { LibraryFooter, LibraryHeader } from "./LibraryFrame";
 
 interface CoursePageProps {
   course: Course;
+  searchCourses?: Course[];
+  searchUnreadIds?: ReadonlySet<number>;
+  timeZone?: string;
   folderPath?: string[] | null;
   /** Last complete inventory published by App; never queried again here. */
   inventory?: Resource[];
@@ -84,6 +88,8 @@ interface CoursePageProps {
   sidebarNavigation?: boolean;
   headerActions?: ReactNode;
   compact?: boolean;
+  onSeeAllFiles?: (raw: string, options?: { scope?: SearchScope; sourceFrom?: string | null; sourceThrough?: string | null }) => void;
+  onNavigate?: (courseId: number | null, folderPath?: string[] | null) => void;
 }
 
 const identity = (resource: Resource) => `resource:${resource.externalResourceId || `local:${resource.id}`}`;
@@ -140,7 +146,7 @@ function latestIn(node: CourseTreeNode): number {
 
 /** One course's page: contents tree and per-course activity. */
 export default function CoursePage({
-  course,
+  course, searchCourses, searchUnreadIds, timeZone,
   folderPath,
   inventory,
   inventoryPending = false,
@@ -159,7 +165,10 @@ export default function CoursePage({
   sidebarNavigation = false,
   headerActions,
   compact = false,
+  onSeeAllFiles,
+  onNavigate,
 }: CoursePageProps) {
+  const mirror = useMirror();
   const items = useMemo(() => inventory?.filter(resource => resource.courseId === course.id) ?? null, [inventory, course.id]);
   const activityMatchingCourse = activityCourseId === course.id;
   const activityEventsList = activityMatchingCourse && Array.isArray(activityEvents) ? activityEvents : EMPTY_EVENTS;
@@ -184,43 +193,32 @@ export default function CoursePage({
     previousTab.current = tab;
   }, [tab, details]);
   const [search, setSearch] = useSessionValue(`course:${course.id}:search`, "");
-  const [sort, setSort] = useSessionValue<ResourceSort>(`course:${course.id}:sort`, "newest");
-  const [type, setType] = useSessionValue(`course:${course.id}:type`, "all");
+  const [sort, setSort] = useSessionValue<ResourceSort | "relevance">(`course:${course.id}:sort`, "relevance");
   const [category, setCategory] = useSessionValue<ResourceCategoryId | "all">(`course:${course.id}:category`, "all");
   const [expanded, setExpanded] = useSessionValue<Set<string>>(`course:${course.id}:expanded`, new Set());
   const [selectedFolder, setSelectedFolder] = useSessionValue<string[]>(`course:${course.id}:folder`, []);
+  const [explicitScope, setExplicitScope] = useSessionValue<"course" | null>(`course:${course.id}:search-scope`, null);
+  const [dateFilters, setDateFilters] = useSessionValue<SearchFilters>(`course:${course.id}:source-dates`, {});
+  const searchScope = useMemo<SearchScope>(() => explicitScope === "course" || !folderPath?.length ? { kind: "course", courseId: course.id } : { kind: "folder", courseId: course.id, path: folderPath }, [explicitScope, folderPath, course.id]);
   const [showFilters, setShowFilters] = useState(false);
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [initialised, setInitialised] = useSessionValue(`course:${course.id}:initialised`, false);
 
   const unique = useMemo(() => dedupeCourseResources(items ?? []), [items]);
-  const types = useMemo(() => typeOptions(unique), [unique]);
-  const categories = useMemo(() => categoryOptions(unique), [unique]);
-
   const needle = search.trim();
-  const searching = needle !== "";
-  const typeFilter = type === "all" ? "" : type;
+  const searching = needle !== "" || Boolean(dateFilters.sourceFrom || dateFilters.sourceThrough);
   const pathInSidebar = sidebarNavigation ? folderPath : undefined;
   const folderName = pathInSidebar?.at(-1);
-  const scoped = useMemo(() => {
-    if (!pathInSidebar?.length) return unique;
-    return unique.filter(resource => {
-      const path = resourceSectionPath(resource);
-      return pathInSidebar.every((segment, index) => path[index] === segment);
-    });
-  }, [unique, pathInSidebar]);
-
-  const filtered = useMemo(
-    () => filterCourseResources(scoped, { type: typeFilter, category }),
-    [scoped, typeFilter, category],
-  );
-  const searchResults = useMemo(
-    () =>
-      searching
-        ? sortResources(filterCourseResources(scoped, { search, type: typeFilter, category }), sort)
-        : [],
-    [searching, scoped, search, typeFilter, category, sort],
-  );
+  const scoped = unique.filter(r => searchScope.kind !== "folder" || searchScope.path.every((p, i) => resourceSectionPath(r)[i] === p));
+  const courses = useMemo(() => searchCourses ?? [course], [searchCourses, course]);
+  const displayNames = useMemo(() => buildDisplayNames(courses, loadAliases()), [courses]);
+  const savedIds = useMemo(() => new Set(unique.filter(r => !r.isExternal && mirror && isLocal(mirror.statusOf(r.id))).map(r => r.id)), [unique, mirror]);
+  const result = useMemo(() => searchDesktop({ raw: search, scope: searchScope, filters: { ...dateFilters, category }, timeZone }, {
+    courses, resources: inventory ?? unique, displayNames, savedIds, unreadIds: searchUnreadIds ?? new Set([...unreadResourceIds].filter((id): id is number => id !== null)),
+  }), [search, searchScope, dateFilters, category, timeZone, courses, inventory, unique, displayNames, savedIds, searchUnreadIds, unreadResourceIds]);
+  const filtered = result.files;
+  const searchResults = useMemo(() => sort === "relevance" ? filtered : sortResources(filtered, sort), [filtered, sort]);
+  const categories = useMemo(() => categoryOptions(unique), [unique]);
   const tree = useMemo(() => buildCourseTree(filtered, course.name), [filtered, course.name]);
   const activeFolder = findNode(tree, sidebarNavigation ? folderPath ?? [] : selectedFolder) ?? tree;
   const compactFolders = useMemo(() => {
@@ -239,13 +237,13 @@ export default function CoursePage({
       }));
     }
     if (sidebarNavigation) {
-      return sortResources(filtered, sort).map(resource => ({
+      return (sort === "relevance" ? filtered : sortResources(filtered, sort)).map(resource => ({
         kind: "file", id: identity(resource), resource, depth: 0, searching: false,
       }));
     }
     const out: FlatRow[] = [];
     const addFiles = (node: CourseTreeNode, depth: number) => {
-      for (const resource of sortResources(node.resources, sort)) {
+      for (const resource of sortResources(node.resources, sort === "relevance" ? "newest" : sort)) {
         out.push({ kind: "file", id: identity(resource), resource, depth, searching: false });
       }
     };
@@ -306,8 +304,7 @@ export default function CoursePage({
   useEffect(() => {
     if (!sidebarNavigation || !folderPath?.length) return;
     setTab("contents");
-    setSearch("");
-  }, [sidebarNavigation, folderPath, setTab, setSearch]);
+  }, [sidebarNavigation, folderPath, setTab]);
 
   const pathIdentity = JSON.stringify(folderPath ?? []);
   const scrollScope = folderName ? `course:${course.id}:${tab}:${pathIdentity}` : `course:${course.id}:${tab}`;
@@ -332,7 +329,7 @@ export default function CoursePage({
 
   const shown = searching ? searchResults.length : filtered.length;
   const total = scoped.length;
-  const filtersActive = type !== "all" || category !== "all" || searching;
+  const filtersActive = category !== "all" || searching;
 
   const toggle = useCallback(
     (id: string) => {
@@ -363,7 +360,7 @@ export default function CoursePage({
   }, [tree]);
 
   // Local mirror stats for this course (derived from the global mirror).
-  const mirror = useMirror();
+
 
   const setAllExpanded = (expand: boolean) => {
     const next = new Set(expand ? allFolderIds() : []);
@@ -503,7 +500,7 @@ export default function CoursePage({
   activityWaitRef.current = activityRefreshWait;
   const generation = useRef(0);
   const lock = useRef<number | null>(null);
-  const context = JSON.stringify([course.id, folderPath, selectedFolder, tab, search, type, category, sort]);
+  const context = JSON.stringify([course.id, folderPath, selectedFolder, tab, search, category, sort]);
   useLayoutEffect(() => {
     generation.current += 1;
     lock.current = null;
@@ -774,6 +771,7 @@ export default function CoursePage({
   };
 
   const paused = course.monitoringStatus === "paused";
+  const missingDestination = !inventoryPending && !inventoryError && sidebarNavigation && Boolean(folderPath?.length) && !findNode(buildCourseTree(unique, course.name), folderPath ?? []);
   const home = courseHomeUrl(course);
   const label = courseLabel(course.id);
   const display = courseTitle(course.id, displayName(course));
@@ -827,8 +825,16 @@ export default function CoursePage({
 
   const clearFilters = () => {
     setSearch("");
-    setType("all");
     setCategory("all");
+    setDateFilters({});
+  };
+  const handleSearchScopeChange = (scope: SearchScope) => {
+    if (scope.kind === "everywhere") { onSeeAllFiles?.(search, { scope, ...dateFilters }); return; }
+    if (scope.courseId !== course.id) { onSeeAllFiles?.(search, { scope, ...dateFilters }); return; }
+    if (scope.kind === "folder") {
+      setExplicitScope(null);
+      onNavigate?.(scope.courseId, scope.kind === "folder" ? scope.path : null);
+    } else setExplicitScope("course");
   };
 
   const renderFile = (row: (typeof fileRows)[number]) => (
@@ -947,6 +953,17 @@ export default function CoursePage({
     : searching ? `${shown} ${shown === 1 ? "match" : "matches"}${shown > 0 ? ` in ${code}` : ""}`
     : `Library / ${[code, ...(sidebarNavigation ? folderPath ?? [] : activeFolder.path)].join(" / ")} · ${visibleCount.toLocaleString()} ${visibleCount === 1 ? "material" : "materials"}`;
 
+  if (missingDestination) {
+    return (
+      <div className={cx("library-panel", "course-panel", details?.selected && "has-library-inspector")}>
+        <LibraryHeader title={<span>{course.shortName ?? course.name}</span>} tabs={null} actions={headerActions} />
+        <div className="library-panel-scroll course-panel-scroll">
+          <EmptyState title="Folder unavailable" body="This folder is no longer available in this course." />
+          {onNavigate && <Button size="sm" onClick={() => onNavigate(course.id, null)}>Back to course materials</Button>}
+        </div>
+      </div>
+    );
+  }
   return (
     <div className={cx("library-panel", "course-panel", details?.selected && "has-library-inspector")}>
       <LibraryHeader
@@ -1001,6 +1018,8 @@ export default function CoursePage({
             }} options={compactFolders.map((node) => ({ value: node.id, label: node === tree ? "Course materials" : node.path.join(" / ") }))} ariaLabel="Course folder" />
             <span className="library-toolbar-end">{visibleCount} {visibleCount === 1 ? "material" : "materials"}</span>
           </div>}
+          <SearchControls raw={search} onRaw={setSearch} scope={searchScope} onScope={handleSearchScopeChange} filters={dateFilters} onFilters={setDateFilters} courses={courses} resources={inventory ?? []} />
+          {result.errors.length > 0 && <Banner kind="error">{result.errors.join(" ")}</Banner>}
           <div className={cx("library-toolbar course-page-toolbar", !showFilters && "library-search-collapsed", !headerActions && "library-filters-standalone")}>
             <SearchField
               inputRef={searchRef}
@@ -1013,23 +1032,11 @@ export default function CoursePage({
             <Select
               value={sort}
               onValueChange={(value) => setSort(value as ResourceSort)}
-              options={RESOURCE_SORTS.map((option) => ({
+              options={[{ value: "relevance", label: "Relevance" }, ...RESOURCE_SORTS.map((option) => ({
                 value: option.id,
                 label: option.label,
-              }))}
+              }))]}
               ariaLabel="Sort resources"
-            />
-            <Select
-              value={type}
-              onValueChange={setType}
-              options={[
-                { value: "all", label: "All types" },
-                ...types.map((option) => ({
-                  value: option.type,
-                  label: `${option.type} (${option.count})`,
-                })),
-              ]}
-              ariaLabel="Filter by file type"
             />
             <Select
               value={category}

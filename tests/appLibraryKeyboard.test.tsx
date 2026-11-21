@@ -29,9 +29,9 @@ describe('All files keyboard in the real App', () => {
     expect(appApi.setEventReadState).toHaveBeenCalledWith([10,11],true);
     await key('u'); expect(appApi.setEventReadState).toHaveBeenLastCalledWith([10,11],false);
   });
-  it('freezes full paged deduplicated inventory before a delayed snapshot and excludes later arrivals', async () => {
+  it('freezes full atomic deduplicated inventory before a delayed snapshot and excludes later arrivals', async () => {
     const resources = Array.from({length:2005},(_,i)=>resource({id:i+1,externalResourceId:`r${i+1}`,title:`File ${String(i).padStart(4,'0')}`}));
-    appApi.listResources.mockImplementation(async (filter) => resources.slice(filter?.offset ?? 0,(filter?.offset ?? 0)+(filter?.limit ?? 2000)));
+    appApi.listResources.mockImplementation(async () => resources);
     const snapshot=deferred<number[]>(); appApi.snapshotResourceEventIds.mockReturnValue(snapshot.promise);
     await open(); expect(document.querySelectorAll('tr[data-row-key]').length).toBeLessThan(100);
     act(()=>row().focus()); await key('A',{shiftKey:true});
@@ -42,7 +42,7 @@ describe('All files keyboard in the real App', () => {
     expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain('2005 materials');
     await click(button('Mark captured changes read'));
     expect(appApi.setEventReadState).toHaveBeenCalledWith([10,11,8000],true);
-    expect(appApi.listResources).toHaveBeenCalledWith({offset:2000,limit:2000});
+    expect(appApi.listSearchInventory).toHaveBeenCalled();
   });
   it('dismisses Inbox only, cancels inertly, focuses Cancel and returns row identity', async()=>{
     await open(); act(()=>row().focus()); await key('Delete');

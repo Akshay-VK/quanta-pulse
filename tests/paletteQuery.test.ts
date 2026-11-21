@@ -37,3 +37,12 @@ describe("parsePaletteQuery", () => {
     ]);
   });
 });
+
+it('retains quoted punctuation and literal quote/backslash escapes when editing controls', () => {
+  const raw = 'course:"ECOM \\"F222\\"" "A\\\\B" "lecture: 4"';
+  const result = parsePaletteQuery(raw, { courses: [{ id: 3, name: 'Econometrics', shortName: 'ECOM "F222"' }], resources: [] });
+  expect(result.errors).toEqual([]);
+  expect(result.filters.courseIds).toEqual([3]);
+  expect(result.terms).toEqual(['A\\B', 'lecture: 4']);
+  expect(result.freeRaw).toBe('"A\\\\B" "lecture: 4"');
+});

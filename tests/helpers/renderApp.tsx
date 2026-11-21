@@ -76,6 +76,7 @@ export function setupApp({ width = 1280, dark = false, platform = "Linux" } = {}
   appApi.getSettings.mockResolvedValue(settings);
   appApi.listCourses.mockResolvedValue([course]);
   appApi.listResources.mockResolvedValue([resource()]);
+  appApi.listSearchInventory.mockImplementation(async () => structuredClone({ courses: await appApi.listCourses(), resources: await appApi.listResources() }));
   appApi.listDashboardResources.mockResolvedValue([resource()]);
   appApi.listDashboardEvents.mockResolvedValue([change()]);
   appApi.queryInbox.mockImplementation(async (filter = {}) => {

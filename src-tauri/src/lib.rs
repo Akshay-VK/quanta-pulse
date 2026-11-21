@@ -14,6 +14,7 @@ pub mod mirror_worker;
 pub mod models;
 pub mod notify;
 pub mod quanta;
+pub mod search;
 pub mod settings;
 pub mod state;
 pub mod sync;
@@ -61,6 +62,7 @@ pub fn run() {
             commands::list_courses,
             commands::set_course_display_name,
             commands::list_resources,
+            commands::list_search_inventory,
             commands::list_dashboard_resources,
             commands::list_events,
             commands::list_dashboard_events,

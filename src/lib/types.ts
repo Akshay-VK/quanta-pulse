@@ -17,6 +17,11 @@ export interface Course {
   resourceCount: number;
 }
 
+export interface DesktopSearchInventory {
+  courses: Course[];
+  resources: Resource[];
+}
+
 export interface Resource {
   id: number;
   externalResourceId: string;
