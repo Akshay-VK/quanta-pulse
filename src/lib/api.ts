@@ -1,8 +1,14 @@
 // Typed wrappers around the Tauri command surface.
 
+import { acceptAcademicContext, academicEpoch, invalidateAcademicSession, sameAcademicSession } from "./academicSession";
 import { invoke } from "@tauri-apps/api/core";
 import { loadAliases, saveAliases } from "./courseName";
 import type {
+  AcademicContext,
+  AcademicPage,
+  AssignmentObservation,
+  GradeObservation,
+  AttendanceObservation,
   InboxFilter,
   InboxPage,
   HistoryFilter,
@@ -47,16 +53,37 @@ function mirrorDeleteAll(scopeId?: string): Promise<MirrorStats | MirrorDeleteRe
   return invoke<MirrorDeleteResult>("mirror_delete_scope", { scopeId });
 }
 
+async function academicRead<T>(command: string, generation: string, courseId: number): Promise<AcademicPage<T>> {
+  const epoch = academicEpoch();
+  const page = await invoke<AcademicPage<T>>(command, { generation, courseId });
+  if (epoch !== academicEpoch() || page.context.generation !== generation) throw new Error("Academic session changed");
+  const current = await invoke<AcademicContext>("academic_context");
+  if (epoch !== academicEpoch() || !sameAcademicSession(page.context, current)) throw new Error("Academic session changed");
+  acceptAcademicContext(current, epoch);
+  return page;
+}
+
 export const api = {
-  login: (email: string, password: string) =>
-    invoke<AuthStatus>("login", { email, password }),
-  startSsoLogin: () => invoke<AuthStatus>("start_sso_login"),
+  academicContext: async () => {
+    const epoch = academicEpoch();
+    const context = await invoke<AcademicContext>("academic_context");
+    acceptAcademicContext(context, epoch);
+    return context;
+  },
+  academicAssignments: (generation: string, courseId: number) => academicRead<AssignmentObservation>("academic_assignments", generation, courseId),
+  academicGrades: (generation: string, courseId: number) => academicRead<GradeObservation>("academic_grades", generation, courseId),
+  academicAttendance: (generation: string, courseId: number) => academicRead<AttendanceObservation>("academic_attendance", generation, courseId),
+  login: (email: string, password: string) => {
+    invalidateAcademicSession();
+    return invoke<AuthStatus>("login", { email, password });
+  },
+  startSsoLogin: () => { invalidateAcademicSession(); return invoke<AuthStatus>("start_sso_login"); },
   focusSsoLogin: (attemptId: string) => invoke<void>("focus_sso_login", { attemptId }),
   cancelSsoLogin: (attemptId: string) => invoke<void>("cancel_sso_login", { attemptId }),
   authStatus: () => invoke<AuthStatus>("auth_status"),
   refreshSession: () => invoke<SessionRefreshResult>("refresh_session"),
-  restartQuantaSession: () => invoke<SessionResetResult>("restart_quanta_session"),
-  logout: () => invoke<void>("logout"),
+  restartQuantaSession: () => { invalidateAcademicSession(); return invoke<SessionResetResult>("restart_quanta_session"); },
+  logout: () => { invalidateAcademicSession(); return invoke<void>("logout"); },
 
   queryInbox: (filter: InboxFilter = {}) => invoke<InboxPage>("query_inbox", { filter }),
   snapshotInboxEventIds: (filter: InboxFilter = {}) =>

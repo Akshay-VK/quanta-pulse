@@ -446,3 +446,30 @@ export interface DueResource {
   coursePaused: boolean;
 }
 export interface DuePage { items: DueResource[]; total: number }
+
+// Private academic read contracts, version 1. Domain collectors remain unverified.
+export interface AcademicOwner { origin: string; moodleUserId: number }
+export interface AcademicContext { contractVersion: 1; generation: string; owner: AcademicOwner | null; collectorsEnabled: boolean }
+export type AcademicCoverageStatus = "complete" | "partial" | "denied" | "unsupported" | "offline" | "cancelled" | "failed";
+export type AcademicVisibility = "visible" | "hidden" | "unreleased" | "unknown";
+export type AcademicDate = { kind: "unknown" } | { kind: "instant" | "dateOnly" | "ambiguous"; value: string };
+export interface AcademicSource { sourceId: string; sourceUrl: string; observedAt: string; visibility: AcademicVisibility }
+export interface AssignmentObservation {
+  source: AcademicSource; title: string; courseModuleId: number | null; activityInstanceId: number | null;
+  resourceId: number | null; due: AcademicDate; dueDisplay: string | null; submissionDisplay: string | null; calendarEventId: number | null; submissionStatus: "unknown" | "unsubmitted" | "draft" | "submitted" | "reopened"; attemptNumber: number | null;
+}
+export interface GradeObservation {
+  source: AcademicSource; title: string; gradeItemId: number | null; parentSourceId: string | null;
+  itemKind: "item" | "category" | "courseTotal"; displayValue: string | null; numericValue: number | null;
+  rangeDisplay: string | null; weightDisplay: string | null; feedback: string | null;
+}
+export interface AttendanceObservation {
+  source: AcademicSource; activityInstanceId: number; courseModuleId: number | null; sessionId: number | null; scopeDisplay: string;
+  statusDisplay: string | null; pointsDisplay: string | null; maximumDisplay: string | null; summaryDisplay: string | null;
+}
+export interface AcademicCoverage {
+  permission: "unknown" | "permitted" | "restricted";
+  reason: "incompleteSource" | "permissionDenied" | "sourceUnverified" | "networkUnavailable" | "workCancelled" | "collectionFailed" | null;
+  coverage: AcademicCoverageStatus; observedAt: string; lastSuccessfulAt: string | null; baselineEstablished: boolean; stale: boolean;
+}
+export interface AcademicPage<T> { context: AcademicContext; courseId: number; coverage: AcademicCoverage | null; records: T[] }

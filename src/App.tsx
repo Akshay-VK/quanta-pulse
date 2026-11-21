@@ -1,3 +1,4 @@
+import { invalidateAcademicSession } from "./lib/academicSession";
 // Application shell: authentication gate, navigation, data loading and the
 // event bridge from the Rust backend, wrapped in the redesign's five-view
 // shell (sidebar, top bar, peek panel, palette, toasts).
@@ -389,6 +390,7 @@ function AppShell() {
         void refreshStatus();
       });
       await add<unknown>("auth:changed", () => {
+        invalidateAcademicSession();
         void refreshStatus();
         void refresh();
       });
@@ -434,6 +436,7 @@ function AppShell() {
 
   const sessionRestart = useRef<Promise<SessionResetResult> | null>(null);
   const restartQuantaSession = useCallback(() => {
+    invalidateAcademicSession();
     if (sessionRestart.current) return sessionRestart.current;
     const work = api.restartQuantaSession().then(async (result) => {
       await refreshStatus();
@@ -473,6 +476,7 @@ function AppShell() {
   }, [historyEvents, notify, refresh]);
 
   const handleLogout = useCallback(async () => {
+    invalidateAcademicSession();
     await api.logout();
     setAuth(await api.authStatus());
     setResources([]);
