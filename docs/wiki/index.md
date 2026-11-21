@@ -1,5 +1,6 @@
 # Decision wiki
 
+- [2026-11-21 R2 integration and A0 prerequisite assessment](2026-11-21-r2-integration.md) — concrete collectors and atomic reconciliation merged at `b4f08a6` from `c0559f5`; inherited same-tree Windows 292 passed/1 ignored and check provenance, preserved R1/auth proofs, local synthetic A0 readiness and remaining live/migration/native limits.
 - [2026-11-21 search and academic expansion setup recovery](2026-11-21-search-and-academic-expansion-setup.md) — Tracker graph verified for #57/#58-#69, base commits recorded, baseline/log limits, and implementation-start handoff.
 - [2026-11-21 R1A/R1B integration evidence](2026-11-21-r1a-r1b-integration.md) — Serial integration of R1B (#61, e82ac7e/ecb7369) and R1A (#60, e8c9bbd/7d5abca) into `feat/search-academic-expansion`; R1A regression proof merged at `12391a3`/`ecfc5bf`; R1B identity/cookie/fence proof merged at `ce9ee1e`/`dd0d164` with same-tree Windows evidence and local A0 prerequisite limits; no final acceptance claimed.
 - [2026-11-20 redesign reference alignment](2026-11-20-redesign-reference-alignment.md) — Source-aligned UI fixes, browser geometry and zoom evidence, and remaining native and per-screen checks.
