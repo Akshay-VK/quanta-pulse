@@ -44,3 +44,9 @@ The [R1B identity proof integration note](2026-11-21-r1a-r1b-integration.md#2026
 ### 2026-11-21 superseding R2 prerequisite checkpoint
 
 R2 source `c0559f58f209015c8a605ebe2d6408bbf2fb14c0` is now integrated at `b4f08a68d4aea8b06fe9ce41d3413559dbe90b33`; see the [dated boundary/proof and A0 assessment](2026-11-21-r2-integration.md). This supersedes the pending R2 and canonical-runner status above: same-tree assembled Windows evidence records 292 passed/1 ignored and a passing all-targets check; the runner lease is released. Local synthetic A0 can use the extracted collection/transaction seams and verified identity input. Academic owner/generation authority and independent coverage still require implementation/proof; V1 remains the live gate. Migration/restore and native-delivery proof limits and final open-ticket acceptance remain explicit.
+
+### 2026-11-21 communication preference and search checkpoint
+
+During the S1/S2 integration work session for parent #57 on 2026-11-21, the user requested simplified feature-level progress updates and screenshots only when a meaningful UI change warrants them. Preserve this preference for subsequent work: explain student-visible progress concisely and reuse already-shown screenshots when the UI is unchanged. This records the user's session preference, without changing agent-instruction files.
+
+Search source `0b80b58dce9215c8a173a7c771b8c1cf18db593d` was integrated at `fad3b486c44daa9103a76f66c04bd0bad292455b`. See the [S1/S2 integration evidence](2026-11-21-search-integration.md) for inherited checks, preserved prerelease/R1/R2/auth code, pending P2/P3 review corrections and native-proof limits. #58/#59 remain open pending correction and final acceptance.
