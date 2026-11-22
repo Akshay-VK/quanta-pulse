@@ -9,6 +9,7 @@ pub mod academic;
 pub mod assignments;
 pub mod auth;
 pub mod commands;
+mod content_search;
 pub mod core;
 pub mod db;
 pub mod logging;
@@ -28,6 +29,7 @@ use tauri::Manager;
 
 pub fn run() {
     tauri::Builder::default()
+        .manage(std::sync::Arc::<content_search::ContentSearch>::default())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -69,6 +71,9 @@ pub fn run() {
             commands::set_course_display_name,
             commands::list_resources,
             commands::list_search_inventory,
+            commands::search_saved_content,
+            commands::rebuild_saved_content,
+            commands::cancel_saved_content_rebuild,
             commands::list_dashboard_resources,
             commands::list_events,
             commands::list_dashboard_events,

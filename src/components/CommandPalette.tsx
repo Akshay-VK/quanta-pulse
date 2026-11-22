@@ -1,3 +1,5 @@
+import { BodyMatch, SavedContentControls } from "./SavedContentSearch";
+import { useSavedContent } from "../hooks/useSavedContent";
 import { Banner } from "./ui/Banner";
 import { SearchControls } from "./SearchControls";
 import type { SearchFilters } from "../lib/desktopSearch";
@@ -92,10 +94,11 @@ export default function CommandPalette({
     !resource.isExternal && mirror && isLocal(mirror.statusOf(resource.id)),
   );
   const savedIds = useMemo(() => new Set(resources.filter((r) => isSaved(r)).map((r) => r.id)), [resources, mirror]);
+  const content = useSavedContent(open && Boolean(filters.includeSavedText), query, { courses, resources, displayNames }, mirror);
   const searchResult = useMemo(() => searchDesktop(
     { raw: query, scope, filters, timeZone, now },
-    { courses, resources, displayNames, unreadIds: unreadResources, savedIds, revision: undefined },
-  ), [query, courses, resources, displayNames, unreadResources, savedIds, scope, filters, timeZone, now]);
+    { courses, resources, displayNames, unreadIds: unreadResources, savedIds, bodyHits: content.hits, revision: undefined },
+  ), [query, courses, resources, displayNames, unreadResources, savedIds, scope, filters, timeZone, now, content.hits]);
   const navItems = NAV.filter((item) => (!hasQuery || needle) && (!needle || item.label.toLowerCase().includes(needle)));
   const courseMatches = hasQuery && !parsed.hasKnownInvalid ? searchResult.courses : [];
   const files = hasQuery && !parsed.hasKnownInvalid ? searchResult.files.slice(0, 8) : [];
@@ -122,7 +125,7 @@ export default function CommandPalette({
     fn();
   };
 
-  const noResults = hasQuery && files.length === 0 && courseMatches.length === 0 && actionMatches.length === 0 && navItems.length === 0 && folderMatches.length === 0 && !anyFileMatch && searchResult.errors.length === 0 && !inventoryError && !inventoryPending;
+  const noResults = hasQuery && files.length === 0 && courseMatches.length === 0 && actionMatches.length === 0 && navItems.length === 0 && folderMatches.length === 0 && !anyFileMatch && searchResult.errors.length === 0 && !inventoryError && !inventoryPending && !content.pending;
 
   return (
     <Dialog
@@ -181,6 +184,7 @@ export default function CommandPalette({
           <span className="palette-extra"><Kbd keys="Esc" /></span>
         </div>
         <SearchControls raw={query} onRaw={raw => { setTokens([]); setDraft(raw); }} scope={scope} onScope={setScope} filters={filters} onFilters={setFilters} courses={courses} resources={resources} />
+        <SavedContentControls enabled={Boolean(filters.includeSavedText)} onToggle={() => setFilters(value => ({ ...value, includeSavedText: !value.includeSavedText }))} content={content} />
         <Command.List className="palette-list">
           {inventoryError ? <Banner kind="error">Search refresh failed. Retained results are shown. {inventoryError}</Banner> : inventoryPending && <Banner kind="info">Search inventory is refreshing. Retained results are shown.</Banner>}
           {searchResult.errors.length > 0 && (
@@ -231,7 +235,7 @@ export default function CommandPalette({
                   onSelect={() => run(() => { setRecentId(resource.id); onInspectResource(resource); })}
                 >
                   <FileTypeIcon type={resource.resourceType} />
-                  <span className="palette-main"><Highlight text={resource.title} query={needle || query.trim()} /></span>
+                  <span className="palette-main"><Highlight text={resource.title} query={needle || query.trim()} /><BodyMatch snippet={content.hits?.get(resource.id)} /></span>
                   <span className="palette-extra">
                     <span className="mono faint">{resource.courseName}</span>
                   </span>

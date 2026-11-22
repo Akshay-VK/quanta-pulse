@@ -344,3 +344,43 @@ it('rejects a pre-acknowledgment snapshot arriving after the coherent inspector 
   expect(document.querySelector('.course-material-row')?.textContent).not.toContain('Lecture stale');
   expect(document.querySelector('.course-material-row .unread-dot')).toBeNull();
 });
+
+it('uses the same content results and filters in the palette and Library and escapes snippets', async () => {
+  appApi.listResources.mockResolvedValue([
+    resource({ title: 'regression', resourceType: 'text' }),
+    resource({ id: 2, externalResourceId: 'r2', title: 'Handout', resourceType: 'text' }),
+    resource({ id: 3, externalResourceId: 'r3', title: 'Slides', resourceType: 'pdf' }),
+  ]);
+  const snippet = '<img src=x onerror=alert(1)> residual regression';
+  appApi.searchSavedContent.mockResolvedValue({
+    state: 'ready', indexed: 2, skipped: 1,
+    hits: [{ resourceId: 2, snippet }, { resourceId: 3, snippet: 'Filtered out' }],
+  });
+  app = await renderApp();
+  await palette('type:text regression');
+  await click(button('Include saved text'));
+  const waitForBody = async () => {
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 130)); });
+  };
+  await waitForBody();
+  expect(appApi.searchSavedContent).toHaveBeenLastCalledWith(['regression']);
+  const dialog = document.querySelector('[role="dialog"]')!;
+  const hits = () => [...dialog.querySelectorAll('.palette-item[data-value^="File "]')];
+  expect(hits().map(node => node.getAttribute('data-value'))).toEqual(['File 1 regression', 'File 2 Handout']);
+  expect(hits()[1].querySelector('.body-match')?.textContent).toBe(`Body match${snippet}`);
+  expect(dialog.querySelector('.body-match img')).toBeNull();
+  expect(dialog.textContent).toContain('PDF contents are unavailable');
+  await click([...dialog.querySelectorAll<HTMLElement>('.palette-item')].find(node => node.textContent?.includes('See all results'))!);
+  await waitForBody();
+  const rows = document.querySelectorAll('tbody tr');
+  expect([...rows].map(row => row.querySelector('.cell-title-main')?.textContent)).toEqual(['regression', 'Handout']);
+  expect(rows[1].querySelector('.body-match')?.textContent).toContain(snippet);
+  expect(appApi.previewResource).not.toHaveBeenCalled();
+
+  appApi.searchSavedContent.mockRejectedValueOnce(new Error('FTS disabled'));
+  await inputValue(document.querySelector<HTMLInputElement>('input[aria-label="Search library"]')!, 'type:text regress');
+  await waitForBody();
+  expect(document.querySelector('main')?.textContent).toContain('Saved text search is temporarily unavailable.');
+  expect(document.querySelector('tbody')?.textContent).toContain('regression');
+  expect(document.querySelector('tbody')?.textContent).not.toContain('Handout');
+});
