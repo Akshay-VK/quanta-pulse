@@ -6,6 +6,7 @@
 
 pub mod attention;
 pub mod academic;
+pub mod assignments;
 pub mod auth;
 pub mod commands;
 mod content_search;

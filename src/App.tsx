@@ -29,6 +29,8 @@ import { Toaster, type ToastItem } from "./components/ui/Toast";
 import InboxView from "./views/InboxView";
 import { useInbox, useDueInventory } from "./hooks/useAttention";
 import type { SearchQueryState, SearchScope, SearchFilters } from "./lib/desktopSearch";
+import { assignmentDetails, assignmentDue, assignmentModuleId, assignmentProperties, projectAssignmentDates } from "./lib/assignments";
+import { useAssignmentObservations } from "./hooks/useAssignmentObservations";
 import { agendaEntries, resolveTimezone } from "./lib/agenda";
 import CalendarView from "./views/CalendarView";
 import LibraryView from "./views/LibraryView";
@@ -169,6 +171,33 @@ function AppShell() {
   const peekResource = selection?.kind === "resource"
     ? selection.resource
     : selection?.kind === "change" ? selection.resource ?? null : null;
+  const [assignmentRefresh, setAssignmentRefresh] = useState(0);
+  const assignmentResources = useMemo(() => {
+    const candidates = new Map((agendaDue.items ?? []).map(({ resource }) => [resource.id, resource]));
+    for (const resource of resources) candidates.set(resource.id, resource);
+    return [...candidates.values()].filter(resource => assignmentModuleId(resource) !== null);
+  }, [resources, agendaDue.items]);
+  const inspectedAssignment = selection?.kind === "resource" && peekResource && assignmentModuleId(peekResource) !== null ? peekResource : null;
+  const assignmentCourses = route.view === "calendar" && (!dueFilter.resourceType || dueFilter.resourceType === "assignment")
+    ? assignmentResources.flatMap(resource => resource.courseId != null &&
+        (dueFilter.courseId ? resource.courseId === dueFilter.courseId :
+          courses.find(course => course.id === resource.courseId)?.monitoringStatus !== "paused") ? [resource.courseId] : [])
+    : [];
+  if (inspectedAssignment?.courseId) assignmentCourses.push(inspectedAssignment.courseId);
+  const assignmentCourseKey = [...new Set(assignmentCourses)].sort((a, b) => a - b).join(",");
+  const { pages: assignmentPages, failed: assignmentFailures } = useAssignmentObservations(assignmentCourseKey, assignmentRefresh);
+  const assignmentMaxAge = Math.min(60, settings?.syncIntervalMinutes ?? 60);
+  const assignmentByResource = useMemo(() => assignmentDetails(assignmentPages, inspectedAssignment
+    ? [...assignmentResources, inspectedAssignment] : assignmentResources, now, assignmentMaxAge),
+  [assignmentPages, assignmentResources, inspectedAssignment, now, assignmentMaxAge]);
+  const agendaWithAssignments = {
+    ...agendaDue,
+    items: agendaDue.items && projectAssignmentDates(agendaDue.items, assignmentResources, courses, dueFilter, assignmentByResource),
+    refresh: async () => {
+      setAssignmentRefresh(value => value + 1);
+      await agendaDue.refresh();
+    },
+  };
   const [peekLocal, setPeekLocal] = useState<LocalFile | null>(null);
   const [localLookup, setLocalLookup] = useState<"loading" | "ready" | "error">("ready");
   const mirror = useMirror();
@@ -420,6 +449,7 @@ function AppShell() {
       });
       await add<ScanOutcome>("sync:done", (outcome) => {
         if (outcome?.cancelled || outcome?.authExpired || outcome?.errors?.length) setFirstRunAfterScan(null);
+        setAssignmentRefresh(value => value + 1);
         void refresh();
         void refreshStatus();
       });
@@ -560,7 +590,7 @@ function AppShell() {
     // Inspecting an unread item marks its captured event IDs read (optimistic, rolled back on failure).
     // Focus, multi-select and preview never trigger this.
     const capturedReadIds: number[] = [];
-    if (subject.kind === "resource") {
+    if (subject.kind === "resource" && !(owner === "calendar" && assignmentModuleId(subject.resource) !== null)) {
       void api.snapshotResourceUnreadEventIds(subject.resource.id)
         .then((ids) => markInspectedRead(ids))
         .catch((error) => notify(String(error), true));
@@ -804,16 +834,21 @@ function AppShell() {
     if (!peekResource) return null;
     const local = peekLocal && peekLocal.resourceId === peekResource.id ? peekLocal : null;
     const event = selection?.kind === "change" ? selection.change : null;
-    const actions = destinations(peekResource, event ?? undefined);
+    const assignment = inspectedAssignment ? assignmentByResource.get(inspectedAssignment.id) : undefined;
+    const actions = assignment
+      ? [{ id: "open-quanta", label: "Open in Quanta", onSelect: () => void open(peekResource.url), disabled: false }]
+      : destinations(inspectedAssignment ? { ...inspectedAssignment, sourcePageUrl: null } : peekResource, event ?? undefined);
     const localStatus = mirror?.statusOf(peekResource.id) ?? local;
     const attempt = mirror?.downloads.get(peekResource.id);
-    const progress = attempt?.state === "downloading" || attempt?.state === "queued" ? attempt : null;
+    const progress = !assignment && (attempt?.state === "downloading" || attempt?.state === "queued") ? attempt : null;
     const saved = isLocal(localStatus);
     const failure = materialFailure?.resourceId === peekResource.id ? materialFailure.message : null;
     const failed = localStatus?.status === "failed" || attempt?.state === "failed" || Boolean(failure);
     const unavailable = peekResource.availabilityStatus !== "available";
     const link = peekResource.isExternal || actions.every((action) => action.id === "open-quanta");
     const announcement = event?.changeType === "announcement" || peekResource.resourceType.toLowerCase() === "announcement";
+    const assignmentUnavailable = inspectedAssignment?.courseId != null && assignmentFailures.has(inspectedAssignment.courseId);
+    const assignmentCoverage = assignmentPages.find(page => page.courseId === inspectedAssignment?.courseId)?.coverage;
     const deadline = event?.changeType === "deadline" || (selection?.owner === "calendar" && Boolean(peekResource.dueAt));
     const historical = Boolean(event && selection?.owner === "history");
     const preview = actions.find((action) => action.id === "preview");
@@ -828,7 +863,12 @@ function AppShell() {
     const course = { label: "Course", value: peekResource.courseName ?? "—" };
     const section = peekResource.sectionPath?.length ? peekResource.sectionPath.join(" / ") : formatSectionPath(peekResource);
     const detected = { label: "Detected", value: formatCompact(event?.detectedAt ?? peekResource.firstSeenAt), mono: true };
-    const properties = deadline ? [
+    const properties = assignment ? [
+      course,
+      ...assignmentProperties(assignment, timeZone),
+      ...(!assignmentDue(assignment.observation.due) && (assignment.observation.due.kind !== "unset" || assignment.coverage.stale) && peekResource.dueAt
+        ? [{ label: "Course listing due", value: dueEntry?.label ?? peekResource.dueAt }] : []),
+    ] : deadline ? [
       { label: "Due", value: peekResource.dueAt ?? "Due date unavailable", mono: true },
       { label: "Source", value: "As stored on Quanta" },
       { label: "Local time", value: dueEntry ? `${dueEntry.label}${dueEntry.item.dateKind === "date" ? " (date only)" : ""}` : "—" },
@@ -857,10 +897,13 @@ function AppShell() {
     };
     return {
       title: event?.resourceTitle ?? event?.title ?? peekResource.title,
-      typeLabel: deadline ? "DEADLINE" : historical ? "HISTORICAL EVENT" : announcement ? "ANNOUNCEMENT" : link ? "EXTERNAL LINK" : peekResource.resourceType.toUpperCase() || "FILE",
+      typeLabel: assignment ? "ASSIGNMENT" : deadline ? "DEADLINE" : historical ? "HISTORICAL EVENT" : announcement ? "ANNOUNCEMENT" : link ? "EXTERNAL LINK" : peekResource.resourceType.toUpperCase() || "FILE",
       properties,
       announcement: announcement ? event?.description : null,
-      note: deadline ? "Submission status is not tracked." : null,
+      note: assignmentUnavailable ? "Assignment details unavailable."
+        : assignmentCoverage?.permission === "restricted" ? "Assignment details are restricted."
+        : assignmentCoverage?.coverage === "unsupported" ? "Assignment source is unsupported."
+        : deadline && !assignment ? "Submission status is not tracked." : null,
       banner: failed && !saved && !link && !deadline
         ? { kind: "danger", text: `Download failed: ${attempt?.error || localStatus?.error || failure || "The file could not be saved."}` }
         : unavailable
@@ -887,7 +930,7 @@ function AppShell() {
       menu: [
         ...actions.filter((action) => action !== primary && action !== secondary
           && !(unavailable && !saved && (action.id === "download-open" || action.id === "preview"))),
-        ...(saved && local ? [{
+        ...(!assignment && saved && local ? [{
           id: "reveal",
           label: "Show in folder",
           onSelect: () => void api.revealLocalFile(peekResource.id).catch((err) => notify(String(err), true)),
@@ -896,11 +939,11 @@ function AppShell() {
           id: "copy",
           label: "Copy link",
           onSelect: () =>
-            void copyText(peekResource.sourcePageUrl ?? peekResource.url, "Link copied."),
+            void copyText(inspectedAssignment?.url ?? peekResource.sourcePageUrl ?? peekResource.url, "Link copied."),
         },
       ],
     };
-  }, [selection, scanDetail, peekResource, peekLocal, localLookup, mirror, materialFailure, now, timeZone, destinations, navigate, downloadAndOpen, copyText, handleSync, notify]);
+  }, [selection, scanDetail, peekResource, inspectedAssignment, assignmentByResource, assignmentFailures, assignmentPages, open, peekLocal, localLookup, mirror, materialFailure, now, timeZone, destinations, navigate, downloadAndOpen, copyText, handleSync, notify]);
 
   useEffect(() => {
     paletteReadRequest.current = null;
@@ -1210,7 +1253,7 @@ function AppShell() {
                 {route.view === "calendar" && (
                   <CalendarView
                     headerActions={headerActions} lastScan={sync?.lastSuccessAt ?? null} onLibrary={() => navigate("library")}
-                    due={agendaDue} dueFilter={dueFilter} setDueFilter={setDueFilter} now={now} timeZone={timeZone}
+                    due={agendaWithAssignments} assignmentStatus={assignmentFailures.size ? "Some assignment details could not be loaded." : assignmentByResource.size ? "Assignment details available." : undefined} dueFilter={dueFilter} setDueFilter={setDueFilter} now={now} timeZone={timeZone}
                     onChanged={refresh}
                     courses={courses}
                     resources={resources}
