@@ -2,10 +2,12 @@
 //! Inventory, diffs/events, baseline generations and missing-resource decisions
 //! commit together. Only a committed result permits adapter delivery effects.
 
+use crate::academic::{AcademicDate, AcademicOwner, SubmissionMode, SubmissionStatus};
 use crate::db::{self, ResourceWrite};
-use crate::quanta::discover;
+use crate::quanta::{discover, DiscoveredResource};
 use crate::sync::diff::{self, Detected};
 use rusqlite::OptionalExtension;
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 
 /// Two complete scans must miss a material before it becomes unavailable.
@@ -197,6 +199,109 @@ pub struct ReconcileResult {
     pub missing_ids: Vec<String>,
 }
 
+/// Verified owner held by the caller under the academic authority lock.
+pub struct AssignmentReminderScope<'a> {
+    pub owner: &'a AcademicOwner,
+    pub max_age: chrono::Duration,
+}
+
+struct AssignmentReminder {
+    due: AcademicDate,
+    attempt: Option<i64>,
+    suppress: bool,
+    current: bool,
+}
+
+fn assignment_reminder(
+    conn: &rusqlite::Connection,
+    scope: &AssignmentReminderScope<'_>,
+    resource: &DiscoveredResource,
+    course_id: i64,
+    resource_id: i64,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Option<AssignmentReminder> {
+    use crate::academic::AssignmentFacts;
+
+    let module_id = crate::assignments::module_id(&resource.resource_type, &resource.url)?;
+    let owner = scope.owner;
+    let source_url = format!("{}/mod/assign/view.php?id={module_id}", owner.origin);
+    // Academic storage is optional. Read errors take the original material
+    // reminder path and never turn an otherwise valid material scan into failure.
+    let mut stmt = conn.prepare_cached(
+        "SELECT a.due_value, a.submission_status, a.attempt_number, a.details, a.observed_at, c.last_successful_at, c.coverage
+         FROM academic_assignments a JOIN academic_coverage c
+         ON c.origin=a.origin AND c.owner_id=a.owner_id AND c.course_id=a.course_id AND c.domain='assignments'
+         WHERE a.origin=?1 AND a.owner_id=?2 AND a.course_id=?3 AND a.course_module_id=?4
+         AND a.source_url=?5 AND (a.resource_id=?6 OR a.resource_id IS NULL)
+         AND a.visibility='\"visible\"' AND c.permission='\"permitted\"'
+         AND c.baseline=1 AND c.coverage NOT IN ('\"denied\"', '\"unsupported\"')",
+    ).ok()?;
+    let mut records = stmt
+        .query(rusqlite::params![
+            owner.origin,
+            owner.moodle_user_id,
+            course_id,
+            module_id,
+            source_url,
+            resource_id,
+        ])
+        .ok()?;
+    let row = records.next().ok()??;
+    let due = serde_json::from_str::<AcademicDate>(&row.get::<_, String>(0).ok()?).ok()?;
+    let status = serde_json::from_str::<SubmissionStatus>(&row.get::<_, String>(1).ok()?).ok()?;
+    let attempt = row.get::<_, Option<i64>>(2).ok()?;
+    let details = row
+        .get::<_, Option<String>>(3)
+        .ok()?
+        .map(|json| serde_json::from_str::<AssignmentFacts>(&json))
+        .transpose()
+        .ok()?;
+    let fresh = |raw: String| {
+        chrono::DateTime::parse_from_rfc3339(&raw)
+            .is_ok_and(|time| time <= now && now.signed_duration_since(time) <= scope.max_age)
+    };
+    let current = row.get::<_, String>(6).ok()? == "\"complete\""
+        && fresh(row.get(4).ok()?)
+        && fresh(row.get(5).ok()?);
+    let suppress = current
+        && status == SubmissionStatus::Submitted
+        && details.is_some_and(|details| {
+            details.mode == SubmissionMode::Individual
+                || (details.mode == SubmissionMode::Team
+                    && details.pending_team_confirmations == Some(0))
+        });
+    if records.next().ok()?.is_some() {
+        return None;
+    }
+    Some(AssignmentReminder {
+        due,
+        attempt,
+        suppress,
+        current,
+    })
+}
+
+fn reminder_deadline<'a>(
+    material: Option<&'a str>,
+    observation: Option<&'a AssignmentReminder>,
+) -> Option<&'a str> {
+    let Some(observation) = observation else {
+        return material;
+    };
+    if observation.suppress {
+        return None;
+    }
+    match &observation.due {
+        AcademicDate::Unset if observation.current => None,
+        AcademicDate::Instant(due) | AcademicDate::DateOnly(due)
+            if observation.current || material.is_none() =>
+        {
+            Some(due)
+        }
+        _ => material,
+    }
+}
+
 /// Small production collection-to-commit boundary used by `run_scan` and by
 /// backend regressions driven through loopback HTTP and real SQLite.
 pub fn commit_scan(
@@ -208,6 +313,7 @@ pub fn commit_scan(
     rebaseline: &HashSet<i64>,
     reminder_hours: i64,
     now: &str,
+    assignment_scope: Option<AssignmentReminderScope<'_>>,
 ) -> ReconcileResult {
     let mut result = ReconcileResult::default();
     let mut new_count = 0i64;
@@ -390,48 +496,88 @@ pub fn commit_scan(
     }
 
     if !baseline && result.errors.is_empty() {
-        for r in &discovery.resources {
-            let cid = course_ids.get(&r.course_external_id).copied().unwrap_or(-1);
+        let now_utc = chrono::DateTime::parse_from_rfc3339(now)
+            .map(|instant| instant.with_timezone(&chrono::Utc))
+            .unwrap_or_else(|_| chrono::Utc::now());
+        let window = chrono::Duration::hours(reminder_hours);
+        for resource in &discovery.resources {
+            let cid = course_ids
+                .get(&resource.course_external_id)
+                .copied()
+                .unwrap_or(-1);
             if rebaseline.contains(&cid) || paused.contains(&cid) {
                 continue;
             }
-            if let Some(due) = r.due_at.as_deref() {
-                if let Some(instant) = due_instant(due) {
-                    let now_utc = chrono::Utc::now();
-                    let window = chrono::Duration::hours(reminder_hours);
-                    if instant > now_utc && instant <= now_utc + window {
-                        let key = diff::dedup_key("deadline-reminder", &r.external_id, due);
-                        let exists = match tx.query_row(
-                            "SELECT EXISTS(SELECT 1 FROM change_events WHERE deduplication_key = ?1)",
-                            [&key], |row| row.get::<_, bool>(0),
-                        ) {
-                            Ok(exists) => exists,
-                            Err(error) => {
-                                result.errors.push(format!("reminder dedup read failed: {error}"));
-                                continue;
-                            }
-                        };
-                        if !exists {
-                            let course_id = course_ids.get(&r.course_external_id).copied();
-                            let resource_id = resource_ids.get(r.external_id.as_str()).copied();
-                            match db::insert_event(
-                                &tx,
-                                resource_id,
-                                course_id,
-                                "deadline",
-                                &format!("Deadline approaching: {}", r.title),
-                                Some("An upcoming deadline is within your reminder window."),
-                                &key,
-                                now,
-                            ) {
-                                Ok(true) => updated_count += 1,
-                                Ok(false) => {}
-                                Err(error) => result
-                                    .errors
-                                    .push(format!("deadline reminder failed: {error}")),
-                            }
-                        }
-                    }
+            let resource_id = resource_ids.get(resource.external_id.as_str()).copied();
+            let academic = assignment_scope
+                .as_ref()
+                .zip(resource_id)
+                .and_then(|(scope, id)| {
+                    assignment_reminder(&tx, scope, resource, cid, id, now_utc)
+                });
+            let Some(due) = reminder_deadline(resource.due_at.as_deref(), academic.as_ref()) else {
+                continue;
+            };
+            let Some(instant) = due_instant(due) else {
+                continue;
+            };
+            if instant <= now_utc || instant > now_utc + window {
+                continue;
+            }
+            let legacy = diff::dedup_key("deadline-reminder", &resource.external_id, due);
+            let attempt = academic
+                .as_ref()
+                .and_then(|observation| observation.attempt);
+            let legacy_equivalent =
+                attempt.unwrap_or(0) == 0 && resource.due_at.as_deref() == Some(due);
+            let key = if let Some(scope) = assignment_scope
+                .as_ref()
+                .filter(|_| academic.is_some() && !legacy_equivalent)
+            {
+                let identity = serde_json::to_vec(&(
+                    scope.owner.origin.as_str(),
+                    scope.owner.moodle_user_id,
+                    &resource.external_id,
+                    due,
+                    attempt.unwrap_or(0),
+                ))
+                .expect("scalar reminder identity");
+                format!(
+                    "assignment-deadline-reminder:{:x}",
+                    Sha256::digest(identity)
+                )
+            } else {
+                legacy
+            };
+            let exists = match tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM change_events WHERE deduplication_key = ?1)",
+                [&key],
+                |row| row.get::<_, bool>(0),
+            ) {
+                Ok(exists) => exists,
+                Err(error) => {
+                    result
+                        .errors
+                        .push(format!("reminder dedup read failed: {error}"));
+                    continue;
+                }
+            };
+            if !exists {
+                match db::insert_event(
+                    &tx,
+                    resource_id,
+                    course_ids.get(&resource.course_external_id).copied(),
+                    "deadline",
+                    &format!("Deadline approaching: {}", resource.title),
+                    Some("An upcoming deadline is within your reminder window."),
+                    &key,
+                    now,
+                ) {
+                    Ok(true) => updated_count += 1,
+                    Ok(false) => {}
+                    Err(error) => result
+                        .errors
+                        .push(format!("deadline reminder failed: {error}")),
                 }
             }
         }

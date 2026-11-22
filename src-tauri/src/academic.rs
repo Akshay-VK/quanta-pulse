@@ -53,6 +53,9 @@ impl Authority {
     pub(crate) fn is_generation(&self, generation: &str) -> bool {
         self.context.generation == generation
     }
+    pub(crate) fn reminder_owner(&self, generation: &str) -> Option<&AcademicOwner> {
+        self.check(generation).ok()
+    }
     fn check(&self, generation: &str) -> Result<&AcademicOwner, String> {
         if self.context.generation != generation {
             return Err("Academic session changed".into());
@@ -106,6 +109,8 @@ pub enum Visibility {
 #[serde(tag = "kind", content = "value", rename_all = "camelCase")]
 pub enum AcademicDate {
     Unknown,
+    Unsupported,
+    Unset,
     Instant(String),
     DateOnly(String),
     Ambiguous(String),
@@ -132,6 +137,53 @@ pub struct AssignmentObservation {
     pub calendar_event_id: Option<i64>,
     pub submission_status: SubmissionStatus,
     pub attempt_number: Option<i64>,
+    #[serde(default)]
+    pub details: Option<AssignmentFacts>,
+}
+
+/// Source values survive independently of the projected student deadline.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssignmentFacts {
+    pub base_due: AcademicDate,
+    pub effective_due: AcademicDate,
+    pub opening: AcademicDate,
+    pub extension: AcademicDate,
+    pub cut_off: AcademicDate,
+    pub grading_due: AcademicDate,
+    pub due_provenance: DueProvenance,
+    pub mode: SubmissionMode,
+    pub pending_team_confirmations: Option<u32>,
+    pub time_limit_seconds: Option<u32>,
+    pub description: Option<String>,
+    pub attachments: Vec<AssignmentAttachment>,
+    pub grading_status: Option<String>,
+    pub released_feedback: Option<String>,
+}
+
+/// A reference linked from the assignment introduction.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssignmentAttachment {
+    pub title: String,
+    pub url: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DueProvenance {
+    Unknown,
+    Base,
+    Effective,
+    Extension,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SubmissionMode {
+    Unknown,
+    Individual,
+    Team,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -141,6 +193,8 @@ pub enum SubmissionStatus {
     Draft,
     Submitted,
     Reopened,
+    NotRequired,
+    NotYetOpen,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -341,21 +395,18 @@ pub fn commit(
     }
     if let AcademicBatch::Assignments(rows) = &mut batch {
         for row in rows {
-            match &mut row.due {
-                AcademicDate::Instant(value) => {
-                    *value = chrono::DateTime::parse_from_rfc3339(value)
-                        .map_err(|_| "Invalid academic instant")?
-                        .with_timezone(&chrono::Utc)
-                        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+            normalize_date(&mut row.due)?;
+            if let Some(details) = &mut row.details {
+                for date in [
+                    &mut details.base_due,
+                    &mut details.effective_due,
+                    &mut details.opening,
+                    &mut details.extension,
+                    &mut details.cut_off,
+                    &mut details.grading_due,
+                ] {
+                    normalize_date(date)?;
                 }
-                AcademicDate::DateOnly(value) => {
-                    let date = chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
-                        .map_err(|_| "Invalid academic date")?;
-                    if date.format("%Y-%m-%d").to_string() != *value {
-                        return Err("Invalid academic date".into());
-                    }
-                }
-                _ => {}
             }
             if row.source.visibility != Visibility::Visible {
                 row.due = AcademicDate::Unknown;
@@ -363,6 +414,7 @@ pub fn commit(
                 row.due_display = None;
                 row.submission_display = None;
                 row.attempt_number = None;
+                row.details = None;
             }
         }
     }
@@ -401,7 +453,7 @@ pub fn commit(
         match &batch {
             AcademicBatch::Assignments(rows) => {
                 for r in rows {
-                    tx.execute("INSERT INTO academic_assignments VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)", params![owner.origin,owner.moodle_user_id,course_id,r.source.source_id,r.source.source_url,r.source.observed_at,encoded(&r.source.visibility),r.title,r.course_module_id,r.activity_instance_id,r.resource_id,encoded(&r.due),encoded(&r.submission_status),r.attempt_number,r.due_display,r.submission_display,r.calendar_event_id]).map_err(storage_error)?;
+                    tx.execute("INSERT INTO academic_assignments VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)", params![owner.origin,owner.moodle_user_id,course_id,r.source.source_id,r.source.source_url,r.source.observed_at,encoded(&r.source.visibility),r.title,r.course_module_id,r.activity_instance_id,r.resource_id,encoded(&r.due),encoded(&r.submission_status),r.attempt_number,r.due_display,r.submission_display,r.calendar_event_id,r.details.as_ref().map(encoded)]).map_err(storage_error)?;
                 }
             }
             AcademicBatch::Grades(rows) => {
@@ -431,7 +483,7 @@ pub fn commit(
         // Explicit permission loss removes values, retaining only source identity
         // and baseline. A later failure/empty report cannot resurrect them.
         let sql = match domain {
-            "assignments" => "UPDATE academic_assignments SET visibility='\"hidden\"',due_value='{\"kind\":\"unknown\"}',submission_status='\"unknown\"',attempt_number=NULL,due_display=NULL,submission_display=NULL WHERE origin=?1 AND owner_id=?2 AND course_id=?3",
+            "assignments" => "UPDATE academic_assignments SET visibility='\"hidden\"',due_value='{\"kind\":\"unknown\"}',submission_status='\"unknown\"',attempt_number=NULL,due_display=NULL,submission_display=NULL,details=NULL WHERE origin=?1 AND owner_id=?2 AND course_id=?3",
             "grades" => "UPDATE academic_grades SET visibility='\"hidden\"',display_value=NULL,numeric_value=NULL,range_display=NULL,weight_display=NULL,feedback=NULL WHERE origin=?1 AND owner_id=?2 AND course_id=?3",
             _ => "UPDATE academic_attendance SET visibility='\"hidden\"',status_display=NULL,points_display=NULL,maximum_display=NULL,summary_display=NULL WHERE origin=?1 AND owner_id=?2 AND course_id=?3",
         };
@@ -478,6 +530,13 @@ fn scope_fingerprint(
                         continue;
                     }
                     let value: rusqlite::types::Value = row.get(column)?;
+                    // A revision-9 assignment with no new facts keeps its fingerprint.
+                    if domain == "assignments"
+                        && column == 17
+                        && value == rusqlite::types::Value::Null
+                    {
+                        continue;
+                    }
                     values.push(format!("{value:?}"));
                 }
                 Ok(values)
@@ -559,6 +618,7 @@ pub fn assignments(
                         due_display: r.get(14)?,
                         submission_display: r.get(15)?,
                         calendar_event_id: r.get(16)?,
+                        details: r.get::<_, Option<String>>(17)?.map(decoded).transpose()?,
                     })
                 },
             )
@@ -681,6 +741,7 @@ impl AssignmentObservation {
             calendar_event_id: None,
             submission_status: SubmissionStatus::Draft,
             attempt_number: Some(1),
+            details: None,
         }
     }
 }
@@ -739,4 +800,24 @@ pub async fn read_student_report(
         state.sync.set_auth_state("expired");
     }
     result
+}
+
+fn normalize_date(date: &mut AcademicDate) -> Result<(), String> {
+    match date {
+        AcademicDate::Instant(value) => {
+            *value = chrono::DateTime::parse_from_rfc3339(value)
+                .map_err(|_| "Invalid academic instant")?
+                .with_timezone(&chrono::Utc)
+                .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        }
+        AcademicDate::DateOnly(value) => {
+            let date = chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
+                .map_err(|_| "Invalid academic date")?;
+            if date.to_string() != *value {
+                return Err("Invalid academic date".into());
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }

@@ -103,6 +103,7 @@ fn failed_resource_statement_rolls_back() {
         &rebaseline,
         24,
         &db::now_rfc3339(),
+        None,
     );
     assert!(!result.committed, "scan must not commit");
     assert!(!result.errors.is_empty(), "must report failure");
@@ -153,6 +154,7 @@ fn failed_event_statement_rolls_back() {
         &HashSet::new(),
         24,
         &db::now_rfc3339(),
+        None,
     );
     assert!(!result.committed);
     assert!(!result.errors.is_empty());
@@ -262,6 +264,7 @@ fn commit_failure_via_deferred_fk_preserves_state() {
         &HashSet::from([10i64]),
         24,
         &db::now_rfc3339(),
+        None,
     );
     assert!(!result.committed, "commit must fail");
     assert!(!result.errors.is_empty());
@@ -318,6 +321,7 @@ fn complete_success_commits_and_preserves_quiet_baseline() {
         &HashSet::new(),
         24,
         &db::now_rfc3339(),
+        None,
     );
     assert!(result.committed, "{:?}", result.errors);
     assert_eq!(result.new, 0);
@@ -369,6 +373,7 @@ fn reset_during_collection_retains_newer_generation() {
         &HashSet::new(),
         24,
         &db::now_rfc3339(),
+        None,
     );
     assert!(result.committed, "{:?}", result.errors);
     // baseline should NOT be established because generation changed

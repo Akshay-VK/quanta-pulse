@@ -113,6 +113,7 @@ fn commit(
         &HashSet::new(),
         24,
         "2026-11-21T12:00:00Z",
+        None,
     )
 }
 
@@ -400,6 +401,7 @@ fn empty_and_failed_detail_containers_survive_without_consuming_course_reset() {
             &HashSet::from([cid]),
             24,
             "2026-11-21T12:00:00Z",
+            None,
         );
         assert!(result.committed, "{:?}", result.errors);
         assert_eq!((result.new, result.updated), (0, 0));
@@ -508,6 +510,7 @@ fn rejected_deadline_reminder_does_not_report_committed_success() {
         &HashSet::new(),
         1_000_000,
         "2026-11-21T12:00:00Z",
+        None,
     );
     assert!(
         !result.committed,

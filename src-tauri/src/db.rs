@@ -28,7 +28,7 @@ pub const LAST_APP_VERSION_KEY: &str = "last_app_version";
 pub const SCHEMA_REVISION_KEY: &str = "schema_revision";
 
 /// The schema revision produced by the current `migrate` implementation.
-pub const CURRENT_SCHEMA_REVISION: i64 = 9;
+pub const CURRENT_SCHEMA_REVISION: i64 = 10;
 
 /// How many pre-migration backups to keep.
 const BACKUP_KEEP: usize = 3;
@@ -354,6 +354,14 @@ fn migrate_inner(conn: &Connection) -> rusqlite::Result<()> {
         conn.execute_batch(include_str!("../migrations/0008_scan_failure_notifications.sql"))?;
     }
     conn.execute_batch(include_str!("../migrations/0009_academic.sql"))?;
+    let has_assignment_details: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('academic_assignments') WHERE name='details')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_assignment_details {
+        conn.execute_batch(include_str!("../migrations/0010_assignment_details.sql"))?;
+    }
     Ok(())
 }
 
