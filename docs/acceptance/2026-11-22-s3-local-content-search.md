@@ -82,15 +82,15 @@ The [palette screenshot](assets/2026-11-22/s3-saved-text.png) shows synthetic me
 
 ## Verification
 
-Validation ran on assembled source tree `12c2a71`, including integration `50e0377`, using synthetic fixtures throughout. The Windows commands used the documented Common Controls manifest flags with `CARGO_INCREMENTAL=0` and a distinct `%TEMP%\quanta-s3-distinct-target`. Native WebView and macOS extraction are unverified.
+Validation ran on assembled source tree `586550a`, including integration `b7f9c52` and its private assignment details, using synthetic fixtures throughout. The Windows commands used the documented Common Controls manifest flags with `CARGO_INCREMENTAL=0` and a distinct `%TEMP%\quanta-s3-distinct-target`. Native WebView and macOS extraction are unverified.
 
 | Command | Result | Local log |
 | --- | --- | --- |
-| `npm run lint` | Passed | `/tmp/quanta-s3-lint-assembled.log` |
-| `VITEST_MAX_FORKS=4 VITEST_MIN_FORKS=1 npm test` | 931 passed across 94 files | `/tmp/quanta-s3-tests-assembled.log` |
-| `npm run build` | Passed with the existing Vite chunk-size advisory | `/tmp/quanta-s3-build-assembled.log` |
-| `cargo check --all-targets --target x86_64-pc-windows-msvc` | Passed | `/tmp/quanta-s3-win-check-assembled.log` |
-| `cargo test --locked --lib --target x86_64-pc-windows-msvc` | 322 passed, 2 ignored | `/tmp/quanta-s3-win-tests-assembled.log` |
+| `npm run lint` | Passed | `/tmp/quanta-s3-lint-handoff.log` |
+| `VITEST_MAX_FORKS=4 VITEST_MIN_FORKS=1 npm test` | 934 passed across 95 files | `/tmp/quanta-s3-tests-handoff.log` |
+| `npm run build` | Passed with the existing Vite chunk-size advisory | `/tmp/quanta-s3-build-handoff.log` |
+| `cargo check --all-targets --target x86_64-pc-windows-msvc` | Passed | `/tmp/quanta-s3-win-check-handoff.log` |
+| `cargo test --locked --lib --target x86_64-pc-windows-msvc` | 325 passed, 2 ignored | `/tmp/quanta-s3-win-tests-handoff.log` |
 
 The App regression failed before the saved-text option existed, then passed with shared filtering, relevance, escaped snippets and fallback. The bridge test checks literal argument forwarding and command names. Native regressions check atomic cancellation, replacement, manual deletion, cache eviction, explicit local removal, rebuild, invalid and oversized text, PDF metadata fallback, and exclusion of an archived file, ambiguous cached variant and synthetic private grade. They check that material events and metadata remain independent of rebuild.
 
