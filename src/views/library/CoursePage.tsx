@@ -60,6 +60,7 @@ import { Banner } from "../../components/ui/Banner";
 import { Skeleton } from "../../components/ui/Skeleton";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import TreeRow, { type FlatRow } from "./TreeRow";
+import { CourseAttendance } from "./CourseAttendance";
 import { CourseGrades } from "./CourseGrades";
 import { courseHomeUrl } from "./courseUrl";
 import CourseRenameDialog from "./CourseRenameDialog";
@@ -191,8 +192,10 @@ export default function CoursePage({
   const [confirmRebaseline, setConfirmRebaseline] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
 
-  const [tab, setTab] = useSessionValue<"contents" | "activity" | "grades">(`course:${course.id}:tab`, "contents");
+  const [tab, setTab] = useSessionValue<"contents" | "activity" | "grades" | "attendance">(`course:${course.id}:tab`, "contents");
   const gradePanelId = useId();
+  const attendancePanelId = useId();
+  const academicPanelId = tab === "grades" ? gradePanelId : tab === "attendance" ? attendancePanelId : undefined;
   const previousTab = useRef(tab);
   useEffect(() => {
     if (previousTab.current !== tab) details?.clear();
@@ -956,7 +959,7 @@ export default function CoursePage({
   );
 
   const visibleCount = fileRows.length;
-  const footer = tab === "grades" ? null : tab === "activity" ? `Recorded changes in ${code}`
+  const footer = academicPanelId ? null : tab === "activity" ? `Recorded changes in ${code}`
     : inventoryError && total === 0 ? "Loading failed"
     : total === 0 ? "0 materials"
     : searching ? `${shown} ${shown === 1 ? "match" : "matches"}${shown > 0 ? ` in ${code}` : ""}`
@@ -983,9 +986,10 @@ export default function CoursePage({
             { id: "contents", label: "Materials" },
             { id: "activity", label: "Activity" },
             { id: "grades", label: "Grades", panelId: gradePanelId },
+            { id: "attendance", label: "Attendance", panelId: attendancePanelId },
           ]}
           value={tab}
-          onChange={(id) => setTab(id as "contents" | "activity" | "grades")}
+          onChange={(id) => setTab(id as "contents" | "activity" | "grades" | "attendance")}
           ariaLabel="Course views"
         />}
         actions={<>
@@ -1001,9 +1005,9 @@ export default function CoursePage({
         </>}
       />
       <div className="library-panel-scroll course-panel-scroll" ref={mainScroll}
-        role={tab === "grades" ? "tabpanel" : undefined}
-        id={tab === "grades" ? gradePanelId : undefined}
-        aria-labelledby={tab === "grades" ? `${gradePanelId}-tab` : undefined}>
+        role={academicPanelId ? "tabpanel" : undefined}
+        id={academicPanelId}
+        aria-labelledby={academicPanelId ? `${academicPanelId}-tab` : undefined}>
       {tab === "contents" && (status || (inventoryError && total > 0) || (inventoryPending && total > 0)) && (
         <Banner kind={inventoryError ? "error" : "info"} action={inventoryError ? { label: "Retry", onClick: () => void onChanged() } : undefined}>
           {status ?? (inventoryError ? `Inventory refresh failed: ${inventoryError}. Retained materials remain inspectable; new changes are blocked.` : "Inventory unavailable or refreshing; new changes are blocked.")}
@@ -1015,7 +1019,9 @@ export default function CoursePage({
           {loadError}
         </Banner>
       )}
-      {tab === "grades" ? (
+      {tab === "attendance" ? (
+        <CourseAttendance key={course.id} courseId={course.id} onOpen={onOpen} timeZone={timeZone} />
+      ) : tab === "grades" ? (
         <CourseGrades course={course} onOpen={onOpen} timeZone={timeZone} />
       ) : tab === "contents" && (items === null || (inventoryPending && total === 0)) && !inventoryError ? (
         loading ? <Skeleton rows={8} /> : null

@@ -1,6 +1,7 @@
 import { ExternalLink, RotateCw } from "lucide-react";
 import { Button } from "../../components/ui/Button";
-import { useGradeReport } from "../../hooks/useGradeReport";
+import { useLocalAcademicReport } from "../../hooks/useLocalAcademicReport";
+import { api } from "../../lib/api";
 import { resolveTimezone } from "../../lib/agenda";
 import { gradeGroups, gradeReportUrl, gradeValue } from "../../lib/grades";
 import type { AcademicCoverage, Course, GradeObservation } from "../../lib/types";
@@ -51,7 +52,7 @@ export function CourseGrades({ course, onOpen, timeZone }: {
   onOpen: (url: string) => void;
   timeZone?: string;
 }) {
-  const { page, status, reload } = useGradeReport(course.id);
+  const { page, status, reload } = useLocalAcademicReport(course.id, api.academicGrades);
   const coverage = page?.coverage;
   const reportUrl = gradeReportUrl(course.externalCourseId);
   const records = coverage?.permission === "permitted" && coverage.coverage !== "unsupported" ? page?.records ?? [] : [];

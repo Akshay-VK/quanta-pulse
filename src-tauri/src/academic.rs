@@ -254,6 +254,62 @@ pub struct AttendanceObservation {
     pub points_display: Option<String>,
     pub maximum_display: Option<String>,
     pub summary_display: Option<String>,
+    /// Scoped student report facts. Legacy A0 observations have no details.
+    #[serde(default)]
+    pub details: Option<AttendanceReportDetails>,
+}
+
+/// One observed page of a verified activity, group and date filter.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttendanceReportDetails {
+    pub title: String,
+    pub group_id: Option<i64>,
+    pub group_display: Option<String>,
+    pub range: AttendanceRange,
+    pub from: Option<String>,
+    pub through: Option<String>,
+    pub page: u32,
+    pub total_pages: u32,
+    pub complete: bool,
+    pub summary_label: Option<String>,
+    pub sessions: Vec<AttendanceSession>,
+}
+
+/// The source's date filter. Only an explicit all-dates filter uses `All`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AttendanceRange {
+    All,
+    Month,
+    Week,
+    Custom,
+}
+
+/// Visible text and state from a single session row.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttendanceSession {
+    pub session_id: Option<i64>,
+    pub date_display: String,
+    pub description: Option<String>,
+    pub state: AttendanceSessionState,
+    pub status_display: Option<String>,
+    pub points_display: Option<String>,
+    pub maximum_display: Option<String>,
+    pub remarks: Option<String>,
+}
+
+/// Only source-confirmed absence becomes `Absent`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AttendanceSessionState {
+    Recorded,
+    Absent,
+    Unrecorded,
+    Future,
+    EnrollmentBoundary,
+    Unknown,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -364,7 +420,33 @@ pub fn commit(
     generation: &str,
     course_id: i64,
     coverage: Coverage,
+    batch: AcademicBatch,
+) -> Result<AcademicCommit, String> {
+    commit_batch(state, generation, course_id, coverage, batch, None)
+}
+
+/// Reconcile just the observed scope of one Attendance activity.
+pub(crate) fn commit_attendance_report(
+    state: &AppState,
+    generation: &str,
+    course_id: i64,
+    course_module_id: i64,
+    coverage: Coverage,
+    report: Option<AttendanceObservation>,
+) -> Result<AcademicCommit, String> {
+    commit_batch(
+        state, generation, course_id, coverage,
+        AcademicBatch::Attendance(report.into_iter().collect()), Some(course_module_id),
+    )
+}
+
+fn commit_batch(
+    state: &AppState,
+    generation: &str,
+    course_id: i64,
+    coverage: Coverage,
     mut batch: AcademicBatch,
+    attendance_module: Option<i64>,
 ) -> Result<AcademicCommit, String> {
     let authority = state.sync.academic.lock().unwrap();
     let owner = authority.check(generation)?;
@@ -409,6 +491,7 @@ pub fn commit(
             || url.origin().ascii_serialization() != owner.origin
             || !url.username().is_empty()
             || url.password().is_some()
+            || (domain == "attendance" && url.fragment().is_some())
             || source.source_id.is_empty()
             || !ids.insert(&source.source_id)
             || chrono::DateTime::parse_from_rfc3339(&source.observed_at).is_err()
@@ -469,58 +552,68 @@ pub fn commit(
     let tx = conn.transaction().map_err(storage_error)?;
     let prior: Option<(bool, Option<String>)> = tx.query_row("SELECT baseline, fingerprint FROM academic_coverage WHERE origin=?1 AND owner_id=?2 AND course_id=?3 AND domain=?4", params![owner.origin, owner.moodle_user_id, course_id, domain], |r| Ok((r.get(0)?,r.get(1)?))).optional().map_err(storage_error)?;
     let complete = coverage == Coverage::Complete;
-    if complete {
-        let table = match &batch {
-            AcademicBatch::Assignments(_) => "academic_assignments",
-            AcademicBatch::Grades(_) => "academic_grades",
-            AcademicBatch::Attendance(_) => "academic_attendance",
-        };
-        // A complete assignment inventory is a snapshot. Grade omission alone
-        // is not visibility loss; attendance may contain separate report scopes.
-        if matches!(batch, AcademicBatch::Assignments(_)) {
+    if let AcademicBatch::Assignments(rows) = &batch {
+        if complete {
             tx.execute(
-                &format!("DELETE FROM {table} WHERE origin=?1 AND owner_id=?2 AND course_id=?3"),
+                "DELETE FROM academic_assignments WHERE origin=?1 AND owner_id=?2 AND course_id=?3",
                 params![owner.origin, owner.moodle_user_id, course_id],
-            )
-            .map_err(storage_error)?;
-        }
-        match &batch {
-            AcademicBatch::Assignments(rows) => {
-                for r in rows {
-                    tx.execute("INSERT INTO academic_assignments VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)", params![owner.origin,owner.moodle_user_id,course_id,r.source.source_id,r.source.source_url,r.source.observed_at,encoded(&r.source.visibility),r.title,r.course_module_id,r.activity_instance_id,r.resource_id,encoded(&r.due),encoded(&r.submission_status),r.attempt_number,r.due_display,r.submission_display,r.calendar_event_id,r.details.as_ref().map(encoded)]).map_err(storage_error)?;
-                }
-            }
-            AcademicBatch::Grades(_) => {}
-            AcademicBatch::Attendance(rows) => {
-                for r in rows {
-                    tx.execute("INSERT INTO academic_attendance VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15) ON CONFLICT(origin,owner_id,course_id,source_id) DO UPDATE SET source_url=excluded.source_url, observed_at=excluded.observed_at, visibility=excluded.visibility, activity_instance_id=excluded.activity_instance_id, session_id=excluded.session_id, scope_display=excluded.scope_display, status_display=excluded.status_display, points_display=excluded.points_display, maximum_display=excluded.maximum_display, summary_display=excluded.summary_display, course_module_id=excluded.course_module_id", params![owner.origin,owner.moodle_user_id,course_id,r.source.source_id,r.source.source_url,r.source.observed_at,encoded(&r.source.visibility),r.activity_instance_id,r.session_id,r.scope_display,r.status_display,r.points_display,r.maximum_display,r.summary_display,r.course_module_id]).map_err(storage_error)?;
-                }
+            ).map_err(storage_error)?;
+            for r in rows {
+                tx.execute("INSERT INTO academic_assignments VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)", params![owner.origin,owner.moodle_user_id,course_id,r.source.source_id,r.source.source_url,r.source.observed_at,encoded(&r.source.visibility),r.title,r.course_module_id,r.activity_instance_id,r.resource_id,encoded(&r.due),encoded(&r.submission_status),r.attempt_number,r.due_display,r.submission_display,r.calendar_event_id,r.details.as_ref().map(encoded)]).map_err(storage_error)?;
             }
         }
     }
     if let AcademicBatch::Grades(rows) = &batch {
         write_grades(&tx, owner, course_id, coverage, rows).map_err(storage_error)?;
     }
-    if domain == "attendance" {
-        tx.execute("UPDATE academic_attendance SET status_display=NULL,points_display=NULL,maximum_display=NULL,summary_display=NULL WHERE origin=?1 AND owner_id=?2 AND course_id=?3 AND visibility!='\"visible\"'",params![owner.origin,owner.moodle_user_id,course_id]).map_err(storage_error)?;
+    let mut permission = if complete { AcademicPermission::Permitted } else { AcademicPermission::Unknown };
+    if let AcademicBatch::Attendance(rows) = &batch {
+        if complete || (attendance_module.is_some() && coverage == Coverage::Partial && !rows.is_empty()) {
+            write_attendance(&tx, owner, course_id, rows).map_err(storage_error)?;
+            permission = AcademicPermission::Permitted;
+        }
     }
     if coverage == Coverage::Denied {
-        // Explicit permission loss removes values, retaining only source identity
-        // and baseline. A later failure/empty report cannot resurrect them.
-        let sql = match domain {
-            "assignments" => "UPDATE academic_assignments SET visibility='\"hidden\"',due_value='{\"kind\":\"unknown\"}',submission_status='\"unknown\"',attempt_number=NULL,due_display=NULL,submission_display=NULL,details=NULL WHERE origin=?1 AND owner_id=?2 AND course_id=?3",
-            "grades" => "UPDATE academic_grades SET visibility='\"hidden\"',display_value=NULL,numeric_value=NULL,range_display=NULL,weight_display=NULL,feedback=NULL,details=NULL WHERE origin=?1 AND owner_id=?2 AND course_id=?3",
-            _ => "UPDATE academic_attendance SET visibility='\"hidden\"',status_display=NULL,points_display=NULL,maximum_display=NULL,summary_display=NULL WHERE origin=?1 AND owner_id=?2 AND course_id=?3",
-        };
-        tx.execute(sql, params![owner.origin, owner.moodle_user_id, course_id])
-            .map_err(storage_error)?;
+        permission = AcademicPermission::Restricted;
+        if let Some(module) = attendance_module {
+            // Report denial applies to this module's saved scopes only.
+            let source = format!("{}/mod/attendance/view.php?id={module}", owner.origin);
+            tx.execute(
+                "DELETE FROM academic_attendance WHERE origin=?1 AND owner_id=?2 AND course_id=?3
+                 AND (course_module_id=?4 OR source_url=?5)",
+                params![owner.origin, owner.moodle_user_id, course_id, module, source],
+            ).map_err(storage_error)?;
+            let has_other_reports: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM academic_attendance WHERE origin=?1 AND owner_id=?2
+                 AND course_id=?3 AND details IS NOT NULL AND visibility='\"visible\"')",
+                params![owner.origin, owner.moodle_user_id, course_id],
+                |row| row.get(0),
+            ).map_err(storage_error)?;
+            if has_other_reports {
+                permission = AcademicPermission::Permitted;
+            }
+        } else {
+            // Explicit domain permission loss removes the values and retains the baseline.
+            let sql = match domain {
+                "assignments" => "UPDATE academic_assignments SET visibility='\"hidden\"',due_value='{\"kind\":\"unknown\"}',submission_status='\"unknown\"',attempt_number=NULL,due_display=NULL,submission_display=NULL,details=NULL WHERE origin=?1 AND owner_id=?2 AND course_id=?3",
+                "grades" => "UPDATE academic_grades SET visibility='\"hidden\"',display_value=NULL,numeric_value=NULL,range_display=NULL,weight_display=NULL,feedback=NULL,details=NULL WHERE origin=?1 AND owner_id=?2 AND course_id=?3",
+                _ => "UPDATE academic_attendance SET visibility='\"hidden\"',status_display=NULL,points_display=NULL,maximum_display=NULL,summary_display=NULL,details=NULL WHERE origin=?1 AND owner_id=?2 AND course_id=?3",
+            };
+            tx.execute(sql, params![owner.origin, owner.moodle_user_id, course_id])
+                .map_err(storage_error)?;
+        }
     }
-    let fingerprint = scope_fingerprint(&tx, owner, course_id, domain).map_err(storage_error)?;
+    // A scoped report is a snapshot and never produces attendance changes.
+    // Keep the legacy fingerprint independent of the scoped reports.
+    let fingerprint = if attendance_module.is_none() {
+        Some(scope_fingerprint(&tx, owner, course_id, domain).map_err(storage_error)?)
+    } else {
+        None
+    };
     let changed = complete
-        && prior
-            .as_ref()
-            .is_some_and(|(baseline, old)| *baseline && old.as_ref() != Some(&fingerprint));
-    tx.execute("INSERT INTO academic_coverage(origin,owner_id,course_id,domain,coverage,observed_at,last_successful_at,baseline,fingerprint,permission) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) ON CONFLICT(origin,owner_id,course_id,domain) DO UPDATE SET coverage=excluded.coverage,observed_at=excluded.observed_at,last_successful_at=COALESCE(excluded.last_successful_at,academic_coverage.last_successful_at),baseline=MAX(academic_coverage.baseline,excluded.baseline),fingerprint=COALESCE(excluded.fingerprint,academic_coverage.fingerprint),permission=CASE WHEN excluded.permission='\"unknown\"' THEN academic_coverage.permission ELSE excluded.permission END", params![owner.origin,owner.moodle_user_id,course_id,domain,encoded(&coverage),now,complete.then_some(&now),complete,Some(fingerprint),encoded(&if coverage == Coverage::Denied {AcademicPermission::Restricted} else if complete {AcademicPermission::Permitted} else {AcademicPermission::Unknown})]).map_err(storage_error)?;
+        && attendance_module.is_none()
+        && prior.as_ref().is_some_and(|(baseline, old)| *baseline && old != &fingerprint);
+    tx.execute("INSERT INTO academic_coverage(origin,owner_id,course_id,domain,coverage,observed_at,last_successful_at,baseline,fingerprint,permission) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) ON CONFLICT(origin,owner_id,course_id,domain) DO UPDATE SET coverage=excluded.coverage,observed_at=excluded.observed_at,last_successful_at=COALESCE(excluded.last_successful_at,academic_coverage.last_successful_at),baseline=MAX(academic_coverage.baseline,excluded.baseline),fingerprint=COALESCE(excluded.fingerprint,academic_coverage.fingerprint),permission=CASE WHEN excluded.permission='\"unknown\"' THEN academic_coverage.permission ELSE excluded.permission END", params![owner.origin,owner.moodle_user_id,course_id,domain,encoded(&coverage),now,complete.then_some(&now),complete,fingerprint,encoded(&permission)]).map_err(storage_error)?;
     tx.commit().map_err(storage_error)?;
     Ok(AcademicCommit {
         generation: generation.into(),
@@ -573,6 +666,44 @@ fn write_grades(
     Ok(())
 }
 
+fn write_attendance(
+    tx: &rusqlite::Transaction<'_>,
+    owner: &AcademicOwner,
+    course_id: i64,
+    rows: &[AttendanceObservation],
+) -> rusqlite::Result<()> {
+    // A truncated or paged read can establish a usable partial snapshot, but a
+    // previous complete observation of that exact scope is the better evidence.
+    let mut stmt = tx.prepare_cached(
+        "INSERT INTO academic_attendance
+         (origin,owner_id,course_id,source_id,source_url,observed_at,visibility,activity_instance_id,
+          session_id,scope_display,status_display,points_display,maximum_display,summary_display,
+          course_module_id,details)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)
+         ON CONFLICT(origin,owner_id,course_id,source_id) DO UPDATE SET
+          source_url=excluded.source_url,observed_at=excluded.observed_at,visibility=excluded.visibility,
+          activity_instance_id=excluded.activity_instance_id,session_id=excluded.session_id,
+          scope_display=excluded.scope_display,status_display=excluded.status_display,
+          points_display=excluded.points_display,maximum_display=excluded.maximum_display,
+          summary_display=excluded.summary_display,course_module_id=excluded.course_module_id,
+          details=excluded.details
+         WHERE COALESCE(json_extract(excluded.details,'$.complete'),1)
+            OR NOT COALESCE(json_extract(academic_attendance.details,'$.complete'),0)",
+    )?;
+    for r in rows {
+        let visible = r.source.visibility == Visibility::Visible;
+        let details = r.details.as_ref().filter(|_| visible).map(encoded);
+        stmt.execute(params![
+            owner.origin, owner.moodle_user_id, course_id, r.source.source_id, r.source.source_url,
+            r.source.observed_at, encoded(&r.source.visibility), r.activity_instance_id, r.session_id,
+            r.scope_display, r.status_display.as_ref().filter(|_| visible),
+            r.points_display.as_ref().filter(|_| visible), r.maximum_display.as_ref().filter(|_| visible),
+            r.summary_display.as_ref().filter(|_| visible), r.course_module_id, details,
+        ])?;
+    }
+    Ok(())
+}
+
 fn scope_fingerprint(
     conn: &rusqlite::Connection,
     owner: &AcademicOwner,
@@ -584,8 +715,9 @@ fn scope_fingerprint(
         "grades" => "academic_grades",
         _ => "academic_attendance",
     };
+    let legacy = if domain == "attendance" { " AND details IS NULL" } else { "" };
     let mut stmt = conn.prepare(&format!(
-        "SELECT * FROM {table} WHERE origin=?1 AND owner_id=?2 AND course_id=?3 ORDER BY source_id"
+        "SELECT * FROM {table} WHERE origin=?1 AND owner_id=?2 AND course_id=?3{legacy} ORDER BY source_id"
     ))?;
     let count = stmt.column_count();
     let rows = stmt
@@ -599,7 +731,7 @@ fn scope_fingerprint(
                     }
                     let value: rusqlite::types::Value = row.get(column)?;
                     // Older rows with no new facts keep their fingerprints.
-                    if ((domain == "assignments" && column == 17) || (domain == "grades" && column == 16))
+                    if ((domain == "assignments" && column == 17) || (domain == "grades" && column == 16) || (domain == "attendance" && column == 15))
                         && value == rusqlite::types::Value::Null
                     {
                         continue;
@@ -755,11 +887,15 @@ pub fn attendance(
     let owner = authority.check(generation)?;
     let conn = state.conn();
     let coverage = session_coverage(state, &conn, owner, course_id, "attendance")?;
-    let records = if visible(&coverage) {
-        let mut stmt = conn.prepare("SELECT * FROM academic_attendance WHERE origin=?1 AND owner_id=?2 AND course_id=?3 ORDER BY source_id").map_err(storage_error)?;
+    let records = if coverage.as_ref().is_some_and(|c| c.permission == AcademicPermission::Permitted) {
+        let legacy_visible = visible(&coverage);
+        let mut stmt = conn.prepare(
+            "SELECT * FROM academic_attendance WHERE origin=?1 AND owner_id=?2 AND course_id=?3
+             AND (details IS NOT NULL OR ?4) ORDER BY source_id",
+        ).map_err(storage_error)?;
         let rows = stmt
             .query_map(
-                params![owner.origin, owner.moodle_user_id, course_id],
+                params![owner.origin, owner.moodle_user_id, course_id, legacy_visible],
                 |r| {
                     Ok(AttendanceObservation {
                         source: source(r)?,
@@ -771,6 +907,7 @@ pub fn attendance(
                         maximum_display: r.get(12)?,
                         summary_display: r.get(13)?,
                         course_module_id: r.get(14)?,
+                        details: r.get::<_, Option<String>>(15)?.map(decoded).transpose()?,
                     })
                 },
             )

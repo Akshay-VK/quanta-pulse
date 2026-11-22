@@ -673,6 +673,7 @@ async fn attendance_scopes_dates_hidden_grades_and_restart_keep_typed_private_pa
         points_display: Some("2".into()),
         maximum_display: Some("3".into()),
         summary_display: Some("Source points 2/3; partial month".into()),
+        details: None,
     };
     assert!(
         !commit(
@@ -1081,6 +1082,10 @@ async fn absent_unverified_identity_and_failed_account_change_never_unlock_old_p
 }
 
 fn delayed_student_report() -> (ReportServer, mpsc::Sender<()>) {
+    delayed_student_report_with_body("<html>Synthetic delayed A grade</html>")
+}
+
+fn delayed_student_report_with_body(body: &'static str) -> (ReportServer, mpsc::Sender<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     let (send, requests) = mpsc::channel();
@@ -1101,11 +1106,7 @@ fn delayed_student_report() -> (ReportServer, mpsc::Sender<()>) {
             if index == 1 {
                 gate.recv_timeout(Duration::from_secs(15)).unwrap();
             }
-            let body = if index == 0 {
-                VERIFIED_PAGE
-            } else {
-                "<html>Synthetic delayed A grade</html>"
-            };
+            let body = if index == 0 { VERIFIED_PAGE } else { body };
             let _=write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len());
         }
     });

@@ -498,6 +498,30 @@ export interface GradeObservation {
 export interface AttendanceObservation {
   source: AcademicSource; activityInstanceId: number; courseModuleId: number | null; sessionId: number | null; scopeDisplay: string;
   statusDisplay: string | null; pointsDisplay: string | null; maximumDisplay: string | null; summaryDisplay: string | null;
+  details?: AttendanceReportDetails | null;
+}
+export interface AttendanceReportDetails {
+  title: string;
+  groupId: number | null;
+  groupDisplay: string | null;
+  range: "all" | "month" | "week" | "custom";
+  from: string | null;
+  through: string | null;
+  page: number;
+  totalPages: number;
+  complete: boolean;
+  summaryLabel: string | null;
+  sessions: AttendanceSession[];
+}
+export interface AttendanceSession {
+  sessionId: number | null;
+  dateDisplay: string;
+  description: string | null;
+  state: "recorded" | "absent" | "unrecorded" | "future" | "enrollmentBoundary" | "unknown";
+  statusDisplay: string | null;
+  pointsDisplay: string | null;
+  maximumDisplay: string | null;
+  remarks: string | null;
 }
 export interface AcademicCoverage {
   permission: "unknown" | "permitted" | "restricted";

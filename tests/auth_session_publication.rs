@@ -299,3 +299,4 @@ include!("academic_foundation.rs");
 include!("assignment_observations.rs");
 
 include!("grade_observations.rs");
+include!("attendance_observations.rs");
