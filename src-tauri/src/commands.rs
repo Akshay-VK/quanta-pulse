@@ -146,6 +146,57 @@ pub fn list_search_inventory(state: State<AppState>) -> Result<crate::models::De
     crate::search::desktop_inventory(&conn).map_err(|e| e.to_string())
 }
 
+/// Search the disposable index using parsed literal terms. This path has no
+/// client, preview lease, or file-download operations.
+#[tauri::command]
+pub async fn search_saved_content(
+    app: AppHandle,
+    terms: Vec<String>,
+) -> crate::content_search::ContentResults {
+    use crate::content_search::{ContentResults, ContentSearch, PLATFORM_SUPPORTED};
+    use std::sync::Arc;
+    if !PLATFORM_SUPPORTED {
+        return ContentResults::state("unsupported");
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        app.state::<Arc<ContentSearch>>()
+            .search(
+                &state.conn,
+                &state.mirror.root(),
+                state.files.root(),
+                &terms,
+            )
+            .unwrap_or_else(|_| ContentResults::state("unavailable"))
+    })
+    .await
+    .unwrap_or_else(|_| ContentResults::state("unavailable"))
+}
+
+#[tauri::command]
+pub async fn rebuild_saved_content(app: AppHandle) -> crate::content_search::ContentResults {
+    use crate::content_search::{ContentResults, ContentSearch, PLATFORM_SUPPORTED};
+    use std::sync::Arc;
+    if !PLATFORM_SUPPORTED {
+        return ContentResults::state("unsupported");
+    }
+    let Some(build) = app.state::<Arc<ContentSearch>>().begin_rebuild() else {
+        return ContentResults::state("building");
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        build.run(&state.conn, &state.mirror.root(), state.files.root())
+            .unwrap_or_else(|_| ContentResults::state("unavailable"))
+    })
+    .await
+    .unwrap_or_else(|_| ContentResults::state("unavailable"))
+}
+
+#[tauri::command]
+pub fn cancel_saved_content_rebuild(index: State<std::sync::Arc<crate::content_search::ContentSearch>>) {
+    index.cancel();
+}
+
 #[tauri::command]
 pub fn list_events(
     state: State<AppState>,

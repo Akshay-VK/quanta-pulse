@@ -232,6 +232,7 @@ function AppShell() {
       raw,
       scope: options?.scope ?? { kind: "everywhere" },
       category: options?.category,
+      includeSavedText: options?.includeSavedText,
       sourceFrom: options?.sourceFrom ?? null,
       sourceThrough: options?.sourceThrough ?? null,
       requestId: (previous?.requestId ?? 0) + 1,

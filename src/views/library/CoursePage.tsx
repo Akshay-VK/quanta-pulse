@@ -1,3 +1,5 @@
+import { SavedContentControls } from "../../components/SavedContentSearch";
+import { useSavedContent } from "../../hooks/useSavedContent";
 import { SearchControls } from "../../components/SearchControls";
 import { searchDesktop, type SearchScope, type SearchFilters } from "../../lib/desktopSearch";
 import { buildDisplayNames, loadAliases } from "../../lib/courseName";
@@ -215,9 +217,10 @@ export default function CoursePage({
   const courses = useMemo(() => searchCourses ?? [course], [searchCourses, course]);
   const displayNames = useMemo(() => buildDisplayNames(courses, loadAliases()), [courses]);
   const savedIds = useMemo(() => new Set(unique.filter(r => !r.isExternal && mirror && isLocal(mirror.statusOf(r.id))).map(r => r.id)), [unique, mirror]);
+  const content = useSavedContent(Boolean(dateFilters.includeSavedText), search, { courses, resources: inventory ?? unique, displayNames }, mirror);
   const result = useMemo(() => searchDesktop({ raw: search, scope: searchScope, filters: { ...dateFilters, category }, timeZone, now }, {
-    courses, resources: inventory ?? unique, displayNames, savedIds, unreadIds: unreadResourceIds,
-  }), [search, searchScope, dateFilters, category, timeZone, now, courses, inventory, unique, displayNames, savedIds, unreadResourceIds]);
+    courses, resources: inventory ?? unique, displayNames, savedIds, unreadIds: unreadResourceIds, bodyHits: content.hits,
+  }), [search, searchScope, dateFilters, category, timeZone, now, courses, inventory, unique, displayNames, savedIds, unreadResourceIds, content.hits]);
   const filtered = result.files;
   const searchResults = useMemo(() => sort === "relevance" ? filtered : sortResources(filtered, sort), [filtered, sort]);
   const categories = useMemo(() => categoryOptions(unique), [unique]);
@@ -846,6 +849,7 @@ export default function CoursePage({
       index={rowIndices.get(row.id) ?? 0}
       focused={row.id === currentFocus}
       query={search}
+      bodySnippet={content.hits?.get(row.resource.id)}
       onToggle={toggle}
       onOpen={onOpen}
       onPreview={onPreview}
@@ -860,6 +864,7 @@ export default function CoursePage({
   );
 
   const emptyCourse = (state: "error" | "empty" | "search") => {
+    if (state === "search" && content.pending) return <EmptyState title="Searching saved text…" />;
     const Icon = state === "error" ? AlertCircle : state === "empty" ? Folder : Search;
     const title = state === "error" ? "Couldn’t load this course" : state === "empty" ? "Nothing here yet" : "No files match your search";
     const body = state === "error"
@@ -1021,6 +1026,7 @@ export default function CoursePage({
             <span className="library-toolbar-end">{visibleCount} {visibleCount === 1 ? "material" : "materials"}</span>
           </div>}
           <SearchControls raw={search} onRaw={setSearch} scope={searchScope} onScope={handleSearchScopeChange} filters={dateFilters} onFilters={setDateFilters} courses={courses} resources={inventory ?? []} />
+          <SavedContentControls enabled={Boolean(dateFilters.includeSavedText)} onToggle={() => setDateFilters(value => ({ ...value, includeSavedText: !value.includeSavedText }))} content={content} />
           {result.errors.length > 0 && <Banner kind="error">{result.errors.join(" ")}</Banner>}
           <div className={cx("library-toolbar course-page-toolbar", !showFilters && "library-search-collapsed", !headerActions && "library-filters-standalone")}>
             <SearchField

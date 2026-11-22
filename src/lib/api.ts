@@ -26,6 +26,7 @@ import type {
   ChangeEvent,
   Course,
   DesktopSearchInventory,
+  SavedContentResults,
   DbInfo,
   Digest,
   LocalFile,
@@ -116,6 +117,9 @@ export const api = {
   listResources: (filter: ResourceFilter = {}) =>
     invoke<Resource[]>("list_resources", { filter }),
   /** Metadata and canonical unread membership from one SQLite read transaction. */
+  searchSavedContent: (terms: string[]) => invoke<SavedContentResults>("search_saved_content", { terms }),
+  rebuildSavedContent: () => invoke<SavedContentResults>("rebuild_saved_content"),
+  cancelSavedContentRebuild: () => invoke<void>("cancel_saved_content_rebuild"),
   listSearchInventory: () => invoke<DesktopSearchInventory>("list_search_inventory"),
   listDashboardResources: () => invoke<Resource[]>("list_dashboard_resources"),
   listEvents: (unreadOnly = false, limit = 200) =>

@@ -263,3 +263,62 @@ mod tests {
         assert!(after.unread_resource_ids.is_empty());
     }
 }
+
+#[cfg(test)]
+mod benchmark {
+    use super::*;
+    use std::sync::Mutex;
+    use std::time::Instant;
+
+    /// Measures the production snapshot including Rust row mapping, with no Tauri IPC.
+    #[test]
+    #[ignore = "synthetic measurement; run explicitly in release mode"]
+    fn synthetic_desktop_snapshot_lock() {
+        const STAMP: &str = "2026-11-20T12:00:00Z";
+        for size in [5_000, 25_000, 100_000] {
+            for _ in 0..5 {
+                let directory = tempfile::tempdir().unwrap();
+                let path = directory.path().join("fixture.sqlite");
+                let conn = Connection::open(&path).unwrap();
+                db::migrate(&conn).unwrap();
+                let tx = conn.unchecked_transaction().unwrap();
+                for id in 1..=100 {
+                    tx.execute("INSERT INTO courses(id,external_course_id,name,url,first_seen_at) VALUES(?1,?2,?3,'https://example.test/course',?4)",
+                        rusqlite::params![id, id.to_string(), format!("Synthetic Course {id}"), STAMP]).unwrap();
+                }
+                {
+                    let mut insert = tx.prepare("INSERT INTO resources(id,external_resource_id,course_id,title,url,resource_type,uploaded_at,section_path,first_seen_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?7)").unwrap();
+                    for id in 1..=size {
+                        let n = id - 1;
+                        let course = n % 100 + 1;
+                        let title = if n % 7 == 0 { "statistics" } else { "regression" };
+                        let kind = if n % 3 == 0 { "text" } else { "pdf" };
+                        let section = if n % 3 == 0 { "Exercises" } else { "Lectures" };
+                        insert.execute(rusqlite::params![id, format!("fixture:{id}"), course, format!("Lecture {id} {title}"), format!("https://example.test/resource/{id}"), kind, STAMP,
+                            serde_json::json!([format!("Unit {}", n % 9), section]).to_string()]).unwrap();
+                        if id % 10 == 0 {
+                            tx.execute("INSERT INTO change_events(resource_id,course_id,change_type,title,detected_at,deduplication_key) VALUES(?1,?2,'new','Synthetic',?3,?4)",
+                                rusqlite::params![id, course, STAMP, format!("event:{id}")]).unwrap();
+                        }
+                    }
+                }
+                tx.commit().unwrap();
+                drop(conn);
+                let conn = Mutex::new(Connection::open(path).unwrap());
+                let mut samples = Vec::new();
+                for _ in 0..21 {
+                    let snapshot = {
+                        let guard = conn.lock().unwrap();
+                        let start = Instant::now();
+                        let inventory = desktop_inventory(&guard).unwrap();
+                        samples.push(start.elapsed().as_secs_f64() * 1000.0);
+                        inventory
+                    };
+                    assert_eq!(snapshot.resources.len(), size as usize);
+                    assert_eq!(snapshot.unread_resource_ids.len(), size as usize / 10);
+                }
+                println!("snapshot {size} {samples:?}");
+            }
+        }
+    }
+}

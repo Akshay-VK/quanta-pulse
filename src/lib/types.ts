@@ -480,3 +480,10 @@ export interface AcademicCoverage {
   coverage: AcademicCoverageStatus; observedAt: string; lastSuccessfulAt: string | null; baselineEstablished: boolean; stale: boolean;
 }
 export interface AcademicPage<T> { context: AcademicContext; courseId: number; coverage: AcademicCoverage | null; records: T[] }
+
+export interface SavedContentResults {
+  state: "empty" | "building" | "cancelled" | "ready" | "limited" | "stale" | "tooLarge" | "queryTooLong" | "unavailable" | "unsupported";
+  indexed: number;
+  skipped: number;
+  hits: { resourceId: number; snippet: string }[];
+}

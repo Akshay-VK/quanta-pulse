@@ -23,6 +23,7 @@ export interface SearchQueryState extends SearchFilters {
 }
 
 export interface SearchFilters {
+  includeSavedText?: boolean;
   category?: ResourceCategoryId | "all";
   sourceFrom?: string | null;
   sourceThrough?: string | null;
@@ -50,6 +51,7 @@ export interface SearchInventory {
   resources: readonly Resource[];
   displayNames?: ReadonlyMap<number, string>;
   unreadIds?: ReadonlySet<number>;
+  bodyHits?: ReadonlyMap<number, string>;
   savedIds?: ReadonlySet<number>;
   revision?: string;
   now?: Date | string | number;
@@ -157,6 +159,7 @@ export function searchDesktop(request: SearchRequest, inventory: SearchInventory
     Boolean(request.filters?.sourceFrom) ||
     Boolean(request.filters?.sourceThrough);
 
+  const bodyOnly = new Set<number>();
   // Match a single file against scope + query + filters.
   const fileMatches = (r: Resource): boolean => {
     if (errors.length) return false;
@@ -202,7 +205,10 @@ export function searchDesktop(request: SearchRequest, inventory: SearchInventory
     ];
     const haystack = fields.map(norm).join(" ");
     if (terms.length === 0) return true;
-    return terms.every((term) => haystack.includes(term));
+    if (terms.every((term) => haystack.includes(term))) return true;
+    if (!request.filters?.includeSavedText || !inventory.bodyHits?.has(r.id)) return false;
+    bodyOnly.add(r.id);
+    return true;
   };
 
   const candidateFiles = resources.filter(fileMatches);
@@ -223,8 +229,8 @@ export function searchDesktop(request: SearchRequest, inventory: SearchInventory
     return parsedTs ? parsedTs.getTime() : Number.NEGATIVE_INFINITY;
   };
   const rankedFiles = terms.length === 0 ? sortResources(candidateFiles, "newest") : [...candidateFiles].sort((a, b) => {
-    const sa = scoreTitle(a.title);
-    const sb = scoreTitle(b.title);
+    const sa = bodyOnly.has(a.id) ? 4 : scoreTitle(a.title);
+    const sb = bodyOnly.has(b.id) ? 4 : scoreTitle(b.title);
     if (sa !== sb) return sa - sb;
     const ta = activityTime(a);
     const tb = activityTime(b);

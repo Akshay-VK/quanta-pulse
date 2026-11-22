@@ -1,3 +1,5 @@
+import { BodyMatch, SavedContentControls } from "../../components/SavedContentSearch";
+import { useSavedContent } from "../../hooks/useSavedContent";
 import { compareDates, compareNames, compareResourceNames } from "../../lib/fileOrdering";
 import { SearchControls } from "../../components/SearchControls";
 import { useSessionValue } from "../../hooks/useSessionViews";
@@ -114,7 +116,7 @@ export default function AllFiles({
   useEffect(() => {
     if (initialSearchQuery && initialSearchQuery.requestId !== appliedRequest) {
       setScope(initialSearchQuery.scope);
-      setDateFilters({ category: initialSearchQuery.category, sourceFrom: initialSearchQuery.sourceFrom ?? undefined, sourceThrough: initialSearchQuery.sourceThrough ?? undefined });
+      setDateFilters({ category: initialSearchQuery.category, includeSavedText: initialSearchQuery.includeSavedText, sourceFrom: initialSearchQuery.sourceFrom ?? undefined, sourceThrough: initialSearchQuery.sourceThrough ?? undefined });
       setSort({ id: "relevance", dir: "desc" });
       setAppliedRequest(initialSearchQuery.requestId);
     }
@@ -127,10 +129,11 @@ export default function AllFiles({
   const displayNames = useMemo(() => buildDisplayNames(courses, loadAliases()), [courses]);
   const unreadIds = unreadResourceIds ?? EMPTY_IDS;
   const savedIds = useMemo(() => new Set(unique.filter((r) => isSaved(r)).map((r) => r.id)), [unique, mirror]);
+  const content = useSavedContent(Boolean(dateFilters.includeSavedText), search, { courses, resources: unique, displayNames }, mirror);
   const searchResult = useMemo(() => searchDesktop(
     { raw: search, scope, filters: dateFilters, timeZone, now },
-    { courses, resources: unique, displayNames, unreadIds, savedIds },
-  ), [search, scope, unique, courses, displayNames, unreadIds, savedIds, dateFilters, timeZone, now]);
+    { courses, resources: unique, displayNames, unreadIds, savedIds, bodyHits: content.hits },
+  ), [search, scope, unique, courses, displayNames, unreadIds, savedIds, dateFilters, timeZone, now, content.hits]);
   const searchErrors = searchResult.errors;
   const filtered = searchResult.files;
 
@@ -335,12 +338,15 @@ export default function AllFiles({
       cell: (resource) => {
         const path = [courseTitle(resource.courseId, resource.courseName), ...resourceSectionPath(resource)].join(" / ");
         const unread = unreadResourceIds?.has(resource.id);
+        const snippet = content.hits?.get(resource.id);
+        const snippetId = snippet === undefined ? undefined : `library-body-match-${resource.id}`;
         return (
           <button
             type="button"
             className={unread ? "cell-title is-unread" : "cell-title"}
             data-resource-id={resource.id}
             aria-label={`Show details for ${resource.title}`}
+            aria-describedby={snippetId}
             onClick={(event) => {
               event.stopPropagation();
               inspect(resource, event.currentTarget);
@@ -350,7 +356,7 @@ export default function AllFiles({
             <FileTypeIcon type={resource.resourceType} />
             <span className="library-file-title-copy">
               <span className="cell-title-main"><Highlight text={resource.title} query={query} /></span>
-              {query && <span className="cell-title-sub"><Highlight text={path} query={query} /></span>}
+              {snippetId ? <BodyMatch id={snippetId} snippet={snippet} /> : query && <span className="cell-title-sub"><Highlight text={path} query={query} /></span>}
             </span>
           </button>
         );
@@ -439,6 +445,7 @@ export default function AllFiles({
       </div>
       <div className="library-toolbar">{searchField}{filtersActive && <Button variant="ghost" size="sm" onClick={clearFilters}>Clear filters</Button>}{dateFilters.category && dateFilters.category !== "all" && <Button variant="secondary" size="sm" onClick={() => setDateFilters({ ...dateFilters, category: undefined })}>Category: {categoryLabel(dateFilters.category)} ×</Button>}<span>Sort: {sortLabel}</span></div>
       <SearchControls raw={search} onRaw={onSearchChange ?? (() => {})} scope={scope} onScope={setScope} filters={dateFilters} onFilters={setDateFilters} courses={courses} resources={unique} />
+      <SavedContentControls enabled={Boolean(dateFilters.includeSavedText)} onToggle={() => setDateFilters(value => ({ ...value, includeSavedText: !value.includeSavedText }))} content={content} />
       {showSort && <div className="library-toolbar">
         <Select ariaLabel="Sort files by" value={sort.id} onValueChange={(value) => onSort(value)} options={[{ value: "relevance", label: hasTextTerms ? "Relevance" : sort.id === "relevance" ? sortLabel : "Newest (activity date)" }, { value: "type", label: "File type" }, ...columns.map(({ id, header }) => ({ value: id, label: header }))]} />
         <Button variant="ghost" size="sm" aria-label="Sort direction" disabled={relevance} onClick={() => onSort(sort.id)}>{relevance ? "Best match first" : sort.dir === "asc" ? "Ascending" : "Descending"}</Button>
@@ -465,7 +472,7 @@ export default function AllFiles({
         rowHeight={query ? 48 : 34}
         virtual
         empty={
-          <EmptyState
+          content.pending ? <EmptyState title="Searching saved text…" /> : <EmptyState
             title={filtersActive ? "No files match these filters" : "No files discovered yet"}
             body={
               filtersActive
