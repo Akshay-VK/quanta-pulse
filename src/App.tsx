@@ -833,19 +833,19 @@ function AppShell() {
     if (!peekResource) return null;
     const local = peekLocal && peekLocal.resourceId === peekResource.id ? peekLocal : null;
     const event = selection?.kind === "change" ? selection.change : null;
-    const actions = inspectedAssignment
-      ? [{ id: "open-quanta", label: "Open in Quanta", onSelect: () => void open(inspectedAssignment.url), disabled: false }]
-      : destinations(peekResource, event ?? undefined);
+    const assignment = inspectedAssignment ? assignmentByResource.get(inspectedAssignment.id) : undefined;
+    const actions = assignment
+      ? [{ id: "open-quanta", label: "Open in Quanta", onSelect: () => void open(peekResource.url), disabled: false }]
+      : destinations(inspectedAssignment ? { ...inspectedAssignment, sourcePageUrl: null } : peekResource, event ?? undefined);
     const localStatus = mirror?.statusOf(peekResource.id) ?? local;
     const attempt = mirror?.downloads.get(peekResource.id);
-    const progress = attempt?.state === "downloading" || attempt?.state === "queued" ? attempt : null;
+    const progress = !assignment && (attempt?.state === "downloading" || attempt?.state === "queued") ? attempt : null;
     const saved = isLocal(localStatus);
     const failure = materialFailure?.resourceId === peekResource.id ? materialFailure.message : null;
     const failed = localStatus?.status === "failed" || attempt?.state === "failed" || Boolean(failure);
     const unavailable = peekResource.availabilityStatus !== "available";
     const link = peekResource.isExternal || actions.every((action) => action.id === "open-quanta");
     const announcement = event?.changeType === "announcement" || peekResource.resourceType.toLowerCase() === "announcement";
-    const assignment = inspectedAssignment ? assignmentByResource.get(inspectedAssignment.id) : undefined;
     const assignmentUnavailable = inspectedAssignment?.courseId != null && assignmentFailures.has(inspectedAssignment.courseId);
     const assignmentCoverage = assignmentPages.find(page => page.courseId === inspectedAssignment?.courseId)?.coverage;
     const deadline = event?.changeType === "deadline" || (selection?.owner === "calendar" && Boolean(peekResource.dueAt));
@@ -929,7 +929,7 @@ function AppShell() {
       menu: [
         ...actions.filter((action) => action !== primary && action !== secondary
           && !(unavailable && !saved && (action.id === "download-open" || action.id === "preview"))),
-        ...(!inspectedAssignment && saved && local ? [{
+        ...(!assignment && saved && local ? [{
           id: "reveal",
           label: "Show in folder",
           onSelect: () => void api.revealLocalFile(peekResource.id).catch((err) => notify(String(err), true)),

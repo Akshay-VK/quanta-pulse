@@ -1,7 +1,8 @@
+import { act } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { acceptAcademicContext, academicEpoch, invalidateAcademicSession } from "../src/lib/academicSession";
 import type { AcademicContext, AcademicPage, AssignmentObservation } from "../src/lib/types";
-import { appApi, button, click, deferred, emitAppEvent, renderApp, resource, setupApp } from "./helpers/renderApp";
+import { appApi, button, click, deferred, emitAppEvent, flushApp, renderApp, resource, setupApp } from "./helpers/renderApp";
 
 let app: Awaited<ReturnType<typeof renderApp>> | undefined;
 const owner: AcademicContext = { contractVersion: 1, generation: "A", owner: { origin: "https://quanta.bits-pilani.ac.in", moodleUserId: 42 }, collectorsEnabled: false };
@@ -48,6 +49,10 @@ it("projects the self deadline once, shows submission details, and restores the 
   expect(document.querySelector(".peek")?.textContent).toContain("2026-11-20");
   expect(document.querySelector(".peek")?.textContent).toContain("Assignment details unavailable");
   expect(document.querySelector(".peek")?.textContent).not.toContain("Submitted");
+  const heading = document.querySelector(".peek-title")!;
+  await act(async () => { heading.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true })); });
+  await flushApp();
+  expect(appApi.previewResource).toHaveBeenCalledWith(assignment.id);
 });
 
 it("rejects a delayed previous-owner page while baseline Agenda remains usable", async () => {
