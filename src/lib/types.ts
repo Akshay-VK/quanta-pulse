@@ -451,6 +451,8 @@ export interface DueResource {
   resource: Resource;
   dateKind: "date" | "instant";
   coursePaused: boolean;
+  /** Private display projection, kept off the shared material record. */
+  projectedDueAt?: string;
 }
 export interface DuePage { items: DueResource[]; total: number }
 
@@ -459,11 +461,28 @@ export interface AcademicOwner { origin: string; moodleUserId: number }
 export interface AcademicContext { contractVersion: 1; generation: string; owner: AcademicOwner | null; collectorsEnabled: boolean }
 export type AcademicCoverageStatus = "complete" | "partial" | "denied" | "unsupported" | "offline" | "cancelled" | "failed";
 export type AcademicVisibility = "visible" | "hidden" | "unreleased" | "unknown";
-export type AcademicDate = { kind: "unknown" } | { kind: "instant" | "dateOnly" | "ambiguous"; value: string };
+export type AcademicDate = { kind: "unknown" } | { kind: "unset" } | { kind: "unsupported" } | { kind: "instant" | "dateOnly" | "ambiguous"; value: string };
 export interface AcademicSource { sourceId: string; sourceUrl: string; observedAt: string; visibility: AcademicVisibility }
 export interface AssignmentObservation {
   source: AcademicSource; title: string; courseModuleId: number | null; activityInstanceId: number | null;
-  resourceId: number | null; due: AcademicDate; dueDisplay: string | null; submissionDisplay: string | null; calendarEventId: number | null; submissionStatus: "unknown" | "unsubmitted" | "draft" | "submitted" | "reopened"; attemptNumber: number | null;
+  resourceId: number | null; due: AcademicDate; dueDisplay: string | null; submissionDisplay: string | null; calendarEventId: number | null; submissionStatus: "unknown" | "unsubmitted" | "draft" | "submitted" | "reopened" | "notRequired" | "notYetOpen"; attemptNumber: number | null;
+  details?: AssignmentFacts | null;
+}
+export interface AssignmentFacts {
+  baseDue: AcademicDate;
+  effectiveDue: AcademicDate;
+  opening: AcademicDate;
+  extension: AcademicDate;
+  cutOff: AcademicDate;
+  gradingDue: AcademicDate;
+  dueProvenance: "unknown" | "base" | "effective" | "extension";
+  mode: "unknown" | "individual" | "team";
+  pendingTeamConfirmations: number | null;
+  timeLimitSeconds: number | null;
+  description: string | null;
+  attachments: { title: string; url: string }[];
+  gradingStatus: string | null;
+  releasedFeedback: string | null;
 }
 export interface GradeObservation {
   source: AcademicSource; title: string; gradeItemId: number | null; parentSourceId: string | null;

@@ -31,7 +31,7 @@ export function agendaEntries(items: DueResource[], now: Date, timeZone: string)
   const dayNumber = ordinal(today);
   const seen = new Set<string>();
   return items.flatMap(item => {
-    const raw = item.resource.dueAt;
+    const raw = item.projectedDueAt ?? item.resource.dueAt;
     if (!raw) return [];
     const dateOnly = item.dateKind === 'date';
     const timestamp = Date.parse(raw);

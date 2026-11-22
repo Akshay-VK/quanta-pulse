@@ -16,7 +16,7 @@ use crate::notify;
 use crate::quanta::discover::{self, CrawlLimits, Progress, ProgressFn};
 use crate::state::AppState;
 use crate::sync::diagnostics::Collector;
-use crate::sync::reconcile::commit_scan;
+use crate::sync::reconcile::{commit_scan, AssignmentReminderScope};
 
 /// Run a full scan. Returns immediately (with an empty outcome) if one is
 /// already in progress.
@@ -103,6 +103,7 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
         )
     };
 
+    let academic_generation = crate::academic::context(&app.state::<AppState>()).generation;
     let Some(client) = app.state::<AppState>().client() else {
         let state = app.state::<AppState>();
         state.sync.set_auth_state("unauthenticated");
@@ -239,6 +240,18 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
     let now = db::now_rfc3339();
     let reconcile_result = {
         let state = app.state::<AppState>();
+        let max_age =
+            chrono::Duration::minutes(state.settings().sync_interval_minutes.min(60) as i64);
+        // Lock order matches academic reads/commits. An auth change during
+        // collection gives this scan the ordinary material reminder policy.
+        let authority = state.sync.academic.lock().unwrap();
+        let assignment_scope = authority
+            .reminder_owner(&academic_generation)
+            .filter(|_| {
+                state.sync.auth_state() == "authenticated"
+                    && !state.sync.auth_resetting.load(Ordering::SeqCst)
+            })
+            .map(|owner| AssignmentReminderScope { owner, max_age });
         let conn = state.conn();
         commit_scan(
             &conn,
@@ -249,6 +262,7 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
             &rebaseline,
             reminder_hours,
             &now,
+            assignment_scope,
         )
     };
     outcome.errors.extend(reconcile_result.errors);

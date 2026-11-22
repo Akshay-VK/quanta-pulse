@@ -10,7 +10,7 @@ fn academic_upgrade_failure_rolls_back_and_backup_restores_populated_legacy() {
     db::set_kv(&conn, db::SCHEMA_REVISION_KEY, "8").unwrap();
     db::set_kv(&conn, "baseline_reset_generation", "17").unwrap();
     db::set_kv(&conn, "retained_marker", "keep").unwrap();
-    conn.execute_batch("CREATE TRIGGER reject_revision BEFORE INSERT ON settings WHEN NEW.key='schema_revision' AND NEW.value='9' BEGIN SELECT RAISE(ABORT,'synthetic revision failure'); END;").unwrap();
+    conn.execute_batch(&format!("CREATE TRIGGER reject_revision BEFORE INSERT ON settings WHEN NEW.key='schema_revision' AND NEW.value='{}' BEGIN SELECT RAISE(ABORT,'synthetic revision failure'); END;", db::CURRENT_SCHEMA_REVISION)).unwrap();
     assert!(db::upgrade(&conn, &path, env!("CARGO_PKG_VERSION")).is_err());
     assert_eq!(
         db::get_kv(&conn, db::SCHEMA_REVISION_KEY).as_deref(),
