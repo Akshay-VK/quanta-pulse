@@ -17,6 +17,10 @@ use crate::settings::Settings;
 /// Coordination for the (single) synchronisation job.
 #[derive(Default)]
 pub struct SyncControl {
+    /// Private academic ownership and publication fence. Lock before the DB.
+    pub(crate) academic: Mutex<crate::academic::Authority>,
+    /// At most one explicit academic report transport operation before V1.
+    pub(crate) student_report_active: AtomicBool,
     /// True while a scan is in progress — prevents overlapping scans.
     pub running: AtomicBool,
     /// Cooperative cancellation flag for the active scan.
@@ -198,7 +202,34 @@ impl AppState {
     }
 
     pub fn set_client(&self, client: Option<Arc<QuantaClient>>) {
+        let mut authority = self.sync.academic.lock().unwrap();
+        authority.replace(client.as_deref().and_then(|c| c.academic_owner()));
         *self.client.lock().unwrap() = client;
+    }
+
+    /// Commit verified authentication under the same fence as academic reads
+    /// and writes. A pre-logout verification cannot reinstall its old client.
+    pub(crate) fn install_client_if_current(
+        &self,
+        generation: &str,
+        client: Arc<QuantaClient>,
+        email: &str,
+    ) -> Result<(), String> {
+        let mut authority = self.sync.academic.lock().unwrap();
+        if !authority.is_generation(generation) {
+            return Err("Sign-in session is no longer active.".into());
+        }
+        {
+            let conn = self.conn();
+            db::set_kv(&conn, "current_email", email)
+                .map_err(|_| "Could not save active account".to_string())?;
+        }
+        authority.replace(client.academic_owner());
+        *self.client.lock().unwrap() = Some(client);
+        self.mirror.session_restored();
+        self.sync.set_auth_state("authenticated");
+        *self.sync.last_error.lock().unwrap() = None;
+        Ok(())
     }
 
     /// Build a `SyncStatus` snapshot for the UI.

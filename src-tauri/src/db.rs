@@ -28,7 +28,7 @@ pub const LAST_APP_VERSION_KEY: &str = "last_app_version";
 pub const SCHEMA_REVISION_KEY: &str = "schema_revision";
 
 /// The schema revision produced by the current `migrate` implementation.
-pub const CURRENT_SCHEMA_REVISION: i64 = 8;
+pub const CURRENT_SCHEMA_REVISION: i64 = 9;
 
 /// How many pre-migration backups to keep.
 const BACKUP_KEEP: usize = 3;
@@ -56,7 +56,7 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
 /// database is safer than a migrated one nobody can roll back to.
 pub fn upgrade(conn: &Connection, db_path: &Path, app_version: &str) -> Result<(), String> {
     let recorded_version = get_kv(conn, LAST_APP_VERSION_KEY);
-    let recorded_schema = recorded_schema_revision(conn);
+    let recorded_schema = recorded_schema_revision(conn)?;
     let has_tables = has_user_tables(conn);
 
     // A database created by a newer, unsupported build must not be migrated
@@ -69,13 +69,12 @@ pub fn upgrade(conn: &Connection, db_path: &Path, app_version: &str) -> Result<(
         }
     }
 
-    // A missing revision is treated as "already current" for backup purposes:
-    // existing stores migrated by older code lack the key, and forcing a backup
-    // on every same-version startup would violate the no-unnecessary-backup rule.
-    // An explicitly lower revision (a pending migration) does require a backup.
+    // A populated store without a revision predates the migration ledger.
+    // Protect it once even at the same app version; successful startup records
+    // the current revision, so retries do not create unnecessary backups.
     let schema_pending = match recorded_schema {
         Some(revision) => revision < CURRENT_SCHEMA_REVISION,
-        None => false,
+        None => has_tables,
     };
     let version_older = match &recorded_version {
         None => has_tables,
@@ -97,23 +96,33 @@ pub fn upgrade(conn: &Connection, db_path: &Path, app_version: &str) -> Result<(
         backup_database(conn, db_path, &old)?;
     }
 
-    migrate(conn).map_err(|e| e.to_string())?;
-    set_kv(conn, LAST_APP_VERSION_KEY, app_version).map_err(|e| e.to_string())?;
-    set_kv(conn, SCHEMA_REVISION_KEY, &CURRENT_SCHEMA_REVISION.to_string())
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    migrate_inner(&tx).map_err(|e| e.to_string())?;
+    set_kv(&tx, LAST_APP_VERSION_KEY, app_version).map_err(|e| e.to_string())?;
+    set_kv(&tx, SCHEMA_REVISION_KEY, &CURRENT_SCHEMA_REVISION.to_string())
         .map_err(|e| e.to_string())?;
-    Ok(())
+    tx.commit().map_err(|e| e.to_string())
 }
 
 /// Read the recorded schema revision, accepting the documented key spellings.
-fn recorded_schema_revision(conn: &Connection) -> Option<i64> {
+fn recorded_schema_revision(conn: &Connection) -> Result<Option<i64>, String> {
+    let has_settings: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='settings')",
+        [], |row| row.get(0),
+    ).map_err(|_| "cannot read database schema revision")?;
+    if !has_settings { return Ok(None); }
+    let mut revision: Option<i64> = None;
     for key in [SCHEMA_REVISION_KEY, "db_schema_revision", "schema_version"] {
-        if let Some(value) = get_kv(conn, key) {
-            if let Ok(revision) = value.trim().parse::<i64>() {
-                return Some(revision);
-            }
+        let value: Option<String> = conn.query_row("SELECT value FROM settings WHERE key=?1", [key], |row| row.get(0))
+            .optional().map_err(|_| "cannot read database schema revision")?;
+        if let Some(value) = value {
+            let parsed = value.trim().parse::<i64>().ok().filter(|value| *value >= 0)
+                .ok_or("unsupported database schema revision")?;
+            // Never let an older alias hide a newer schema marker.
+            revision = Some(revision.map_or(parsed, |old| old.max(parsed)));
         }
     }
-    None
+    Ok(revision)
 }
 
 /// Whether `recorded` is semantically older than `running`. Unknown or
@@ -261,6 +270,12 @@ fn prune_backups(dir: &Path) -> Result<(), String> {
 }
 
 pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    migrate_inner(&tx)?;
+    tx.commit()
+}
+
+fn migrate_inner(conn: &Connection) -> rusqlite::Result<()> {
     const MIGRATION: &str = include_str!("../migrations/0001_init.sql");
     conn.execute_batch(MIGRATION)?;
 
@@ -338,6 +353,7 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     if !has_failure_notification_claim {
         conn.execute_batch(include_str!("../migrations/0008_scan_failure_notifications.sql"))?;
     }
+    conn.execute_batch(include_str!("../migrations/0009_academic.sql"))?;
     Ok(())
 }
 
@@ -365,7 +381,12 @@ fn upgrade_resource_fingerprints(conn: &Connection) -> rusqlite::Result<()> {
         return Ok(());
     }
 
-    let tx = conn.unchecked_transaction()?;
+    // These legacy migrations are also called independently by focused tests.
+    // Join the upgrade transaction when present; otherwise keep their atomicity.
+    let transaction = conn.is_autocommit()
+        .then(|| conn.unchecked_transaction())
+        .transpose()?;
+    let tx = transaction.as_deref().unwrap_or(conn);
     let rows = {
         let mut stmt = tx.prepare(
             "SELECT id, title, resource_type, uploaded_at, published_at,
@@ -411,7 +432,10 @@ fn upgrade_resource_fingerprints(conn: &Connection) -> rusqlite::Result<()> {
         "INSERT INTO settings(key, value) VALUES(?1, ?2)",
         params![RESOURCE_FINGERPRINT_V2_KEY, "completed"],
     )?;
-    tx.commit()
+    match transaction {
+        Some(tx) => tx.commit(),
+        None => Ok(()),
+    }
 }
 
 fn apply_course_tree_incident_cleanup(conn: &Connection, now: &str) -> rusqlite::Result<()> {
@@ -424,7 +448,12 @@ fn apply_course_tree_incident_cleanup(conn: &Connection, now: &str) -> rusqlite:
     let cutoff = (current - chrono::Duration::hours(12))
         .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
 
-    let tx = conn.unchecked_transaction()?;
+    // These legacy migrations are also called independently by focused tests.
+    // Join the upgrade transaction when present; otherwise keep their atomicity.
+    let transaction = conn.is_autocommit()
+        .then(|| conn.unchecked_transaction())
+        .transpose()?;
+    let tx = transaction.as_deref().unwrap_or(conn);
     let changed = tx.execute(
         "UPDATE change_events
          SET calendar_suppressed = 1
@@ -477,7 +506,10 @@ fn apply_course_tree_incident_cleanup(conn: &Connection, now: &str) -> rusqlite:
         "INSERT INTO settings(key, value) VALUES(?1, ?2)",
         params![COURSE_TREE_CALENDAR_CLEANUP_KEY, marker],
     )?;
-    tx.commit()
+    match transaction {
+        Some(tx) => tx.commit(),
+        None => Ok(()),
+    }
 }
 
 fn count_suppressed_incident_events(conn: &Connection, change_type: &str) -> rusqlite::Result<i64> {
@@ -2810,6 +2842,7 @@ mod tests {
         let (dir, path, conn) = file_db();
         set_kv(&conn, LAST_APP_VERSION_KEY, "0.2.0").unwrap();
 
+        set_kv(&conn, SCHEMA_REVISION_KEY, &CURRENT_SCHEMA_REVISION.to_string()).unwrap();
         upgrade(&conn, &path, "0.2.0").unwrap();
 
         assert!(!dir.path().join("backups").exists());
@@ -4031,7 +4064,7 @@ mod tests {
         assert_eq!(names.len(), 1, "one backup expected: {names:?}");
         assert!(names[0].starts_with("quanta-pulse-0.9.0-"), "{}", names[0]);
         assert_eq!(get_kv(&conn, LAST_APP_VERSION_KEY).as_deref(), Some("0.10.0"));
-        assert_eq!(get_kv(&conn, SCHEMA_REVISION_KEY).as_deref(), Some("8"));
+        assert_eq!(get_kv(&conn, SCHEMA_REVISION_KEY), Some(CURRENT_SCHEMA_REVISION.to_string()));
     }
 
     #[test]
@@ -4088,8 +4121,8 @@ mod tests {
     fn upgrade_no_backup_same_version_current_schema() {
         let (dir, path, conn) = file_db();
         set_kv(&conn, LAST_APP_VERSION_KEY, "0.2.0").unwrap();
-        set_kv(&conn, SCHEMA_REVISION_KEY, "8").unwrap();
 
+        set_kv(&conn, SCHEMA_REVISION_KEY, &CURRENT_SCHEMA_REVISION.to_string()).unwrap();
         upgrade(&conn, &path, "0.2.0").unwrap();
 
         assert!(!dir.path().join("backups").exists());
@@ -4152,6 +4185,10 @@ mod tests {
         upgrade(&reopened, &path, "0.2.0").unwrap();
         let after = backup_names(&dir).len();
         assert_eq!(before, after);
-        assert_eq!(get_kv(&reopened, SCHEMA_REVISION_KEY).as_deref(), Some("8"));
+        assert_eq!(get_kv(&reopened, SCHEMA_REVISION_KEY), Some(CURRENT_SCHEMA_REVISION.to_string()));
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/academic_migration.rs"]
+mod academic_migration_tests;

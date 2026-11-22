@@ -1428,3 +1428,16 @@ mod update_prepare_tests {
         assert!(!sync.shutdown.load(Ordering::SeqCst));
     }
 }
+
+/// Local private academic context, never inferred from a stored account label.
+#[tauri::command]
+pub fn academic_context(state: State<AppState>) -> crate::academic::AcademicContext { crate::academic::context(&state) }
+
+#[tauri::command]
+pub fn academic_assignments(state: State<AppState>, generation: String, course_id: i64) -> Result<crate::academic::AcademicPage<crate::academic::AssignmentObservation>, String> { crate::academic::assignments(&state, &generation, course_id) }
+
+#[tauri::command]
+pub fn academic_grades(state: State<AppState>, generation: String, course_id: i64) -> Result<crate::academic::AcademicPage<crate::academic::GradeObservation>, String> { crate::academic::grades(&state, &generation, course_id) }
+
+#[tauri::command]
+pub fn academic_attendance(state: State<AppState>, generation: String, course_id: i64) -> Result<crate::academic::AcademicPage<crate::academic::AttendanceObservation>, String> { crate::academic::attendance(&state, &generation, course_id) }

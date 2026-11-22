@@ -108,7 +108,7 @@ fn commit_sso_if_current(
     {
         return false;
     }
-    // Lock order: SSO lifecycle, then DB connection, then other state locks.
+    // Lock order: SSO lifecycle, academic authority, then DB/client locks.
     // No await or window callback is permitted inside this synchronous commit.
     commit();
     true
@@ -168,6 +168,7 @@ pub async fn login_with_password(
     if state.sync.auth_resetting.load(Ordering::SeqCst) {
         return Err("Quanta session reset is in progress. Try signing in again shortly.".into());
     }
+    let generation = crate::academic::begin_account_change(&state);
     let timeout = app.state::<AppState>().settings().request_timeout_secs;
     let (http, jar) = QuantaClient::anonymous(timeout).map_err(|e| e.to_string())?;
     let origin = Url::parse(QUANTA_ORIGIN).expect("valid origin");
@@ -240,7 +241,7 @@ pub async fn login_with_password(
         sesskey,
         acquired_at: db::now_rfc3339(),
     };
-    let status = finalize_session(&app, session, None).await?;
+    let status = finalize_session(&app, session, None, Some(&generation)).await?;
     resume_monitoring(app.clone(), "login");
     Ok(status)
 }
@@ -273,6 +274,7 @@ pub async fn start_sso_login(app: AppHandle) -> Result<AuthStatus, String> {
             )
         } else {
             let receiver = attempt.completion.subscribe();
+            crate::academic::begin_account_change(&state);
             state.sync.sso_login_active.store(true, Ordering::SeqCst);
             (attempt, receiver, true, None)
         }
@@ -412,16 +414,41 @@ async fn run_sso_login_inner(
 
 /// Verify the candidate transport before publishing it to application state.
 /// The SSO ownership check and installation remain one synchronous commit.
+#[cfg(test)]
 async fn verify_and_install_session(
+    state: &AppState,
+    client: QuantaClient,
+    sso_attempt: Option<&str>,
+) -> Result<(), String> {
+    let generation = crate::academic::context(state).generation;
+    verify_and_install_session_in_generation(state, client, sso_attempt, &generation)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[derive(Debug, thiserror::Error)]
+enum SessionVerificationFailure {
+    #[error("Sign-in did not establish a usable session.")]
+    AuthExpired,
+    #[error("{0}")]
+    Other(String),
+}
+
+/// The generation is captured before credential acquisition, not after it.
+async fn verify_and_install_session_in_generation(
     state: &AppState,
     mut client: QuantaClient,
     sso_attempt: Option<&str>,
-) -> Result<(), String> {
+    generation: &str,
+) -> Result<(), SessionVerificationFailure> {
     let mut session = client.session.clone();
-    let my = client.origin().join("/my/").map_err(|e| e.to_string())?;
+    let my = client
+        .origin()
+        .join("/my/")
+        .map_err(|e| SessionVerificationFailure::Other(e.to_string()))?;
     let page = client.fetch(&my).await.map_err(|e| match e {
-        QuantaError::AuthExpired => "Sign-in did not establish a usable session.".to_string(),
-        other => other.to_string(),
+        QuantaError::AuthExpired => SessionVerificationFailure::AuthExpired,
+        other => SessionVerificationFailure::Other(other.to_string()),
     })?;
 
     let (uid, sesskey, fullname) = parse::parse_session_facts(&page.body);
@@ -447,39 +474,49 @@ async fn verify_and_install_session(
         }
     }
     // Publish the fully verified session facts into the active client.
+    client.verify_academic_identity(uid, &page.final_url);
     client.session = session.clone();
     let client = Arc::new(client);
 
+    let installed =
+        std::cell::RefCell::new(Err("Sign-in session is no longer active.".to_string()));
     let install = || {
-        let conn = state.conn();
-        let _ = db::set_kv(&conn, "current_email", &session.email);
-        state.set_client(Some(client));
-        // Anything that parked itself waiting for a session resumes now, and
-        // the pending downloads are re-validated against this session.
-        state.mirror.session_restored();
-        state.sync.set_auth_state("authenticated");
-        *state.sync.last_error.lock().unwrap() = None;
+        *installed.borrow_mut() =
+            state.install_client_if_current(&generation, client, &session.email);
     };
     if let Some(attempt_id) = sso_attempt {
         if !commit_sso_if_current(&state.sync.sso_lifecycle, attempt_id, install) {
-            return Err("Sign-in attempt is no longer active.".into());
+            return Err(SessionVerificationFailure::Other(
+                "Sign-in attempt is no longer active.".into(),
+            ));
         }
     } else {
         install();
     }
 
-    Ok(())
+    installed
+        .into_inner()
+        .map_err(SessionVerificationFailure::Other)
 }
 
 async fn finalize_session(
     app: &AppHandle,
     session: SessionInfo,
     sso_attempt: Option<&str>,
+    generation: Option<&str>,
 ) -> Result<AuthStatus, String> {
     let state = app.state::<AppState>();
     let client = QuantaClient::from_session(session, state.settings().request_timeout_secs)
         .map_err(|e| e.to_string())?;
-    verify_and_install_session(&state, client, sso_attempt).await?;
+    let current_generation = crate::academic::context(&state).generation;
+    verify_and_install_session_in_generation(
+        &state,
+        client,
+        sso_attempt,
+        generation.unwrap_or(&current_generation),
+    )
+    .await
+    .map_err(|error| error.to_string())?;
     let _ = app.emit("auth:changed", ());
     Ok(auth_status(&state))
 }
@@ -489,7 +526,7 @@ async fn finalize_sso_session(
     session: SessionInfo,
     attempt_id: &str,
 ) -> Result<AuthStatus, String> {
-    finalize_session(app, session, Some(attempt_id)).await
+    finalize_session(app, session, Some(attempt_id), None).await
 }
 
 fn is_current_attempt(app: &AppHandle, attempt: &SsoAttempt) -> bool {
@@ -556,12 +593,18 @@ pub fn restore_session(state: &AppState) {
 }
 
 pub fn logout(state: &AppState) -> Result<(), String> {
+    // Release the SSO slot as well: its credential acquisition may predate the
+    // verification generation. The attempt loop observes terminal cancellation.
+    if let Some(attempt) = state.sync.sso_lifecycle.lock().unwrap().take() {
+        attempt.publish(Err("Sign-in was cancelled by logout.".into()));
+    }
+    state.set_client(None);
+    state.sync.cancel.store(true, Ordering::SeqCst);
     {
         let conn = state.conn();
         let _ = db::del_kv(&conn, "current_email");
         let _ = db::del_kv(&conn, "next_scan_at");
     }
-    state.set_client(None);
     state.sync.set_auth_state("unauthenticated");
     Ok(())
 }
@@ -617,6 +660,7 @@ pub async fn restart_quanta_session(app: AppHandle) -> SessionResetResult {
 async fn reset_and_login(app: &AppHandle) -> SessionResetResult {
     let state = app.state::<AppState>();
 
+    crate::academic::invalidate(&state);
     // Gate every new Quanta operation before asking existing work to stop.
     state.sync.cancel.store(true, Ordering::SeqCst);
     if let Some(id) = active_sso_attempt_id(&state) {
@@ -784,6 +828,7 @@ pub async fn refresh_existing_session(app: AppHandle) -> SessionRefreshResult {
         };
     }
 
+    let generation = crate::academic::context(&state).generation;
     let result = async {
         let Some(client) = state.client() else {
             return SessionRefreshResult {
@@ -791,20 +836,14 @@ pub async fn refresh_existing_session(app: AppHandle) -> SessionRefreshResult {
                 message: "No active Quanta session is available. Sign in again to continue.".into(),
             };
         };
-        let url = match client.origin().join("/my/") {
-            Ok(url) => url,
-            Err(_) => {
-                return SessionRefreshResult {
-                    status: "failed".into(),
-                    message: "Could not build the Quanta session check request.".into(),
-                }
-            }
-        };
-
-        match tokio::time::timeout(Duration::from_secs(20), client.fetch(&url)).await {
-            Ok(Ok(_)) => {
-                state.sync.set_auth_state("authenticated");
-                *state.sync.last_error.lock().unwrap() = None;
+        let verification = verify_and_install_session_in_generation(
+            &state,
+            client.verification_candidate(),
+            None,
+            &generation,
+        );
+        match tokio::time::timeout(Duration::from_secs(20), verification).await {
+            Ok(Ok(())) => {
                 let _ = app.emit("auth:changed", ());
                 if !state.sync.is_running() {
                     let app = app.clone();
@@ -817,7 +856,13 @@ pub async fn refresh_existing_session(app: AppHandle) -> SessionRefreshResult {
                     message: "The existing Quanta session is working again.".into(),
                 }
             }
-            Ok(Err(QuantaError::AuthExpired)) => {
+            Ok(Err(SessionVerificationFailure::AuthExpired)) => {
+                if crate::academic::context(&state).generation != generation {
+                    return SessionRefreshResult {
+                        status: "login_required".into(),
+                        message: "Quanta session changed.".into(),
+                    };
+                }
                 state.sync.set_auth_state("expired");
                 SessionRefreshResult {
                     status: "login_required".into(),
