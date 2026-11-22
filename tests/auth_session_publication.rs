@@ -297,3 +297,5 @@ async fn unusable_session_never_replaces_active_identity() {
 include!("academic_foundation.rs");
 
 include!("assignment_observations.rs");
+
+include!("grade_observations.rs");

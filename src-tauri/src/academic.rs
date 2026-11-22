@@ -201,6 +201,7 @@ pub enum SubmissionStatus {
 pub enum GradeKind {
     Item,
     Category,
+    CategoryTotal,
     CourseTotal,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -217,6 +218,28 @@ pub struct GradeObservation {
     pub weight_display: Option<String>,
     /// Plain released text only; authenticated HTML is never stored.
     pub feedback: Option<String>,
+    #[serde(default)]
+    pub details: Option<GradeDetails>,
+    /// The last complete report omitted this identity.
+    #[serde(default)]
+    pub omitted: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GradeDetails {
+    pub value_status: GradeValueStatus,
+    pub percentage_display: Option<String>,
+    pub letter_display: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GradeValueStatus {
+    Reported,
+    Blank,
+    Ungraded,
+    Unknown,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -420,12 +443,23 @@ pub fn commit(
     }
     if let AcademicBatch::Grades(rows) = &mut batch {
         for row in rows {
+            if row.source.visibility != Visibility::Visible {
+                row.display_value = None;
+                row.numeric_value = None;
+                row.range_display = None;
+                row.weight_display = None;
+                row.feedback = None;
+                row.details = None;
+            }
             if row.numeric_value.is_some_and(|v| !v.is_finite()) {
                 return Err("Invalid academic grade".into());
             }
-            if let Some(feedback) = &row.feedback {
-                if feedback.contains('<') {
-                    row.feedback = Some(crate::quanta::parse::extract_readable_text(feedback));
+            // Legacy A0 batches may supply HTML. Detailed G1 rows already carry plain text.
+            if row.details.is_none() {
+                if let Some(feedback) = &row.feedback {
+                    if feedback.contains('<') {
+                        row.feedback = Some(crate::quanta::parse::extract_readable_text(feedback));
+                    }
                 }
             }
         }
@@ -456,11 +490,7 @@ pub fn commit(
                     tx.execute("INSERT INTO academic_assignments VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)", params![owner.origin,owner.moodle_user_id,course_id,r.source.source_id,r.source.source_url,r.source.observed_at,encoded(&r.source.visibility),r.title,r.course_module_id,r.activity_instance_id,r.resource_id,encoded(&r.due),encoded(&r.submission_status),r.attempt_number,r.due_display,r.submission_display,r.calendar_event_id,r.details.as_ref().map(encoded)]).map_err(storage_error)?;
                 }
             }
-            AcademicBatch::Grades(rows) => {
-                for r in rows {
-                    tx.execute("INSERT INTO academic_grades VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16) ON CONFLICT(origin,owner_id,course_id,source_id) DO UPDATE SET source_url=excluded.source_url, observed_at=excluded.observed_at, visibility=excluded.visibility, title=excluded.title, grade_item_id=excluded.grade_item_id, parent_source_id=excluded.parent_source_id, item_kind=excluded.item_kind, display_value=excluded.display_value, numeric_value=excluded.numeric_value, range_display=excluded.range_display, weight_display=excluded.weight_display, feedback=excluded.feedback", params![owner.origin,owner.moodle_user_id,course_id,r.source.source_id,r.source.source_url,r.source.observed_at,encoded(&r.source.visibility),r.title,r.grade_item_id,r.parent_source_id,encoded(&r.item_kind),r.display_value,r.numeric_value,r.range_display,r.weight_display,r.feedback]).map_err(storage_error)?;
-                }
-            }
+            AcademicBatch::Grades(_) => {}
             AcademicBatch::Attendance(rows) => {
                 for r in rows {
                     tx.execute("INSERT INTO academic_attendance VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15) ON CONFLICT(origin,owner_id,course_id,source_id) DO UPDATE SET source_url=excluded.source_url, observed_at=excluded.observed_at, visibility=excluded.visibility, activity_instance_id=excluded.activity_instance_id, session_id=excluded.session_id, scope_display=excluded.scope_display, status_display=excluded.status_display, points_display=excluded.points_display, maximum_display=excluded.maximum_display, summary_display=excluded.summary_display, course_module_id=excluded.course_module_id", params![owner.origin,owner.moodle_user_id,course_id,r.source.source_id,r.source.source_url,r.source.observed_at,encoded(&r.source.visibility),r.activity_instance_id,r.session_id,r.scope_display,r.status_display,r.points_display,r.maximum_display,r.summary_display,r.course_module_id]).map_err(storage_error)?;
@@ -468,23 +498,18 @@ pub fn commit(
             }
         }
     }
-    // Never retain marks/feedback from a non-visible observation, even if an
-    // upstream adapter accidentally supplied them alongside a restriction.
-    match domain {
-        "grades" => {
-            tx.execute("UPDATE academic_grades SET display_value=NULL,numeric_value=NULL,range_display=NULL,weight_display=NULL,feedback=NULL WHERE origin=?1 AND owner_id=?2 AND course_id=?3 AND visibility!='\"visible\"'",params![owner.origin,owner.moodle_user_id,course_id]).map_err(storage_error)?;
-        }
-        "attendance" => {
-            tx.execute("UPDATE academic_attendance SET status_display=NULL,points_display=NULL,maximum_display=NULL,summary_display=NULL WHERE origin=?1 AND owner_id=?2 AND course_id=?3 AND visibility!='\"visible\"'",params![owner.origin,owner.moodle_user_id,course_id]).map_err(storage_error)?;
-        }
-        _ => {}
+    if let AcademicBatch::Grades(rows) = &batch {
+        write_grades(&tx, owner, course_id, coverage, rows).map_err(storage_error)?;
+    }
+    if domain == "attendance" {
+        tx.execute("UPDATE academic_attendance SET status_display=NULL,points_display=NULL,maximum_display=NULL,summary_display=NULL WHERE origin=?1 AND owner_id=?2 AND course_id=?3 AND visibility!='\"visible\"'",params![owner.origin,owner.moodle_user_id,course_id]).map_err(storage_error)?;
     }
     if coverage == Coverage::Denied {
         // Explicit permission loss removes values, retaining only source identity
         // and baseline. A later failure/empty report cannot resurrect them.
         let sql = match domain {
             "assignments" => "UPDATE academic_assignments SET visibility='\"hidden\"',due_value='{\"kind\":\"unknown\"}',submission_status='\"unknown\"',attempt_number=NULL,due_display=NULL,submission_display=NULL,details=NULL WHERE origin=?1 AND owner_id=?2 AND course_id=?3",
-            "grades" => "UPDATE academic_grades SET visibility='\"hidden\"',display_value=NULL,numeric_value=NULL,range_display=NULL,weight_display=NULL,feedback=NULL WHERE origin=?1 AND owner_id=?2 AND course_id=?3",
+            "grades" => "UPDATE academic_grades SET visibility='\"hidden\"',display_value=NULL,numeric_value=NULL,range_display=NULL,weight_display=NULL,feedback=NULL,details=NULL WHERE origin=?1 AND owner_id=?2 AND course_id=?3",
             _ => "UPDATE academic_attendance SET visibility='\"hidden\"',status_display=NULL,points_display=NULL,maximum_display=NULL,summary_display=NULL WHERE origin=?1 AND owner_id=?2 AND course_id=?3",
         };
         tx.execute(sql, params![owner.origin, owner.moodle_user_id, course_id])
@@ -503,6 +528,49 @@ pub fn commit(
         domain: domain.into(),
         changed,
     })
+}
+
+fn write_grades(
+    conn: &rusqlite::Connection,
+    owner: &AcademicOwner,
+    course_id: i64,
+    coverage: Coverage,
+    rows: &[GradeObservation],
+) -> rusqlite::Result<()> {
+    if !matches!(coverage, Coverage::Complete | Coverage::Partial) {
+        return Ok(());
+    }
+    if coverage == Coverage::Complete {
+        // Omission only ages a previously observed grade. A restriction requires
+        // explicit source evidence and is applied even in a partial report.
+        conn.execute(
+            "UPDATE academic_grades SET omitted=1 WHERE origin=?1 AND owner_id=?2 AND course_id=?3",
+            params![owner.origin, owner.moodle_user_id, course_id],
+        )?;
+    }
+    let mut stmt = conn.prepare(
+        "INSERT INTO academic_grades
+         (origin,owner_id,course_id,source_id,source_url,observed_at,visibility,title,grade_item_id,
+          parent_source_id,item_kind,display_value,numeric_value,range_display,weight_display,feedback,details,omitted)
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,0)
+         ON CONFLICT(origin,owner_id,course_id,source_id) DO UPDATE SET
+           source_url=excluded.source_url, observed_at=excluded.observed_at, visibility=excluded.visibility,
+           title=excluded.title, grade_item_id=excluded.grade_item_id, parent_source_id=excluded.parent_source_id,
+           item_kind=excluded.item_kind, display_value=excluded.display_value, numeric_value=excluded.numeric_value,
+           range_display=excluded.range_display, weight_display=excluded.weight_display, feedback=excluded.feedback,
+           details=excluded.details, omitted=0",
+    )?;
+    for row in rows.iter().filter(|row| {
+        coverage == Coverage::Complete || matches!(row.source.visibility, Visibility::Hidden | Visibility::Unreleased)
+    }) {
+        stmt.execute(params![
+            owner.origin, owner.moodle_user_id, course_id, row.source.source_id, row.source.source_url,
+            row.source.observed_at, encoded(&row.source.visibility), row.title, row.grade_item_id,
+            row.parent_source_id, encoded(&row.item_kind), row.display_value, row.numeric_value,
+            row.range_display, row.weight_display, row.feedback, row.details.as_ref().map(encoded)
+        ])?;
+    }
+    Ok(())
 }
 
 fn scope_fingerprint(
@@ -526,13 +594,12 @@ fn scope_fingerprint(
             |row| {
                 let mut values = Vec::new();
                 for column in 3..count {
-                    if column == 5 {
+                    if column == 5 || (domain == "grades" && column == 17) {
                         continue;
                     }
                     let value: rusqlite::types::Value = row.get(column)?;
-                    // A revision-9 assignment with no new facts keeps its fingerprint.
-                    if domain == "assignments"
-                        && column == 17
+                    // Older rows with no new facts keep their fingerprints.
+                    if ((domain == "assignments" && column == 17) || (domain == "grades" && column == 16))
                         && value == rusqlite::types::Value::Null
                     {
                         continue;
@@ -661,6 +728,8 @@ pub fn grades(
                         range_display: r.get(13)?,
                         weight_display: r.get(14)?,
                         feedback: r.get(15)?,
+                        details: r.get::<_, Option<String>>(16)?.map(decoded).transpose()?,
+                        omitted: r.get(17)?,
                     })
                 },
             )
@@ -753,6 +822,17 @@ pub async fn read_student_report(
     generation: &str,
     report: crate::quanta::client::StudentReport,
 ) -> Result<crate::quanta::client::Fetched, crate::quanta::client::StudentReportError> {
+    read_student_report_then(state, generation, report, |result| result).await?
+}
+
+/// Hold the same report admission through synchronous interpretation and commit.
+/// The callback runs outside the authority lock and must use the commit fence.
+pub(crate) async fn read_student_report_then<T>(
+    state: &AppState,
+    generation: &str,
+    report: crate::quanta::client::StudentReport,
+    finish: impl FnOnce(Result<crate::quanta::client::Fetched, crate::quanta::client::StudentReportError>) -> T,
+) -> Result<T, crate::quanta::client::StudentReportError> {
     use crate::quanta::client::StudentReportError;
     use std::sync::atomic::Ordering;
     let _lease = state
@@ -792,14 +872,16 @@ pub async fn read_student_report(
         result = client.read_student_report(report) => result,
         _ = async { loop { if cancelled.load(Ordering::SeqCst) { break; } tokio::time::sleep(std::time::Duration::from_millis(25)).await; } } => return Err(StudentReportError::SessionChanged),
     };
-    let authority = state.sync.academic.lock().unwrap();
-    authority
-        .check(generation)
-        .map_err(|_| StudentReportError::SessionChanged)?;
-    if matches!(result, Err(StudentReportError::AuthExpired)) {
-        state.sync.set_auth_state("expired");
+    {
+        let authority = state.sync.academic.lock().unwrap();
+        authority
+            .check(generation)
+            .map_err(|_| StudentReportError::SessionChanged)?;
+        if matches!(result, Err(StudentReportError::AuthExpired)) {
+            state.sync.set_auth_state("expired");
+        }
     }
-    result
+    Ok(finish(result))
 }
 
 fn normalize_date(date: &mut AcademicDate) -> Result<(), String> {

@@ -7,7 +7,7 @@ import { resourceSectionPath } from "../../lib/sectionPath";
 import { useMaterialActions } from "../../hooks/useMaterialActions";
 import { getListNavigationIntent, recoverFocusedId, type ListNavigationInput } from "../../lib/listNavigation";
 import { useSessionScroll, useSessionValue } from "../../hooks/useSessionViews";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMirror } from "../../hooks/useMirror";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -60,6 +60,7 @@ import { Banner } from "../../components/ui/Banner";
 import { Skeleton } from "../../components/ui/Skeleton";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import TreeRow, { type FlatRow } from "./TreeRow";
+import { CourseGrades } from "./CourseGrades";
 import { courseHomeUrl } from "./courseUrl";
 import CourseRenameDialog from "./CourseRenameDialog";
 import { LibraryFooter, LibraryHeader } from "./LibraryFrame";
@@ -190,7 +191,8 @@ export default function CoursePage({
   const [confirmRebaseline, setConfirmRebaseline] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
 
-  const [tab, setTab] = useSessionValue<"contents" | "activity">(`course:${course.id}:tab`, "contents");
+  const [tab, setTab] = useSessionValue<"contents" | "activity" | "grades">(`course:${course.id}:tab`, "contents");
+  const gradePanelId = useId();
   const previousTab = useRef(tab);
   useEffect(() => {
     if (previousTab.current !== tab) details?.clear();
@@ -954,7 +956,7 @@ export default function CoursePage({
   );
 
   const visibleCount = fileRows.length;
-  const footer = tab === "activity" ? `Recorded changes in ${code}`
+  const footer = tab === "grades" ? null : tab === "activity" ? `Recorded changes in ${code}`
     : inventoryError && total === 0 ? "Loading failed"
     : total === 0 ? "0 materials"
     : searching ? `${shown} ${shown === 1 ? "match" : "matches"}${shown > 0 ? ` in ${code}` : ""}`
@@ -980,9 +982,10 @@ export default function CoursePage({
           items={[
             { id: "contents", label: "Materials" },
             { id: "activity", label: "Activity" },
+            { id: "grades", label: "Grades", panelId: gradePanelId },
           ]}
           value={tab}
-          onChange={(id) => setTab(id as "contents" | "activity")}
+          onChange={(id) => setTab(id as "contents" | "activity" | "grades")}
           ariaLabel="Course views"
         />}
         actions={<>
@@ -997,7 +1000,10 @@ export default function CoursePage({
           {headerActions}
         </>}
       />
-      <div className="library-panel-scroll course-panel-scroll" ref={mainScroll}>
+      <div className="library-panel-scroll course-panel-scroll" ref={mainScroll}
+        role={tab === "grades" ? "tabpanel" : undefined}
+        id={tab === "grades" ? gradePanelId : undefined}
+        aria-labelledby={tab === "grades" ? `${gradePanelId}-tab` : undefined}>
       {tab === "contents" && (status || (inventoryError && total > 0) || (inventoryPending && total > 0)) && (
         <Banner kind={inventoryError ? "error" : "info"} action={inventoryError ? { label: "Retry", onClick: () => void onChanged() } : undefined}>
           {status ?? (inventoryError ? `Inventory refresh failed: ${inventoryError}. Retained materials remain inspectable; new changes are blocked.` : "Inventory unavailable or refreshing; new changes are blocked.")}
@@ -1009,7 +1015,9 @@ export default function CoursePage({
           {loadError}
         </Banner>
       )}
-      {tab === "contents" && (items === null || (inventoryPending && total === 0)) && !inventoryError ? (
+      {tab === "grades" ? (
+        <CourseGrades course={course} onOpen={onOpen} timeZone={timeZone} />
+      ) : tab === "contents" && (items === null || (inventoryPending && total === 0)) && !inventoryError ? (
         loading ? <Skeleton rows={8} /> : null
       ) : tab === "contents" ? (
         <>
@@ -1144,7 +1152,7 @@ export default function CoursePage({
       )}
 
       </div>
-      <LibraryFooter course folders={!sidebarNavigation && tab === "contents"}>{footer}</LibraryFooter>
+      {footer && <LibraryFooter course folders={!sidebarNavigation && tab === "contents"}>{footer}</LibraryFooter>}
       {capture && <ConfirmDialog key={capture.generation} open onOpenChange={open => {
         if (!open && generation.current === capture.generation && lock.current === null) {
           setCapture(null); setStatus(null);

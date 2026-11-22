@@ -204,6 +204,8 @@ async fn domain_failures_do_not_consume_baselines_or_enter_material_pipelines() 
         range_display: Some("0–10".into()),
         weight_display: None,
         feedback: Some("Private released feedback".into()),
+        details: None,
+        omitted: false,
     };
     assert!(
         !commit(
@@ -412,6 +414,8 @@ async fn omitted_grade_and_permission_failure_do_not_resurrect_or_erase_truth() 
         range_display: None,
         weight_display: None,
         feedback: Some("Released".into()),
+        details: None,
+        omitted: false,
     };
     commit(
         &state,
@@ -434,7 +438,7 @@ async fn omitted_grade_and_permission_failure_do_not_resurrect_or_erase_truth() 
     );
     assert_eq!(
         grades(&state, &generation, 101).unwrap().records,
-        vec![grade.clone()]
+        vec![GradeObservation { omitted: true, ..grade.clone() }]
     );
     commit(
         &state,
@@ -755,6 +759,8 @@ async fn attendance_scopes_dates_hidden_grades_and_restart_keep_typed_private_pa
         range_display: None,
         weight_display: None,
         feedback: Some("SECRET feedback".into()),
+        details: None,
+        omitted: false,
     };
     commit(
         &state,
@@ -831,6 +837,8 @@ fn synthetic_grade(id: &str) -> crate::academic::GradeObservation {
         range_display: Some("0–10".into()),
         weight_display: None,
         feedback: Some("Synthetic private feedback".into()),
+        details: None,
+        omitted: false,
     }
 }
 
