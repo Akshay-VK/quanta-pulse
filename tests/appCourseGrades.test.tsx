@@ -60,9 +60,9 @@ async function openCourse(keyboard = false) {
   expect(appApi.academicGrades).not.toHaveBeenCalled();
   if (keyboard) {
     await act(async () => {
-      const materials = button("Materials");
-      materials.focus();
-      materials.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true }));
+      const activity = button("Activity");
+      activity.focus();
+      activity.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
     });
     await flushApp();
     expect(document.activeElement).toBe(button("Grades"));

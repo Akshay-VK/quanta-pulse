@@ -13,6 +13,7 @@ pub mod discover;
 pub(crate) mod material_collector;
 pub mod parse;
 pub mod preview;
+pub(crate) mod report_html;
 pub mod urlnorm;
 
 /// A course discovered from the authenticated dashboard.

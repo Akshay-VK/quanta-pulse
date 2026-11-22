@@ -1,23 +1,26 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { academicEpoch, sameAcademicSession, subscribeAcademicSession } from "../lib/academicSession";
 import { api } from "../lib/api";
-import type { AcademicPage, GradeObservation } from "../lib/types";
+import type { AcademicPage } from "../lib/types";
 import { useAcademicPage } from "./useAcademicPage";
 
-/** Reads the local grade partition on demand, scoped to this course and owner. */
-export function useGradeReport(courseId: number) {
+/** Reads a local course report on demand, fenced by the active owner and generation. */
+export function useLocalAcademicReport<T>(
+  courseId: number,
+  read: (generation: string, courseId: number) => Promise<AcademicPage<T>>,
+) {
   const epoch = useSyncExternalStore(subscribeAcademicSession, academicEpoch);
   const [attempt, setAttempt] = useState(0);
   const [result, setResult] = useState<{
     courseId: number;
     epoch: number;
     attempt: number;
-    page: AcademicPage<GradeObservation> | null;
+    page: AcademicPage<T> | null;
     status: "ready" | "locked" | "failed";
   }>();
   useEffect(() => {
     let active = true;
-    const publish = (status: "ready" | "locked" | "failed", page: AcademicPage<GradeObservation> | null = null) => {
+    const publish = (status: "ready" | "locked" | "failed", page: AcademicPage<T> | null = null) => {
       if (active && epoch === academicEpoch()) setResult({ courseId, epoch, attempt, status, page });
     };
     void (async () => {
@@ -28,7 +31,7 @@ export function useGradeReport(courseId: number) {
           publish("locked");
           return;
         }
-        const page = await api.academicGrades(context.generation, courseId);
+        const page = await read(context.generation, courseId);
         if (page.courseId !== courseId || !sameAcademicSession(context, page.context)) {
           publish("failed");
           return;
@@ -39,7 +42,7 @@ export function useGradeReport(courseId: number) {
       }
     })();
     return () => { active = false; };
-  }, [courseId, epoch, attempt]);
+  }, [courseId, epoch, attempt, read]);
 
   const current = result?.courseId === courseId && result.epoch === epoch && result.attempt === attempt ? result : undefined;
   const page = useAcademicPage(current?.page ?? null);
