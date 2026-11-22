@@ -1,3 +1,4 @@
+import { compareNames, compareResourceNames } from "./fileOrdering";
 import type { Resource } from "./types";
 import { resourceSectionPath } from "./sectionPath";
 
@@ -63,8 +64,8 @@ export function buildCourseTree(resources: Resource[], courseName: string): Cour
     node.resources.push(resource);
   }
   const sort = (node: CourseTreeNode) => {
-    node.children.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
-    node.resources.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }));
+    node.children.sort((a, b) => compareNames(a.name, b.name) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    node.resources.sort(compareResourceNames);
     node.children.forEach(sort);
   };
   sort(root);

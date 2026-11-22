@@ -3,7 +3,7 @@ import { MaterialButtons } from "../../components/MaterialButtons";
 import { type ReactNode } from "react";
 import { Check, ChevronRight, ExternalLink, Folder } from "lucide-react";
 import { cx } from "../../lib/cx";
-import { formatTimeOfDay } from "../../lib/format";
+import { formatCompact, formatListDate } from "../../lib/format";
 import { resourceSectionPath } from "../../lib/sectionPath";
 import type { CourseTreeNode } from "../../lib/courseTree";
 import type { Resource } from "../../lib/types";
@@ -165,8 +165,8 @@ export default function TreeRow({
       {compactCourse
         ? <CoursePill courseId={compactCourse.id} code={compactCourse.code} name={compactCourse.name} />
         : <span className="course-material-section mono" title={folder}>{section}</span>}
-      <span className="course-material-detected mono" title="Detected">
-        {formatTimeOfDay(resource.firstSeenAt)}
+      <span className="course-material-detected mono" title={`First detected ${formatCompact(resource.firstSeenAt)}`}>
+        {formatListDate(resource.firstSeenAt)}
       </span>
       <span className="course-material-saved">{saved && <Check aria-label="Saved" />}</span>
       <span className="course-material-actions">

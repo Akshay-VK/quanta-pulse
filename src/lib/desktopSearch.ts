@@ -1,5 +1,5 @@
 import { dedupeCourseResources } from "./courseTree";
-import { resourceCategory, type ResourceCategoryId } from "./courseLibrary";
+import { sortResources, resourceCategory, type ResourceCategoryId } from "./courseLibrary";
 /** Shared offline metadata search policy for the command palette and Library. */
 import type { Course, Resource } from "./types";
 import { parsePaletteQuery, normalizeSearchText as norm } from "./paletteQuery";
@@ -222,7 +222,7 @@ export function searchDesktop(request: SearchRequest, inventory: SearchInventory
     const parsedTs = ts && (validCalendarInstant(ts) || validCalendarDate(ts)) ? parseTimestamp(ts) : null;
     return parsedTs ? parsedTs.getTime() : Number.NEGATIVE_INFINITY;
   };
-  const rankedFiles = [...candidateFiles].sort((a, b) => {
+  const rankedFiles = terms.length === 0 ? sortResources(candidateFiles, "newest") : [...candidateFiles].sort((a, b) => {
     const sa = scoreTitle(a.title);
     const sb = scoreTitle(b.title);
     if (sa !== sb) return sa - sb;

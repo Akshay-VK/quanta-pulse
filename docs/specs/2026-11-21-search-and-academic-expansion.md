@@ -221,3 +221,9 @@ Upstream research is pinned to Moodle commit `69ef83ad2948db19595106671f03a14296
 - [Redesign alignment evidence and native limits](../wiki/2026-11-20-redesign-reference-alignment.md) and [Windows native test command](../wiki/2026-11-16-windows-native-test-command.md).
 
 Publication destination: GitHub Issues in `Akshay-VK/quanta-pulse`, as a parent specification labeled `ready-for-agent`, with test boundaries confirmed. Search matching issues before creating it, preserve existing labels if updating, and read back the published body and label. Implementation ticket creation and application changes are separate follow-up work.
+
+### 2026-11-21 authorized sorting addendum (#70)
+
+The user requested investigation and improvement of haphazard upload/numerical ordering. At `838d6b2`, fixture reproduction confirmed lexical numeric ordering, input-dependent tree ties, and inconsistent empty-query date ties. This follow-up changes browsing only: queries without free-text terms use newest activity, unknown last, then natural-number name and stable ID. Genuine textual queries retain the exact/prefix/title/metadata relevance and timestamp/ID tie contract above. Explicit sorts continue to override this default and remain remembered in-session.
+
+Names use numeric, case/accent-insensitive comparison with stable ID ties for files and exact path ties for folders. Date sorting rejects impossible calendar values and keeps unknown last in both directions. Activity date follows upload, publication, modification, then first detection, in that authority order; it is not proof of an upload. Detected continues to mean first local detection. Source metadata unavailable in Quanta cannot be fabricated from detection. Controls must expose this meaning and must not offer a direction switch that has no effect on relevance.
