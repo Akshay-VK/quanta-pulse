@@ -486,8 +486,14 @@ export interface AssignmentFacts {
 }
 export interface GradeObservation {
   source: AcademicSource; title: string; gradeItemId: number | null; parentSourceId: string | null;
-  itemKind: "item" | "category" | "courseTotal"; displayValue: string | null; numericValue: number | null;
+  itemKind: "item" | "category" | "categoryTotal" | "courseTotal"; displayValue: string | null; numericValue: number | null;
   rangeDisplay: string | null; weightDisplay: string | null; feedback: string | null;
+  details?: {
+    valueStatus: "reported" | "blank" | "ungraded" | "unknown";
+    percentageDisplay: string | null;
+    letterDisplay: string | null;
+  } | null;
+  omitted?: boolean;
 }
 export interface AttendanceObservation {
   source: AcademicSource; activityInstanceId: number; courseModuleId: number | null; sessionId: number | null; scopeDisplay: string;

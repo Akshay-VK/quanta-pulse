@@ -12,6 +12,7 @@ pub mod commands;
 mod content_search;
 pub mod core;
 pub mod db;
+pub mod grades;
 pub mod logging;
 pub mod mirror_worker;
 pub mod models;

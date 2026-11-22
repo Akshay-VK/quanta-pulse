@@ -97,7 +97,7 @@ export function ViewTabs({
   ariaLabel,
   className,
 }: {
-  items: { id: string; label: string; accessibleLabel?: string }[];
+  items: { id: string; label: string; accessibleLabel?: string; panelId?: string }[];
   value: string;
   onChange: (id: string) => void;
   ariaLabel: string;
@@ -121,6 +121,8 @@ export function ViewTabs({
             type="button"
             role="tab"
             aria-label={item.accessibleLabel}
+            id={item.panelId ? `${item.panelId}-tab` : undefined}
+            aria-controls={item.panelId}
             className={cx("filter-tab", selected && "is-selected")}
             aria-selected={selected}
             tabIndex={selected ? 0 : -1}
