@@ -257,6 +257,7 @@ async fn assignment_reminders_use_current_finality_and_deduplicate_attempt_and_d
         ..Default::default()
     };
     let scan = |discovery: &Discovery, baseline, auth: Option<&str>| {
+        let scan_time = db::now_rfc3339();
         let authority = state.sync.academic.lock().unwrap();
         let scope = auth
             .and_then(|generation| authority.reminder_owner(generation))
@@ -273,7 +274,7 @@ async fn assignment_reminders_use_current_finality_and_deduplicate_attempt_and_d
                 0,
                 &HashSet::new(),
                 24,
-                &now,
+                &scan_time,
                 scope
             )
             .committed
