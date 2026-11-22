@@ -54,6 +54,6 @@ jobs:
       - name: Cargo check
         run: cargo check --all-targets
         working-directory: src-tauri
-      - name: Cargo test
-        run: cargo test
-        working-directory: src-tauri
+      - name: Cargo library tests with Windows manifest
+        shell: powershell
+        run: .\scripts\test-windows-lib.ps1
