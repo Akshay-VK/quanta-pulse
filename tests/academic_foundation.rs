@@ -963,6 +963,7 @@ async fn populated_owner_backup_restore_keeps_partitions_without_authentication_
         AcademicBatch::Grades(vec![grade.clone()]),
     )
     .unwrap();
+    db::set_kv(&state.conn(), db::LAST_APP_VERSION_KEY, "0.4.0").unwrap();
     db::upgrade(&state.conn(), &state.db_path, "0.4.1").unwrap();
     let backup = std::fs::read_dir(data.path().join("backups"))
         .unwrap()
@@ -1399,6 +1400,7 @@ async fn failed_backup_preserves_real_owner_values_and_baseline() {
         AcademicBatch::Grades(vec![grade.clone()]),
     )
     .unwrap();
+    db::set_kv(&state.conn(), db::LAST_APP_VERSION_KEY, "0.4.0").unwrap();
     std::fs::write(data.path().join("backups"), "not a directory").unwrap();
     assert!(db::upgrade(&state.conn(), &state.db_path, "0.4.1")
         .unwrap_err()
