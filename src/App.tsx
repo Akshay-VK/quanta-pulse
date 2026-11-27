@@ -1,3 +1,4 @@
+import { invalidateAcademicSession } from "./lib/academicSession";
 // Application shell: authentication gate, navigation, data loading and the
 // event bridge from the Rust backend, wrapped in the redesign's five-view
 // shell (sidebar, top bar, peek panel, palette, toasts).
@@ -26,7 +27,10 @@ import { Dialog } from "./components/ui/Dialog";
 import { TooltipProvider } from "./components/ui/Tooltip";
 import { Toaster, type ToastItem } from "./components/ui/Toast";
 import InboxView from "./views/InboxView";
-import { useInbox, useDueInventory, queryResourceInventory } from "./hooks/useAttention";
+import { useInbox, useDueInventory } from "./hooks/useAttention";
+import type { SearchQueryState, SearchScope, SearchFilters } from "./lib/desktopSearch";
+import { assignmentDetails, assignmentDue, assignmentModuleId, assignmentProperties, projectAssignmentDates } from "./lib/assignments";
+import { useAssignmentObservations } from "./hooks/useAssignmentObservations";
 import { agendaEntries, resolveTimezone } from "./lib/agenda";
 import CalendarView from "./views/CalendarView";
 import LibraryView from "./views/LibraryView";
@@ -58,7 +62,7 @@ import type {
   DueFilter,
   AuthStatus,
   ChangeEvent,
-  Course,
+  DesktopSearchInventory,
   DbInfo,
   LocalFile,
   Resource,
@@ -110,8 +114,10 @@ function AppShell() {
 
   const [sync, setSync] = useState<SyncStatus | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [courses, setCourses] = useState<Course[]>([]);
-  const [resources, setResources] = useState<Resource[]>([]);
+  const [searchInventory, setSearchInventory] = useState<DesktopSearchInventory>({ courses: [], resources: [], unreadResourceIds: [] });
+  const { courses, resources } = searchInventory;
+  const [searchPending, setSearchPending] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
   const [historyEvents, setHistoryEvents] = useState<ChangeEvent[]>([]);
   const [eventScopeReady, setEventScopeReady] = useState(false);
@@ -149,9 +155,7 @@ function AppShell() {
   const [paletteReadIds, setPaletteReadIds] = useState<number[] | null>(null);
   const paletteReadRequest = useRef<object | null>(null);
   const [paletteReadError, setPaletteReadError] = useState<string | null>(null);
-  const [librarySearch, setLibrarySearch] = useState<string | undefined>();
-  const [librarySearchScope, setLibrarySearchScope] = useState<{ ids: ReadonlySet<number>; label: string }>();
-  const [librarySearchRequest, setLibrarySearchRequest] = useState(0);
+  const [librarySearchQuery, setLibrarySearchQuery] = useState<SearchQueryState | undefined>();
   const [pendingPaletteInspection, setPendingPaletteInspection] = useState<Resource | null>(null);
   const [selection, setSelection] = useState<DetailSelection | null>(null);
   const selectionRef = useRef<DetailSelection | null>(null);
@@ -167,6 +171,33 @@ function AppShell() {
   const peekResource = selection?.kind === "resource"
     ? selection.resource
     : selection?.kind === "change" ? selection.resource ?? null : null;
+  const [assignmentRefresh, setAssignmentRefresh] = useState(0);
+  const assignmentResources = useMemo(() => {
+    const candidates = new Map((agendaDue.items ?? []).map(({ resource }) => [resource.id, resource]));
+    for (const resource of resources) candidates.set(resource.id, resource);
+    return [...candidates.values()].filter(resource => assignmentModuleId(resource) !== null);
+  }, [resources, agendaDue.items]);
+  const inspectedAssignment = selection?.kind === "resource" && peekResource && assignmentModuleId(peekResource) !== null ? peekResource : null;
+  const assignmentCourses = route.view === "calendar" && (!dueFilter.resourceType || dueFilter.resourceType === "assignment")
+    ? assignmentResources.flatMap(resource => resource.courseId != null &&
+        (dueFilter.courseId ? resource.courseId === dueFilter.courseId :
+          courses.find(course => course.id === resource.courseId)?.monitoringStatus !== "paused") ? [resource.courseId] : [])
+    : [];
+  if (inspectedAssignment?.courseId) assignmentCourses.push(inspectedAssignment.courseId);
+  const assignmentCourseKey = [...new Set(assignmentCourses)].sort((a, b) => a - b).join(",");
+  const { pages: assignmentPages, failed: assignmentFailures } = useAssignmentObservations(assignmentCourseKey, assignmentRefresh);
+  const assignmentMaxAge = Math.min(60, settings?.syncIntervalMinutes ?? 60);
+  const assignmentByResource = useMemo(() => assignmentDetails(assignmentPages, inspectedAssignment
+    ? [...assignmentResources, inspectedAssignment] : assignmentResources, now, assignmentMaxAge),
+  [assignmentPages, assignmentResources, inspectedAssignment, now, assignmentMaxAge]);
+  const agendaWithAssignments = {
+    ...agendaDue,
+    items: agendaDue.items && projectAssignmentDates(agendaDue.items, assignmentResources, courses, dueFilter, assignmentByResource),
+    refresh: async () => {
+      setAssignmentRefresh(value => value + 1);
+      await agendaDue.refresh();
+    },
+  };
   const [peekLocal, setPeekLocal] = useState<LocalFile | null>(null);
   const [localLookup, setLocalLookup] = useState<"loading" | "ready" | "error">("ready");
   const mirror = useMirror();
@@ -222,9 +253,21 @@ function AppShell() {
 
   const navigateToCourse = useCallback(
     (courseId: number | null, folderPath: string[] | null = null) =>
-      go({ view: "library", courseId, folderPath }),
+      go({ view: "library", courseId, folderPath: folderPath ? [...folderPath] : null }),
     [go],
   );
+  const handleSeeAllFiles = useCallback((raw: string, options?: SearchFilters & { scope?: SearchScope }) => {
+    setLibrarySearchQuery((previous) => ({
+      raw,
+      scope: options?.scope ?? { kind: "everywhere" },
+      category: options?.category,
+      includeSavedText: options?.includeSavedText,
+      sourceFrom: options?.sourceFrom ?? null,
+      sourceThrough: options?.sourceThrough ?? null,
+      requestId: (previous?.requestId ?? 0) + 1,
+    }));
+    go({ view: "library", courseId: null, folderPath: null });
+  }, [go]);
 
   const goBack = useCallback(() => {
     if (backStack.current.length === 0) return;
@@ -291,15 +334,34 @@ function AppShell() {
     setToasts((current) => current.filter((toast) => toast.id !== id));
   }, []);
 
+  const searchGeneration = useRef(0);
+  // Inspection acknowledges captured events without changing History's complete
+  // collection readiness. Search still replaces metadata/read facts together.
+  const refreshSearchInventory = useCallback(async () => {
+    const generation = ++searchGeneration.current;
+    setSearchPending(true);
+    try {
+      const inventory = await api.listSearchInventory();
+      if (generation !== searchGeneration.current) return;
+      setSearchInventory(inventory);
+      setSearchError(null);
+    } catch (error) {
+      if (generation === searchGeneration.current) setSearchError(String(error));
+    } finally {
+      if (generation === searchGeneration.current) setSearchPending(false);
+    }
+  }, []);
+
   const refreshGeneration = useRef(0);
   const refresh = useCallback(async (requireSuccess = false) => {
     const generation = ++refreshGeneration.current;
+    const searchRequest = ++searchGeneration.current;
+    setSearchPending(false);
     setLoading(true);
     setEventScopeReady(false);
     try {
-      const [c, r, he, s, info] = await Promise.all([
-        api.listCourses(),
-        queryResourceInventory(),
+      const [inventory, he, s, info] = await Promise.all([
+        api.listSearchInventory(),
         queryHistoryInventory(),
         api.listHistoryScans(),
         api.dbInfo(),
@@ -309,8 +371,10 @@ function AppShell() {
         if (requireSuccess) throw new Error("History refresh superseded; retry refresh.");
         return;
       }
-      setCourses(c);
-      setResources(r);
+      if (searchRequest === searchGeneration.current) {
+        setSearchInventory(inventory);
+        setSearchError(null);
+      }
       setHistoryEvents(he);
       setScans(s);
       setDbInfo(info);
@@ -385,10 +449,12 @@ function AppShell() {
       });
       await add<ScanOutcome>("sync:done", (outcome) => {
         if (outcome?.cancelled || outcome?.authExpired || outcome?.errors?.length) setFirstRunAfterScan(null);
+        setAssignmentRefresh(value => value + 1);
         void refresh();
         void refreshStatus();
       });
       await add<unknown>("auth:changed", () => {
+        invalidateAcademicSession();
         void refreshStatus();
         void refresh();
       });
@@ -434,6 +500,7 @@ function AppShell() {
 
   const sessionRestart = useRef<Promise<SessionResetResult> | null>(null);
   const restartQuantaSession = useCallback(() => {
+    invalidateAcademicSession();
     if (sessionRestart.current) return sessionRestart.current;
     const work = api.restartQuantaSession().then(async (result) => {
       await refreshStatus();
@@ -473,11 +540,15 @@ function AppShell() {
   }, [historyEvents, notify, refresh]);
 
   const handleLogout = useCallback(async () => {
+    invalidateAcademicSession();
     await api.logout();
     setAuth(await api.authStatus());
-    setResources([]);
+    ++refreshGeneration.current;
+    ++searchGeneration.current;
+    setSearchPending(false);
+    setSearchError(null);
+    setSearchInventory({ courses: [], resources: [], unreadResourceIds: [] });
     setHistoryEvents([]);
-    setCourses([]);
   }, []);
 
   const saveSettings = useCallback(async (next: Settings) => {
@@ -492,14 +563,20 @@ function AppShell() {
     if (ids.length === 0) return;
     const previous = new Map(historyEventsRef.current.filter((event) => ids.includes(event.id)).map((event) => [event.id, event.read]));
     setHistoryEvents((current) => current.map((event) => (ids.includes(event.id) ? { ...event, read: true } : event)));
+    // Search keeps its last complete metadata/read snapshot during the write.
+    // Invalidate earlier refreshes, then replace all facts atomically on success.
+    ++searchGeneration.current;
+    setSearchPending(true);
     void api.setEventReadState(ids, true).then(() => {
+      void refreshSearchInventory();
       void inboxRefreshRef.current();
     }).catch((err) => {
       setHistoryEvents((current) => current.map((event) => (previous.has(event.id) ? { ...event, read: previous.get(event.id)! } : event)));
+      void refreshSearchInventory();
       void inboxRefreshRef.current();
       notify(String(err), true);
     });
-  }, [notify]);
+  }, [notify, refreshSearchInventory]);
 
   const selectDetails = useCallback((owner: ViewId, subject: DetailSubject, origin: HTMLElement, restoreFocus?: RestoreDetailFocus) => {
     const next = { ...subject, owner, identity: detailIdentity(subject) };
@@ -513,7 +590,7 @@ function AppShell() {
     // Inspecting an unread item marks its captured event IDs read (optimistic, rolled back on failure).
     // Focus, multi-select and preview never trigger this.
     const capturedReadIds: number[] = [];
-    if (subject.kind === "resource") {
+    if (subject.kind === "resource" && !(owner === "calendar" && assignmentModuleId(subject.resource) !== null)) {
       void api.snapshotResourceUnreadEventIds(subject.resource.id)
         .then((ids) => markInspectedRead(ids))
         .catch((error) => notify(String(error), true));
@@ -757,16 +834,21 @@ function AppShell() {
     if (!peekResource) return null;
     const local = peekLocal && peekLocal.resourceId === peekResource.id ? peekLocal : null;
     const event = selection?.kind === "change" ? selection.change : null;
-    const actions = destinations(peekResource, event ?? undefined);
+    const assignment = inspectedAssignment ? assignmentByResource.get(inspectedAssignment.id) : undefined;
+    const actions = assignment
+      ? [{ id: "open-quanta", label: "Open in Quanta", onSelect: () => void open(peekResource.url), disabled: false }]
+      : destinations(inspectedAssignment ? { ...inspectedAssignment, sourcePageUrl: null } : peekResource, event ?? undefined);
     const localStatus = mirror?.statusOf(peekResource.id) ?? local;
     const attempt = mirror?.downloads.get(peekResource.id);
-    const progress = attempt?.state === "downloading" || attempt?.state === "queued" ? attempt : null;
+    const progress = !assignment && (attempt?.state === "downloading" || attempt?.state === "queued") ? attempt : null;
     const saved = isLocal(localStatus);
     const failure = materialFailure?.resourceId === peekResource.id ? materialFailure.message : null;
     const failed = localStatus?.status === "failed" || attempt?.state === "failed" || Boolean(failure);
     const unavailable = peekResource.availabilityStatus !== "available";
     const link = peekResource.isExternal || actions.every((action) => action.id === "open-quanta");
     const announcement = event?.changeType === "announcement" || peekResource.resourceType.toLowerCase() === "announcement";
+    const assignmentUnavailable = inspectedAssignment?.courseId != null && assignmentFailures.has(inspectedAssignment.courseId);
+    const assignmentCoverage = assignmentPages.find(page => page.courseId === inspectedAssignment?.courseId)?.coverage;
     const deadline = event?.changeType === "deadline" || (selection?.owner === "calendar" && Boolean(peekResource.dueAt));
     const historical = Boolean(event && selection?.owner === "history");
     const preview = actions.find((action) => action.id === "preview");
@@ -781,7 +863,12 @@ function AppShell() {
     const course = { label: "Course", value: peekResource.courseName ?? "—" };
     const section = peekResource.sectionPath?.length ? peekResource.sectionPath.join(" / ") : formatSectionPath(peekResource);
     const detected = { label: "Detected", value: formatCompact(event?.detectedAt ?? peekResource.firstSeenAt), mono: true };
-    const properties = deadline ? [
+    const properties = assignment ? [
+      course,
+      ...assignmentProperties(assignment, timeZone),
+      ...(!assignmentDue(assignment.observation.due) && (assignment.observation.due.kind !== "unset" || assignment.coverage.stale) && peekResource.dueAt
+        ? [{ label: "Course listing due", value: dueEntry?.label ?? peekResource.dueAt }] : []),
+    ] : deadline ? [
       { label: "Due", value: peekResource.dueAt ?? "Due date unavailable", mono: true },
       { label: "Source", value: "As stored on Quanta" },
       { label: "Local time", value: dueEntry ? `${dueEntry.label}${dueEntry.item.dateKind === "date" ? " (date only)" : ""}` : "—" },
@@ -810,10 +897,13 @@ function AppShell() {
     };
     return {
       title: event?.resourceTitle ?? event?.title ?? peekResource.title,
-      typeLabel: deadline ? "DEADLINE" : historical ? "HISTORICAL EVENT" : announcement ? "ANNOUNCEMENT" : link ? "EXTERNAL LINK" : peekResource.resourceType.toUpperCase() || "FILE",
+      typeLabel: assignment ? "ASSIGNMENT" : deadline ? "DEADLINE" : historical ? "HISTORICAL EVENT" : announcement ? "ANNOUNCEMENT" : link ? "EXTERNAL LINK" : peekResource.resourceType.toUpperCase() || "FILE",
       properties,
       announcement: announcement ? event?.description : null,
-      note: deadline ? "Submission status is not tracked." : null,
+      note: assignmentUnavailable ? "Assignment details unavailable."
+        : assignmentCoverage?.permission === "restricted" ? "Assignment details are restricted."
+        : assignmentCoverage?.coverage === "unsupported" ? "Assignment source is unsupported."
+        : deadline && !assignment ? "Submission status is not tracked." : null,
       banner: failed && !saved && !link && !deadline
         ? { kind: "danger", text: `Download failed: ${attempt?.error || localStatus?.error || failure || "The file could not be saved."}` }
         : unavailable
@@ -840,7 +930,7 @@ function AppShell() {
       menu: [
         ...actions.filter((action) => action !== primary && action !== secondary
           && !(unavailable && !saved && (action.id === "download-open" || action.id === "preview"))),
-        ...(saved && local ? [{
+        ...(!assignment && saved && local ? [{
           id: "reveal",
           label: "Show in folder",
           onSelect: () => void api.revealLocalFile(peekResource.id).catch((err) => notify(String(err), true)),
@@ -849,11 +939,11 @@ function AppShell() {
           id: "copy",
           label: "Copy link",
           onSelect: () =>
-            void copyText(peekResource.sourcePageUrl ?? peekResource.url, "Link copied."),
+            void copyText(inspectedAssignment?.url ?? peekResource.sourcePageUrl ?? peekResource.url, "Link copied."),
         },
       ],
     };
-  }, [selection, scanDetail, peekResource, peekLocal, localLookup, mirror, materialFailure, now, timeZone, destinations, navigate, downloadAndOpen, copyText, handleSync, notify]);
+  }, [selection, scanDetail, peekResource, inspectedAssignment, assignmentByResource, assignmentFailures, assignmentPages, open, peekLocal, localLookup, mirror, materialFailure, now, timeZone, destinations, navigate, downloadAndOpen, copyText, handleSync, notify]);
 
   useEffect(() => {
     paletteReadRequest.current = null;
@@ -901,10 +991,7 @@ function AppShell() {
     }
   };
 
-  const unreadResources = useMemo(() => new Set<number>([
-    ...historyEvents.flatMap((event) => event.resourceId != null && !event.read ? [event.resourceId] : []),
-    ...(inbox.page?.items ?? []).flatMap((item) => item.resourceId != null && item.unread ? [item.resourceId] : []),
-  ]), [historyEvents, inbox.page]);
+  const unreadResources = useMemo(() => new Set(searchInventory.unreadResourceIds), [searchInventory]);
 
   const paletteActions: PaletteAction[] = useMemo(
     () => [
@@ -1103,11 +1190,13 @@ function AppShell() {
             if (narrow) setDrawerOpen(false);
           }}
           courses={courses}
+          resources={resources}
           unreadByCourse={unreadByCourse}
           unreadTotal={inbox.countError ? "–" : unread}
           activeCourseId={route.courseId}
-          onCourse={(courseId) => {
-            navigateToCourse(courseId);
+          activeFolderPath={route.folderPath}
+          onCourse={(courseId, folderPath) => {
+            navigateToCourse(courseId, folderPath);
             if (narrow) setDrawerOpen(false);
           }}
           sync={sync}
@@ -1164,7 +1253,7 @@ function AppShell() {
                 {route.view === "calendar" && (
                   <CalendarView
                     headerActions={headerActions} lastScan={sync?.lastSuccessAt ?? null} onLibrary={() => navigate("library")}
-                    due={agendaDue} dueFilter={dueFilter} setDueFilter={setDueFilter} now={now} timeZone={timeZone}
+                    due={agendaWithAssignments} assignmentStatus={assignmentFailures.size ? "Some assignment details could not be loaded." : assignmentByResource.size ? "Assignment details available." : undefined} dueFilter={dueFilter} setDueFilter={setDueFilter} now={now} timeZone={timeZone}
                     onChanged={refresh}
                     courses={courses}
                     resources={resources}
@@ -1184,18 +1273,19 @@ function AppShell() {
                     courseId={route.courseId}
                     folderPath={route.folderPath}
                     onNavigate={navigateToCourse}
+                    onSeeAllFiles={handleSeeAllFiles}
                     unreadByCourse={unreadByCourse}
                     details={detailsAdapters.library}
-                    loading={loading}
-                    error={loadError}
+                    loading={loading || searchPending}
+                    error={loadError ?? searchError}
                     onRetry={() => void refresh()}
                     onChanged={refresh}
                     onActivityChanged={() => refresh(true)}
                     onOpen={(url) => void open(url)}
-                    initialSearch={librarySearch}
-                    initialSearchKey={librarySearchRequest}
-                    requestedFileIds={librarySearchScope?.ids}
-                    requestedFileFilterLabel={librarySearchScope?.label}
+                    timeZone={timeZone} now={now}
+                    initialSearch={librarySearchQuery?.raw}
+                    initialSearchQuery={librarySearchQuery}
+                    initialSearchKey={librarySearchQuery?.requestId ?? 0}
                     onSyncNow={() => void handleSync()}
                   />
                 )}
@@ -1278,15 +1368,14 @@ function AppShell() {
           onView={navigate}
           courses={courses}
           onCourse={navigateToCourse}
+          onFolder={navigateToCourse}
           resources={resources}
+          inventoryPending={loading || searchPending}
+          inventoryError={loadError ?? searchError}
           unreadResources={unreadResources}
+          timeZone={timeZone} now={now}
           onInspectResource={(resource) => { setPendingPaletteInspection(resource); navigate("library"); }}
-          onSeeAllFiles={(query, scope) => {
-            setLibrarySearch(query);
-            setLibrarySearchScope(scope);
-            setLibrarySearchRequest((previous) => previous + 1);
-            navigate("library");
-          }}
+          onSeeAllFiles={handleSeeAllFiles}
           actions={paletteActions}
         />
 

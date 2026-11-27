@@ -1,8 +1,16 @@
+import { BodyMatch, SavedContentControls } from "../../components/SavedContentSearch";
+import { useSavedContent } from "../../hooks/useSavedContent";
+import { compareDates, compareNames, compareResourceNames } from "../../lib/fileOrdering";
+import { SearchControls } from "../../components/SearchControls";
 import { useSessionValue } from "../../hooks/useSessionViews";
+import { buildDisplayNames, loadAliases } from "../../lib/courseName";
+import { categoryLabel } from "../../lib/courseLibrary";
+import { searchDesktop } from "../../lib/desktopSearch";
+import type { SearchQueryState, SearchScope, SearchFilters } from "../../lib/desktopSearch";
 import { useMaterialActions } from "../../hooks/useMaterialActions";
 import { useMirror } from "../../hooks/useMirror";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { ArrowDownUp, Check, ListFilter, X } from "lucide-react";
+import { ArrowDownUp, Check, X } from "lucide-react";
 import { api } from "../../lib/api";
 import { getListNavigationIntent, recoverFocusedId, type ListNavigationInput } from "../../lib/listNavigation";
 import ConfirmDialog from "../../components/ConfirmDialog";
@@ -13,12 +21,11 @@ import { Button } from "../../components/ui/Button";
 import { FileTypeIcon } from "../../components/ui/FileTypeIcon";
 import { UnreadDot } from "../../components/ui/UnreadDot";
 import { Select } from "../../components/ui/Select";
-import { typeOptions } from "../../lib/courseLibrary";
 import { dedupeCourseResources } from "../../lib/courseTree";
-import { splitLiteralMatches } from "../../lib/filter";
+import { activityTimestamp, splitLiteralMatches } from "../../lib/filter";
 import { isLocal } from "../../lib/mirrorState";
 import { courseTitle } from "../../lib/courseName";
-import { formatCompact, formatListDate, parseTimestamp } from "../../lib/format";
+import { describeUpload, formatCompact, formatListDate } from "../../lib/format";
 import { formatSectionPath, resourceSectionPath } from "../../lib/sectionPath";
 import type { DetailsAdapter } from "../../lib/details";
 import type { Course, Resource } from "../../lib/types";
@@ -31,6 +38,10 @@ interface AllFilesProps {
   resources: Resource[];
   courses: Course[];
   search: string;
+  onSearchChange?: (raw: string) => void;
+  initialSearchQuery?: SearchQueryState;
+  timeZone?: string;
+  now?: Date;
   onOpen: (url: string) => void;
   onPreview: (resource: Resource) => void;
   details?: DetailsAdapter;
@@ -42,9 +53,6 @@ interface AllFilesProps {
   inventoryPending?: boolean;
   inventoryError?: string | null;
   searchField?: ReactNode;
-  requestedFileIds?: ReadonlySet<number> | null;
-  requestedFileFilterLabel?: string;
-  onClearFileScope?: () => void;
   unreadResourceIds?: ReadonlySet<number>;
 }
 
@@ -58,19 +66,20 @@ interface Capture {
   done: boolean;
 }
 
-type SortId = "title" | "course" | "section" | "detected" | "saved";
+const EMPTY_IDS: ReadonlySet<number> = new Set();
+
+type SortId = "title" | "course" | "section" | "detected" | "saved" | "relevance" | "activity" | "type";
 
 const DEFAULT_DIR: Record<SortId, "asc" | "desc"> = {
+  activity: "desc",
+  type: "asc",
   title: "asc",
   course: "asc",
   section: "asc",
   detected: "desc",
   saved: "desc",
+  relevance: "desc",
 };
-
-function detectedAt(resource: Resource): number | null {
-  return parseTimestamp(resource.firstSeenAt)?.getTime() ?? null;
-}
 
 function Highlight({ text, query }: { text: string; query: string }) {
   const parts = splitLiteralMatches(text, query);
@@ -81,7 +90,7 @@ function Highlight({ text, query }: { text: string; query: string }) {
 export default function AllFiles({
   resources,
   courses,
-  search,
+  search, onSearchChange, initialSearchQuery, timeZone, now,
   onOpen,
   onPreview,
   details,
@@ -92,87 +101,82 @@ export default function AllFiles({
   inventoryPending = false,
   inventoryError,
   searchField,
-  requestedFileIds,
-  requestedFileFilterLabel,
-  onClearFileScope,
   unreadResourceIds,
 }: AllFilesProps) {
   const destinations = useMaterialActions({ onOpen, onPreview });
   const mirror = useMirror();
-  const [showFilters, setShowFilters] = useState(false);
   const [showSort, setShowSort] = useState(false);
-  const [courseFilter, setCourseFilter] = useSessionValue("library:files:course", "all");
-  const [typeFilter, setTypeFilter] = useSessionValue("library:files:type", "all");
-  const [savedFilter, setSavedFilter] = useSessionValue("library:files:saved", "all");
+  const [scope, setScope] = useSessionValue<SearchScope>("library:files:scope", { kind: "everywhere" });
+  const [dateFilters, setDateFilters] = useSessionValue<SearchFilters>("library:files:dates", {});
+  const [appliedRequest, setAppliedRequest] = useSessionValue<number>("library:files:request", -1);
   const [sort, setSort] = useSessionValue<{ id: SortId; dir: "asc" | "desc" }>("library:files:sort", {
-    id: "detected",
+    id: "relevance",
     dir: "desc",
   });
+  useEffect(() => {
+    if (initialSearchQuery && initialSearchQuery.requestId !== appliedRequest) {
+      setScope(initialSearchQuery.scope);
+      setDateFilters({ category: initialSearchQuery.category, includeSavedText: initialSearchQuery.includeSavedText, sourceFrom: initialSearchQuery.sourceFrom ?? undefined, sourceThrough: initialSearchQuery.sourceThrough ?? undefined });
+      setSort({ id: "relevance", dir: "desc" });
+      setAppliedRequest(initialSearchQuery.requestId);
+    }
+  }, [initialSearchQuery, appliedRequest, setAppliedRequest, setDateFilters, setScope, setSort]);
+
 
   const unique = useMemo(() => dedupeCourseResources(resources), [resources]);
-  const types = useMemo(() => typeOptions(unique), [unique]);
 
-  const isSaved = (r: Resource) => Boolean(mirror && isLocal(mirror.statusOf(r.id)));
-  const filtered = useMemo(() => {
-    const needle = search.trim().toLowerCase();
-    const type = typeFilter === "all" ? "" : typeFilter.toLowerCase();
-    return unique.filter((r) => {
-      if (requestedFileIds && !requestedFileIds.has(r.id)) return false;
-      if (courseFilter !== "all" && r.courseId !== Number(courseFilter)) return false;
-      if (type && r.resourceType.trim().toLowerCase() !== type) return false;
-      if (savedFilter === "saved" && !isSaved(r)) return false;
-      if (savedFilter === "unsaved" && isSaved(r)) return false;
-      if (needle) {
-        const haystack =
-          `${r.title} ${courseTitle(r.courseId, r.courseName)} ${r.resourceType} ${formatSectionPath(r)} ${r.sourcePageUrl ?? ""}`.toLowerCase();
-        if (!haystack.includes(needle)) return false;
-      }
-      return true;
-    });
-  }, [unique, search, typeFilter, courseFilter, savedFilter, mirror, requestedFileIds]);
+  const isSaved = (r: Resource) => Boolean(!r.isExternal && mirror && isLocal(mirror.statusOf(r.id)));
+  const displayNames = useMemo(() => buildDisplayNames(courses, loadAliases()), [courses]);
+  const unreadIds = unreadResourceIds ?? EMPTY_IDS;
+  const savedIds = useMemo(() => new Set(unique.filter((r) => isSaved(r)).map((r) => r.id)), [unique, mirror]);
+  const content = useSavedContent(Boolean(dateFilters.includeSavedText), search, { courses, resources: unique, displayNames }, mirror);
+  const searchResult = useMemo(() => searchDesktop(
+    { raw: search, scope, filters: dateFilters, timeZone, now },
+    { courses, resources: unique, displayNames, unreadIds, savedIds, bodyHits: content.hits },
+  ), [search, scope, unique, courses, displayNames, unreadIds, savedIds, dateFilters, timeZone, now, content.hits]);
+  const searchErrors = searchResult.errors;
+  const filtered = searchResult.files;
+
+  const hasTextTerms = searchResult.parsed.terms.length > 0;
+  const relevance = sort.id === "relevance" && hasTextTerms;
+  const sortLabels: Record<SortId, string> = {
+    relevance: hasTextTerms ? "Relevance" : sort.dir === "asc" ? "Oldest (activity date)" : "Newest (activity date)",
+    activity: "Activity date", title: "Name", course: "Course", section: "Section",
+    detected: "Detected", saved: "Saved", type: "File type",
+  };
+  const sortLabel = sortLabels[sort.id];
 
   const rows = useMemo(() => {
-    const sortId: SortId = (["title", "course", "section", "detected", "saved"] as const).includes(sort.id as SortId)
+    const sortId: SortId = (["title", "course", "section", "detected", "saved", "relevance", "activity", "type"] as const).includes(sort.id as SortId)
       ? (sort.id as SortId) : "detected";
+    if (sortId === "relevance" && hasTextTerms) return filtered;
     const dir = sort.dir === "asc" ? 1 : -1;
-    const byTitle = (a: Resource, b: Resource) =>
-      a.title.localeCompare(b.title, undefined, { sensitivity: "base" }) || a.id - b.id;
+    const byTitle = compareResourceNames;
     return [...filtered].sort((a, b) => {
       let cmp = 0;
       switch (sortId) {
         case "title": cmp = byTitle(a, b); break;
-        case "course": cmp = courseTitle(a.courseId, a.courseName).localeCompare(courseTitle(b.courseId, b.courseName), undefined, { sensitivity: "base" }); break;
-        case "section": cmp = formatSectionPath(a).localeCompare(formatSectionPath(b), undefined, { sensitivity: "base" }); break;
+        case "course": cmp = compareNames(courseTitle(a.courseId, a.courseName), courseTitle(b.courseId, b.courseName)); break;
+        case "section": cmp = compareNames(formatSectionPath(a), formatSectionPath(b)); break;
         case "saved": cmp = Number(isSaved(a)) - Number(isSaved(b)); break;
+        case "type": cmp = compareNames(a.resourceType, b.resourceType); break;
+        case "activity":
+        case "relevance":
         case "detected":
-        default: {
-          const ta = detectedAt(a); const tb = detectedAt(b);
-          if (ta === null && tb === null) cmp = 0;
-          else if (ta === null) return 1;
-          else if (tb === null) return -1;
-          else cmp = ta - tb;
-        }
+        default:
+          return compareDates(sortId === "detected" ? a.firstSeenAt : activityTimestamp(a), sortId === "detected" ? b.firstSeenAt : activityTimestamp(b), sort.dir) || byTitle(a, b);
       }
       return cmp !== 0 ? cmp * dir : byTitle(a, b);
     });
-  }, [filtered, sort, mirror]);
+  }, [filtered, sort, mirror, hasTextTerms]);
 
-  const filtersActive = Boolean(requestedFileIds) || courseFilter !== "all" || typeFilter !== "all" || savedFilter !== "all" || search.trim() !== "";
-
+  const filtersActive = Boolean(search.trim() || (dateFilters.category && dateFilters.category !== "all") || dateFilters.sourceFrom || dateFilters.sourceThrough);
   const onSort = (id: string) => {
     const key = id as SortId;
-    setSort((prev) =>
-      prev.id === key ? { id: key, dir: prev.dir === "asc" ? "desc" : "asc" } : { id: key, dir: DEFAULT_DIR[key] ?? "asc" },
-    );
+    if (key === "relevance" && relevance) return;
+    setSort(prev => prev.id === key ? { id: key, dir: prev.dir === "asc" ? "desc" : "asc" } : { id: key, dir: DEFAULT_DIR[key] ?? "asc" });
   };
-
-  const clearFilters = () => {
-    onClearFileScope?.();
-    setCourseFilter("all");
-    setTypeFilter("all");
-    setSavedFilter("all");
-    onClearSearch?.();
-  };
+  const clearFilters = () => { setDateFilters({}); onClearSearch?.(); };
 
   const navigation = useRef<DataTableNavigationHandle>(null);
   const container = useRef<HTMLDivElement>(null);
@@ -198,7 +202,7 @@ export default function AllFiles({
   latest.current = { inventoryError, inventoryPending, currentFocus };
   const selected = details?.selected;
   const selectedId = selected?.kind === "resource" ? identity(selected.resource) : null;
-  const context = `${search}\0${courseFilter}\0${typeFilter}\0${savedFilter}`;
+  const context = JSON.stringify([search, scope, dateFilters]);
 
   useLayoutEffect(() => {
     generation.current += 1;
@@ -207,7 +211,7 @@ export default function AllFiles({
     setBusy(false);
     setStatus(null);
     return () => { generation.current += 1; lock.current = null; };
-  }, [context, requestedFileIds]);
+  }, [context]);
 
   useLayoutEffect(() => {
     const changed = previousIds.current.join("\0") !== ids.join("\0");
@@ -334,12 +338,15 @@ export default function AllFiles({
       cell: (resource) => {
         const path = [courseTitle(resource.courseId, resource.courseName), ...resourceSectionPath(resource)].join(" / ");
         const unread = unreadResourceIds?.has(resource.id);
+        const snippet = content.hits?.get(resource.id);
+        const snippetId = snippet === undefined ? undefined : `library-body-match-${resource.id}`;
         return (
           <button
             type="button"
             className={unread ? "cell-title is-unread" : "cell-title"}
             data-resource-id={resource.id}
             aria-label={`Show details for ${resource.title}`}
+            aria-describedby={snippetId}
             onClick={(event) => {
               event.stopPropagation();
               inspect(resource, event.currentTarget);
@@ -349,7 +356,7 @@ export default function AllFiles({
             <FileTypeIcon type={resource.resourceType} />
             <span className="library-file-title-copy">
               <span className="cell-title-main"><Highlight text={resource.title} query={query} /></span>
-              {query && <span className="cell-title-sub"><Highlight text={path} query={query} /></span>}
+              {snippetId ? <BodyMatch id={snippetId} snippet={snippet} /> : query && <span className="cell-title-sub"><Highlight text={path} query={query} /></span>}
             </span>
           </button>
         );
@@ -380,6 +387,20 @@ export default function AllFiles({
       sortable: true,
       title: (resource) => formatSectionPath(resource),
       cell: (resource) => <Highlight text={resourceSectionPath(resource).at(-1) ?? ""} query={query} />,
+    },
+    {
+      id: "activity",
+      header: "Activity date",
+      width: 150,
+      sortable: true,
+      title: (resource) => {
+        const date = describeUpload(resource);
+        return date.source === "unavailable" ? `Upload date unavailable; first detected ${date.detected}` : `${date.source}: ${date.label}; first detected ${date.detected}`;
+      },
+      cell: (resource) => {
+        const date = describeUpload(resource);
+        return `${formatListDate(activityTimestamp(resource))} · ${date.source === "unavailable" ? "detected" : date.source}`;
+      },
     },
     {
       id: "detected",
@@ -416,42 +437,18 @@ export default function AllFiles({
       {(status || inventoryPending || inventoryError) && <Banner kind={status?.includes("failed") || inventoryError ? "error" : "info"}>
         {status ?? (inventoryError ? "Inventory refresh failed. Retained materials remain inspectable; new changes are blocked." : "Inventory is refreshing; new changes are blocked.")}
       </Banner>}
+      {searchErrors.length > 0 && <Banner kind="error">{searchErrors.join(" ")}</Banner>}
       <span className="sr-only" aria-live="polite">{selection.length} materials selected</span>
       <div className="library-toolbar">
-        <Button variant="ghost" size="sm" leadingIcon={<ListFilter aria-hidden="true" />} aria-expanded={showFilters} onClick={() => setShowFilters((open) => !open)}>Filter</Button>
         {query && <Button variant="secondary" size="sm" trailingIcon={<X aria-hidden="true" />} onClick={onClearSearch}>Search “{query}”</Button>}
-        {requestedFileIds && <Button variant="secondary" size="sm" trailingIcon={<X aria-hidden="true" />} onClick={onClearFileScope}>{requestedFileFilterLabel || "Palette filters"}</Button>}
-        {typeFilter !== "all" && <Button variant="secondary" size="sm" trailingIcon={<X aria-hidden="true" />} onClick={() => setTypeFilter("all")}>Type {typeFilter.toUpperCase()}</Button>}
-        {courseFilter !== "all" && <Button variant="secondary" size="sm" trailingIcon={<X aria-hidden="true" />} onClick={() => setCourseFilter("all")}>Course {courses.find((course) => String(course.id) === courseFilter)?.shortName ?? courseFilter}</Button>}
-        {savedFilter !== "all" && <Button variant="secondary" size="sm" trailingIcon={<X aria-hidden="true" />} onClick={() => setSavedFilter("all")}>Saved {savedFilter === "saved" ? "Yes" : "No"}</Button>}
         <Button className="library-toolbar-end" variant="ghost" size="sm" leadingIcon={<ArrowDownUp aria-hidden="true" />} aria-expanded={showSort} onClick={() => setShowSort((open) => !open)}>Sort</Button>
       </div>
-      <div className={showFilters ? "library-toolbar library-file-filters" : "library-toolbar library-file-filters library-search-collapsed"} role="group" aria-label="Filters">
-          {searchField}
-          <div className="filter-chip"><span>Type</span>
-            <Select value={typeFilter} onValueChange={setTypeFilter} ariaLabel="Filter by file type" options={[
-              { value: "all", label: "All" },
-              ...types.map((option) => ({ value: option.type, label: `${option.type} (${option.count})` })),
-            ]} />
-          </div>
-          <div className="filter-chip"><span>Course</span>
-            <Select value={courseFilter} onValueChange={setCourseFilter} ariaLabel="Filter by course" options={[
-              { value: "all", label: "All" },
-              ...courses.map((course) => ({ value: String(course.id), label: course.shortName ?? course.name })),
-            ]} />
-          </div>
-          <label className="filter-chip" aria-label="Saved filter"><span>Saved</span>
-            <select value={savedFilter} onChange={(e) => setSavedFilter(e.target.value)} aria-label="Saved">
-              <option value="all">Any</option>
-              <option value="saved">Saved</option>
-              <option value="unsaved">Not saved</option>
-            </select>
-          </label>
-          {filtersActive && <Button variant="ghost" size="sm" onClick={clearFilters}>Clear filters</Button>}
-      </div>
+      <div className="library-toolbar">{searchField}{filtersActive && <Button variant="ghost" size="sm" onClick={clearFilters}>Clear filters</Button>}{dateFilters.category && dateFilters.category !== "all" && <Button variant="secondary" size="sm" onClick={() => setDateFilters({ ...dateFilters, category: undefined })}>Category: {categoryLabel(dateFilters.category)} ×</Button>}<span>Sort: {sortLabel}</span></div>
+      <SearchControls raw={search} onRaw={onSearchChange ?? (() => {})} scope={scope} onScope={setScope} filters={dateFilters} onFilters={setDateFilters} courses={courses} resources={unique} />
+      <SavedContentControls enabled={Boolean(dateFilters.includeSavedText)} onToggle={() => setDateFilters(value => ({ ...value, includeSavedText: !value.includeSavedText }))} content={content} />
       {showSort && <div className="library-toolbar">
-        <Select ariaLabel="Sort files by" value={sort.id} onValueChange={(value) => onSort(value)} options={columns.map(({ id, header }) => ({ value: id, label: header }))} />
-        <Button variant="ghost" size="sm" onClick={() => onSort(sort.id)}>{sort.dir === "asc" ? "Ascending" : "Descending"}</Button>
+        <Select ariaLabel="Sort files by" value={sort.id} onValueChange={(value) => onSort(value)} options={[{ value: "relevance", label: hasTextTerms ? "Relevance" : sort.id === "relevance" ? sortLabel : "Newest (activity date)" }, { value: "type", label: "File type" }, ...columns.map(({ id, header }) => ({ value: id, label: header }))]} />
+        <Button variant="ghost" size="sm" aria-label="Sort direction" disabled={relevance} onClick={() => onSort(sort.id)}>{relevance ? "Best match first" : sort.dir === "asc" ? "Ascending" : "Descending"}</Button>
       </div>}
 
       <DataTable
@@ -475,7 +472,7 @@ export default function AllFiles({
         rowHeight={query ? 48 : 34}
         virtual
         empty={
-          <EmptyState
+          content.pending ? <EmptyState title="Searching saved text…" /> : <EmptyState
             title={filtersActive ? "No files match these filters" : "No files discovered yet"}
             body={
               filtersActive

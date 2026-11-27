@@ -1,10 +1,10 @@
+import { compareDates, compareResourceNames } from "./fileOrdering";
 // Pure helpers for a single course's resource library: category grouping,
 // sorting and filtering. Everything here is driven by the stored resource
 // metadata — categories come from the resource *type*, never from title
 // heuristics, so a resource is never misfiled by a guess.
 
 import { activityTimestamp } from "./filter";
-import { parseTimestamp } from "./format";
 import type { Resource } from "./types";
 import { formatSectionPath } from "./sectionPath";
 
@@ -70,22 +70,13 @@ export function categoryLabel(id: ResourceCategoryId): string {
 export type ResourceSort = "newest" | "oldest" | "name" | "type";
 
 export const RESOURCE_SORTS: { id: ResourceSort; label: string }[] = [
-  { id: "newest", label: "Newest first" },
-  { id: "oldest", label: "Oldest first" },
+  { id: "newest", label: "Newest first (activity date)" },
+  { id: "oldest", label: "Oldest first (activity date)" },
   { id: "name", label: "Name (A–Z)" },
   { id: "type", label: "File type" },
 ];
 
-function timestampValue(r: Resource): number | null {
-  const at = activityTimestamp(r);
-  const parsed = at ? parseTimestamp(at) : null;
-  return parsed ? parsed.getTime() : null;
-}
-
-function byTitle(a: Resource, b: Resource): number {
-  const cmp = a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
-  return cmp !== 0 ? cmp : a.id - b.id;
-}
+const byTitle = compareResourceNames;
 
 /**
  * Sort a copy of the resources. Records missing any timestamp always sink to
@@ -105,24 +96,11 @@ export function sortResources(resources: Resource[], sort: ResourceSort): Resour
         return cmp !== 0 ? cmp : byTitle(a, b);
       });
     case "oldest":
-      return copy.sort((a, b) => {
-        const ta = timestampValue(a);
-        const tb = timestampValue(b);
-        if (ta === null && tb === null) return byTitle(a, b);
-        if (ta === null) return 1;
-        if (tb === null) return -1;
-        return ta !== tb ? ta - tb : byTitle(a, b);
-      });
     case "newest":
     default:
-      return copy.sort((a, b) => {
-        const ta = timestampValue(a);
-        const tb = timestampValue(b);
-        if (ta === null && tb === null) return byTitle(a, b);
-        if (ta === null) return 1;
-        if (tb === null) return -1;
-        return ta !== tb ? tb - ta : byTitle(a, b);
-      });
+      return copy.sort((a, b) => compareDates(
+        activityTimestamp(a), activityTimestamp(b), sort === "oldest" ? "asc" : "desc",
+      ) || byTitle(a, b));
   }
 }
 

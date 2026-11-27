@@ -1,3 +1,4 @@
+import { EmptyState } from "../components/ui/EmptyState";
 import { useSessionScroll, useSessionValue } from "../hooks/useSessionViews";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ArrowDownUp, ListFilter, X } from "lucide-react";
@@ -7,6 +8,7 @@ import PreviewDialog from "../components/PreviewDialog";
 import { SearchField } from "../components/ui/SearchField";
 import { ToggleGroup } from "../components/ui/ToggleGroup";
 import type { ChangeEvent, Course, Resource } from "../lib/types";
+import type { SearchQueryState, SearchScope, SearchFilters } from "../lib/desktopSearch";
 import type { DetailsAdapter } from "../lib/details";
 import { Banner } from "../components/ui/Banner";
 import { Skeleton } from "../components/ui/Skeleton";
@@ -43,13 +45,15 @@ export interface LibraryViewProps {
   loading?: boolean;
   error?: string | null;
   onRetry?: () => void;
+  timeZone?: string;
+  now?: Date;
   initialSearch?: string;
+  initialSearchQuery?: SearchQueryState;
   /** Distinguishes repeated palette requests with the same query. */
   initialSearchKey?: number;
+  onSeeAllFiles?: (raw: string, options?: SearchFilters & { scope?: SearchScope }) => void;
   headerActions?: ReactNode;
   compact?: boolean;
-  requestedFileIds?: ReadonlySet<number> | null;
-  requestedFileFilterLabel?: string;
   unreadResourceIds?: ReadonlySet<number>;
 }
 
@@ -73,12 +77,12 @@ export default function LibraryView({
   loading = false,
   error = null,
   onRetry,
-  initialSearch,
+  initialSearch, timeZone, now,
+  initialSearchQuery,
   initialSearchKey = 0,
+  onSeeAllFiles,
   headerActions,
   compact = false,
-  requestedFileIds,
-  requestedFileFilterLabel,
   unreadResourceIds,
 }: LibraryViewProps) {
   // The Courses | All files choice survives navigating into a course page.
@@ -93,15 +97,15 @@ export default function LibraryView({
   const [showCourseFilter, setShowCourseFilter] = useState(false);
   const [courseSort, setCourseSort] = useSessionValue<"original" | "name">("library:course-sort", "original");
   const [appliedSearch, setAppliedSearch] = useSessionValue<string | undefined>("library:applied-search", undefined);
-  const [clearedFileScope, setClearedFileScope] = useSessionValue<string | undefined>("library:cleared-file-scope", undefined);
-  const searchRequest = JSON.stringify([initialSearchKey, initialSearch]);
+  const requestedRaw = initialSearchQuery?.raw ?? initialSearch;
+  const searchRequest = JSON.stringify([initialSearchKey, initialSearchQuery?.requestId, requestedRaw]);
   useEffect(() => {
-    if (initialSearch !== undefined && searchRequest !== appliedSearch) {
+    if (requestedRaw !== undefined && searchRequest !== appliedSearch) {
       setTab("files");
-      setSearch(initialSearch);
+      setSearch(requestedRaw);
       setAppliedSearch(searchRequest);
     }
-  }, [initialSearch, searchRequest, appliedSearch, setAppliedSearch, setSearch, setTab]);
+  }, [requestedRaw, searchRequest, appliedSearch, setAppliedSearch, setSearch, setTab]);
   const [previewResource, setPreviewResource] = useState<Resource | null>(null);
   const activity = useCourseActivity(courseId);
   const { refresh: refreshActivityPublication, ...activityPublication } = activity;
@@ -116,6 +120,8 @@ export default function LibraryView({
   const mainScroll = useRef<HTMLDivElement>(null);
   useSessionScroll(`library:${tab}`, mainScroll, !course && (!loading || resources.length > 0 || courses.length > 0));
 
+  if (courseId != null && !course && !loading && !error) return <div className="library-panel"><EmptyState title="Course unavailable" body="This course is no longer in the local inventory." /><Button onClick={() => onNavigate(null)}>Back to Library</Button></div>;
+
   if (course) {
     return (
       <>
@@ -129,9 +135,7 @@ export default function LibraryView({
           onOpen={onOpen}
           onPreview={setPreviewResource}
           onChanged={onChanged}
-          allCourses={courses}
-          onNavigate={onNavigate}
-          onAllFiles={() => { setTab("files"); onNavigate(null); }}
+          sidebarNavigation
           headerActions={headerActions}
           compact={compact}
           activityEvents={activityPublication.items}
@@ -142,6 +146,11 @@ export default function LibraryView({
           onActivityChanged={handleActivityChanged}
           onSyncNow={onSyncNow}
           details={details}
+          onNavigate={onNavigate}
+          searchCourses={courses}
+          searchUnreadIds={unreadResourceIds}
+          timeZone={timeZone} now={now}
+          onSeeAllFiles={onSeeAllFiles}
         />
         <PreviewDialog
           resource={previewResource}
@@ -217,10 +226,10 @@ export default function LibraryView({
             onOpen={onOpen}
             onPreview={setPreviewResource}
             details={details}
-            requestedFileIds={clearedFileScope === searchRequest ? null : requestedFileIds}
-            requestedFileFilterLabel={requestedFileFilterLabel}
+            initialSearchQuery={initialSearchQuery}
+            onSearchChange={setSearch}
+            timeZone={timeZone} now={now}
             unreadResourceIds={unreadResourceIds}
-            onClearFileScope={() => setClearedFileScope(searchRequest)}
             onCourse={(id) => onNavigate(id)}
             onClearSearch={() => setSearch("")}
           />

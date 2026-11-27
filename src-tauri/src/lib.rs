@@ -5,15 +5,21 @@
 //! persisted to the database or macOS Keychain.
 
 pub mod attention;
+pub mod academic;
+pub mod attendance;
+pub mod assignments;
 pub mod auth;
 pub mod commands;
+mod content_search;
 pub mod core;
 pub mod db;
+pub mod grades;
 pub mod logging;
 pub mod mirror_worker;
 pub mod models;
 pub mod notify;
 pub mod quanta;
+pub mod search;
 pub mod settings;
 pub mod state;
 pub mod sync;
@@ -25,6 +31,7 @@ use tauri::Manager;
 
 pub fn run() {
     tauri::Builder::default()
+        .manage(std::sync::Arc::<content_search::ContentSearch>::default())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -42,6 +49,11 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            commands::academic_context,
+            commands::academic_assignments,
+            commands::academic_grades,
+            commands::check_course_grades,
+            commands::academic_attendance,
             commands::login,
             commands::auth_status,
             commands::refresh_session,
@@ -61,6 +73,10 @@ pub fn run() {
             commands::list_courses,
             commands::set_course_display_name,
             commands::list_resources,
+            commands::list_search_inventory,
+            commands::search_saved_content,
+            commands::rebuild_saved_content,
+            commands::cancel_saved_content_rebuild,
             commands::list_dashboard_resources,
             commands::list_events,
             commands::list_dashboard_events,

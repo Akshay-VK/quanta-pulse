@@ -14,9 +14,14 @@ export function localDateKey(date: Date, timeZone: string): string {
   return `${get('year')}-${get('month')}-${get('day')}`;
 }
 function ordinal(key: string): number { return Date.parse(`${key}T00:00:00Z`) / 86400000; }
-function validDate(key: string): boolean {
+export function validCalendarDate(key: string): boolean {
   const time = Date.parse(`${key}T00:00:00Z`);
   return /^\d{4}-\d{2}-\d{2}$/.test(key) && Number.isFinite(time) && new Date(time).toISOString().slice(0, 10) === key;
+}
+/** Validate source instants without Date's permissive numeric/overflow parsing. */
+export function validCalendarInstant(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/i.test(value)
+    && validCalendarDate(value.slice(0, 10)) && Number.isFinite(Date.parse(value));
 }
 export type AgendaGroup = 'Past due dates' | 'Today' | 'Tomorrow' | 'This week' | 'Later';
 export interface AgendaEntry { item: DueResource; day: string; group: AgendaGroup; label: string; sort: number }
@@ -26,11 +31,11 @@ export function agendaEntries(items: DueResource[], now: Date, timeZone: string)
   const dayNumber = ordinal(today);
   const seen = new Set<string>();
   return items.flatMap(item => {
-    const raw = item.resource.dueAt;
+    const raw = item.projectedDueAt ?? item.resource.dueAt;
     if (!raw) return [];
     const dateOnly = item.dateKind === 'date';
     const timestamp = Date.parse(raw);
-    if (dateOnly ? !validDate(raw) : !Number.isFinite(timestamp)) return [];
+    if (dateOnly ? !validCalendarDate(raw) : !validCalendarInstant(raw)) return [];
     const day = dateOnly ? raw : localDateKey(new Date(timestamp), timeZone);
     const delta = ordinal(day) - dayNumber;
     const past = dateOnly ? delta < 0 : timestamp < now.getTime();

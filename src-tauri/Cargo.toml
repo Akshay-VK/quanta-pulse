@@ -1,6 +1,6 @@
 [package]
 name = "quanta-pulse"
-version = "0.4.0"
+version = "0.4.1"
 description = "Minimal tracker for BITS Pilani Quanta LMS"
 authors = ["Quanta Pulse"]
 edition = "2021"
@@ -26,7 +26,7 @@ tauri-plugin-single-instance = "2.5.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-rusqlite = { version = "0.32", features = ["bundled", "backup"] }
+rusqlite = { version = "0.32", features = ["bundled", "backup", "hooks"] }
 
 reqwest = { version = "0.12", default-features = false, features = [
   "cookies",

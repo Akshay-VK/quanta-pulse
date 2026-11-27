@@ -30,8 +30,9 @@ type AgendaCapture = {
   generation: number;
 };
 
-export default function AgendaView({ due, filter, setFilter, courses, now, timeZone, details, onOpenCourse, onChanged, onLibrary, lastScan }: MaterialRowHandlers & {
-  due: DueState; filter: DueFilter; setFilter: (filter: DueFilter) => void; courses: Course[];
+export default function AgendaView({ due, assignmentStatus, filter, setFilter, courses, now, timeZone, details, onOpenCourse, onChanged, onLibrary, lastScan }: MaterialRowHandlers & {
+  due: DueState;
+  assignmentStatus?: string; filter: DueFilter; setFilter: (filter: DueFilter) => void; courses: Course[];
   now: Date; timeZone: string; details: DetailsAdapter; onOpen: (url: string) => void; onOpenLocal?: (id: number) => void; onOpenCourse?: (id: number) => void;
   onChanged?: () => Promise<void>; onLibrary?: () => void; lastScan?: string | null;
 }) {
@@ -337,7 +338,7 @@ export default function AgendaView({ due, filter, setFilter, courses, now, timeZ
       </section>;
     })}
     </div>
-    <WorkspaceViewStatus hints={AGENDA_HINTS}>{due.items && `${entries.length} dated resources · `}{due.error && scanLabel && `Dates from ${scanLabel} · stale · `}Submission status is not tracked.</WorkspaceViewStatus>
+    <WorkspaceViewStatus hints={AGENDA_HINTS}>{due.items && `${entries.length} dated resources · `}{due.error && scanLabel && `Dates from ${scanLabel} · stale · `}{assignmentStatus ?? "Submission status is not tracked."}</WorkspaceViewStatus>
     <ConfirmDialog open={capture !== null} onOpenChange={open => {
       if (!open && capture?.generation === requestGeneration.current) { setCapture(null); lock.current = false; setActionError(null); setTimeout(() => { if (mounted.current) returnFocus(); }, 0); }
     }} title={capture?.action === 'dismiss' ? 'Dismiss captured Agenda resources?' : capture?.action === 'unread' ? 'Mark captured Agenda resources unread?' : 'Mark captured Agenda resources read?'}

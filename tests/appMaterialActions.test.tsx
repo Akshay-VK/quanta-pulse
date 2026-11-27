@@ -88,7 +88,7 @@ describe("App shared material destinations", () => {
     main.dispatchEvent(new Event("scroll"));
     await click(document.querySelector<HTMLButtonElement>(".course-nav-item")!);
     await click(button("Inbox")); await click(button("Library"));
-    expect(document.querySelector<HTMLInputElement>('[aria-label="Search library"]')?.value).toBe("Lecture");
+    expect(document.querySelector<HTMLInputElement>('[aria-label="Search library"]')?.value).toBe('Lecture course:"MATH F111" type:"pdf"');
     expect(document.querySelector('[aria-label="All course files"]')).toBeTruthy();
     expect(main.scrollTop).toBe(137);
     expect(button("Filter by course").textContent).toContain("MATH F111");
@@ -120,7 +120,7 @@ it("preserves course query, sorting, type, expansion and scroll across courses a
   main.scrollTop = 215; main.dispatchEvent(new Event("scroll"));
   await click(button("Inbox"));
   await click(document.querySelector<HTMLButtonElement>(".course-nav-item")!);
-  expect(document.querySelector<HTMLInputElement>('[aria-label="Search resources in this course"]')?.value).toBe("Lecture");
+  expect(document.querySelector<HTMLInputElement>('[aria-label="Search resources in this course"]')?.value).toBe('Lecture type:"pdf"');
   expect(button("Sort resources").textContent).toContain("Name (A–Z)");
   expect(button("Filter by file type").textContent).toContain("pdf");
   expect(main.scrollTop).toBe(215);

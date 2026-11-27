@@ -64,8 +64,9 @@ describe("redesign shared overlays", () => {
     expect(document.querySelector('[role="menu"]')).toBeTruthy();
     expect(document.activeElement?.getAttribute("role")).toBe("menuitem");
     await act(async () => (document.activeElement as HTMLElement).dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, cancelable: true })));
-    expect(document.activeElement).toBe(trigger);
     expect(document.querySelector('[role="menu"]')).toBeNull();
+    // Radix restores focus from an unmount timer after the menu closes.
+    await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
   });
 
   it("exposes an accessible toast action", async () => {

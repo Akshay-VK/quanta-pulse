@@ -24,6 +24,12 @@ pub fn now_rfc3339() -> String {
 /// database. Written after every successful migration.
 pub const LAST_APP_VERSION_KEY: &str = "last_app_version";
 
+/// Settings key recording the schema revision this database has been migrated to.
+pub const SCHEMA_REVISION_KEY: &str = "schema_revision";
+
+/// The schema revision produced by the current `migrate` implementation.
+pub const CURRENT_SCHEMA_REVISION: i64 = 12;
+
 /// How many pre-migration backups to keep.
 const BACKUP_KEEP: usize = 3;
 
@@ -49,25 +55,162 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
 /// migration is aborted and the error says why — an un-migrated, unmodified
 /// database is safer than a migrated one nobody can roll back to.
 pub fn upgrade(conn: &Connection, db_path: &Path, app_version: &str) -> Result<(), String> {
-    let recorded = get_kv(conn, LAST_APP_VERSION_KEY);
+    let recorded_version = get_kv(conn, LAST_APP_VERSION_KEY);
+    let recorded_schema = recorded_schema_revision(conn)?;
+    let has_tables = has_user_tables(conn);
 
-    // Back up only when the running version is newer than the recorded one. A
-    // matching version needs nothing; a fresh database has nothing to lose; a
-    // database from before version recording is backed up as "unknown".
-    let old_version = match &recorded {
-        Some(v) if v == app_version => None,
-        Some(v) if app_version > v.as_str() => Some(v.clone()),
-        None if has_user_tables(conn) => Some("unknown".to_string()),
-        _ => None,
+    // A database created by a newer, unsupported build must not be migrated
+    // backward. Refuse before touching it or taking a backup.
+    if let Some(schema) = recorded_schema {
+        if schema > CURRENT_SCHEMA_REVISION {
+            return Err(format!(
+                "database schema revision {schema} is newer than this app supports ({CURRENT_SCHEMA_REVISION})"
+            ));
+        }
+    }
+
+    // A populated store without a revision predates the migration ledger.
+    // Protect it once even at the same app version; successful startup records
+    // the current revision, so retries do not create unnecessary backups.
+    let schema_pending = match recorded_schema {
+        Some(revision) => revision < CURRENT_SCHEMA_REVISION,
+        None => has_tables,
+    };
+    let version_older = match &recorded_version {
+        None => has_tables,
+        Some(v) if v == app_version => false,
+        Some(v) => version_is_older(v, app_version),
+    };
+
+    // Back up a populated store before any pending migration. A matching
+    // version with the current schema needs nothing; a fresh database has
+    // nothing to lose.
+    let needs_backup = has_tables && (schema_pending || version_older);
+    let old_version = if needs_backup {
+        Some(recorded_version.clone().unwrap_or_else(|| "unknown".to_string()))
+    } else {
+        None
     };
 
     if let Some(old) = old_version {
         backup_database(conn, db_path, &old)?;
     }
 
-    migrate(conn).map_err(|e| e.to_string())?;
-    set_kv(conn, LAST_APP_VERSION_KEY, app_version).map_err(|e| e.to_string())?;
-    Ok(())
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    migrate_inner(&tx).map_err(|e| e.to_string())?;
+    set_kv(&tx, LAST_APP_VERSION_KEY, app_version).map_err(|e| e.to_string())?;
+    set_kv(&tx, SCHEMA_REVISION_KEY, &CURRENT_SCHEMA_REVISION.to_string())
+        .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())
+}
+
+/// Read the recorded schema revision, accepting the documented key spellings.
+fn recorded_schema_revision(conn: &Connection) -> Result<Option<i64>, String> {
+    let has_settings: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='settings')",
+        [], |row| row.get(0),
+    ).map_err(|_| "cannot read database schema revision")?;
+    if !has_settings { return Ok(None); }
+    let mut revision: Option<i64> = None;
+    for key in [SCHEMA_REVISION_KEY, "db_schema_revision", "schema_version"] {
+        let value: Option<String> = conn.query_row("SELECT value FROM settings WHERE key=?1", [key], |row| row.get(0))
+            .optional().map_err(|_| "cannot read database schema revision")?;
+        if let Some(value) = value {
+            let parsed = value.trim().parse::<i64>().ok().filter(|value| *value >= 0)
+                .ok_or("unsupported database schema revision")?;
+            // Never let an older alias hide a newer schema marker.
+            revision = Some(revision.map_or(parsed, |old| old.max(parsed)));
+        }
+    }
+    Ok(revision)
+}
+
+/// Whether `recorded` is semantically older than `running`. Unknown or
+/// unparseable recorded versions are treated as older so a legacy store is
+/// protected before migration.
+fn version_is_older(recorded: &str, running: &str) -> bool {
+    if recorded.trim().eq_ignore_ascii_case("unknown") {
+        return true;
+    }
+    let Some((recorded_main, recorded_pre)) = parse_semver(recorded) else {
+        return true;
+    };
+    let Some((running_main, running_pre)) = parse_semver(running) else {
+        // Fall back to lexical comparison only when the running label is not
+        // parseable, preserving a conservative backup.
+        return recorded < running;
+    };
+    if recorded_main != running_main {
+        return recorded_main < running_main;
+    }
+    // A release is newer than any of its pre-releases.
+    match (recorded_pre, running_pre) {
+        (Some(_), None) => true,
+        (None, Some(_)) => false,
+        (Some(a), Some(b)) => compare_prerelease(&a, &b).is_lt(),
+        (None, None) => false,
+    }
+}
+
+/// Compare dotted prerelease identifiers using numeric precedence, with
+/// numeric identifiers ordered before text and a shorter equal prefix first.
+fn compare_prerelease(left: &str, right: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let mut left = left.split('.');
+    let mut right = right.split('.');
+    loop {
+        let (left, right) = match (left.next(), right.next()) {
+            (Some(left), Some(right)) => (left, right),
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (None, None) => return Ordering::Equal,
+        };
+        let numeric = |value: &str| !value.is_empty() && value.bytes().all(|c| c.is_ascii_digit());
+        let order = match (numeric(left), numeric(right)) {
+            (true, true) => {
+                // Compare by digit count to avoid overflowing on a legal large identifier.
+                let left = left.trim_start_matches('0');
+                let right = right.trim_start_matches('0');
+                left.len().cmp(&right.len()).then_with(|| left.cmp(right))
+            }
+            (true, false) => Ordering::Less,
+            (false, true) => Ordering::Greater,
+            (false, false) => left.cmp(right),
+        };
+        if order != Ordering::Equal {
+            return order;
+        }
+    }
+}
+
+fn parse_semver(value: &str) -> Option<(Vec<u64>, Option<String>)> {
+    let value = value.trim().split('+').next()?;
+    if value.is_empty() {
+        return None;
+    }
+    let (main, pre) = match value.split_once('-') {
+        Some((m, p)) => (m, Some(p.to_string())),
+        None => (value, None),
+    };
+    let mut parts = Vec::new();
+    for part in main.split('.') {
+        // Allow a leading 'v'.
+        let part = part.trim_start_matches('v');
+        if part.is_empty() {
+            parts.push(0);
+            continue;
+        }
+        // Stop at the first non-digit so "1.2.3-rc" style without dash still works.
+        let digits: String = part.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if digits.is_empty() {
+            return None;
+        }
+        parts.push(digits.parse::<u64>().ok()?);
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    Some((parts, pre))
 }
 
 /// Whether the database holds any user tables (i.e. it is not freshly created).
@@ -127,6 +270,12 @@ fn prune_backups(dir: &Path) -> Result<(), String> {
 }
 
 pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    migrate_inner(&tx)?;
+    tx.commit()
+}
+
+fn migrate_inner(conn: &Connection) -> rusqlite::Result<()> {
     const MIGRATION: &str = include_str!("../migrations/0001_init.sql");
     conn.execute_batch(MIGRATION)?;
 
@@ -204,6 +353,31 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     if !has_failure_notification_claim {
         conn.execute_batch(include_str!("../migrations/0008_scan_failure_notifications.sql"))?;
     }
+    conn.execute_batch(include_str!("../migrations/0009_academic.sql"))?;
+    let has_assignment_details: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('academic_assignments') WHERE name='details')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_assignment_details {
+        conn.execute_batch(include_str!("../migrations/0010_assignment_details.sql"))?;
+    }
+    let has_grade_details: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('academic_grades') WHERE name='details')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_grade_details {
+        conn.execute_batch(include_str!("../migrations/0011_grade_details.sql"))?;
+    }
+    let has_attendance_details: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('academic_attendance') WHERE name='details')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_attendance_details {
+        conn.execute_batch(include_str!("../migrations/0012_attendance_reports.sql"))?;
+    }
     Ok(())
 }
 
@@ -231,7 +405,12 @@ fn upgrade_resource_fingerprints(conn: &Connection) -> rusqlite::Result<()> {
         return Ok(());
     }
 
-    let tx = conn.unchecked_transaction()?;
+    // These legacy migrations are also called independently by focused tests.
+    // Join the upgrade transaction when present; otherwise keep their atomicity.
+    let transaction = conn.is_autocommit()
+        .then(|| conn.unchecked_transaction())
+        .transpose()?;
+    let tx = transaction.as_deref().unwrap_or(conn);
     let rows = {
         let mut stmt = tx.prepare(
             "SELECT id, title, resource_type, uploaded_at, published_at,
@@ -277,7 +456,10 @@ fn upgrade_resource_fingerprints(conn: &Connection) -> rusqlite::Result<()> {
         "INSERT INTO settings(key, value) VALUES(?1, ?2)",
         params![RESOURCE_FINGERPRINT_V2_KEY, "completed"],
     )?;
-    tx.commit()
+    match transaction {
+        Some(tx) => tx.commit(),
+        None => Ok(()),
+    }
 }
 
 fn apply_course_tree_incident_cleanup(conn: &Connection, now: &str) -> rusqlite::Result<()> {
@@ -290,7 +472,12 @@ fn apply_course_tree_incident_cleanup(conn: &Connection, now: &str) -> rusqlite:
     let cutoff = (current - chrono::Duration::hours(12))
         .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
 
-    let tx = conn.unchecked_transaction()?;
+    // These legacy migrations are also called independently by focused tests.
+    // Join the upgrade transaction when present; otherwise keep their atomicity.
+    let transaction = conn.is_autocommit()
+        .then(|| conn.unchecked_transaction())
+        .transpose()?;
+    let tx = transaction.as_deref().unwrap_or(conn);
     let changed = tx.execute(
         "UPDATE change_events
          SET calendar_suppressed = 1
@@ -343,7 +530,10 @@ fn apply_course_tree_incident_cleanup(conn: &Connection, now: &str) -> rusqlite:
         "INSERT INTO settings(key, value) VALUES(?1, ?2)",
         params![COURSE_TREE_CALENDAR_CLEANUP_KEY, marker],
     )?;
-    tx.commit()
+    match transaction {
+        Some(tx) => tx.commit(),
+        None => Ok(()),
+    }
 }
 
 fn count_suppressed_incident_events(conn: &Connection, change_type: &str) -> rusqlite::Result<i64> {
@@ -1283,10 +1473,13 @@ pub fn event_exists(conn: &Connection, dedup_key: &str) -> bool {
 /* --------------------------------------------------------------- scan runs */
 
 pub fn start_scan(conn: &Connection, now: &str) -> rusqlite::Result<i64> {
-    conn.execute(
+    let changed = conn.execute(
         "INSERT INTO scan_runs(started_at, status) VALUES(?1, 'running')",
         params![now],
     )?;
+    if changed != 1 {
+        return Err(rusqlite::Error::StatementChangedRows(changed));
+    }
     Ok(conn.last_insert_rowid())
 }
 
@@ -1305,11 +1498,11 @@ pub fn finish_scan(
     is_baseline: bool,
     now: &str,
 ) -> rusqlite::Result<()> {
-    conn.execute(
+    let changed = conn.execute(
         "UPDATE scan_runs SET completed_at = ?1, status = ?2, discovered_count = ?3,
             new_count = ?4, updated_count = ?5, unavailable_count = ?6,
             courses_scanned = ?7, courses_failed = ?8, error_summary = ?9, is_baseline = ?10
-         WHERE id = ?11",
+         WHERE id = ?11 AND status = 'running'",
         params![
             now,
             status,
@@ -1324,6 +1517,9 @@ pub fn finish_scan(
             id
         ],
     )?;
+    if changed != 1 {
+        return Err(rusqlite::Error::StatementChangedRows(changed));
+    }
     Ok(())
 }
 
@@ -2676,6 +2872,7 @@ mod tests {
         let (dir, path, conn) = file_db();
         set_kv(&conn, LAST_APP_VERSION_KEY, "0.2.0").unwrap();
 
+        set_kv(&conn, SCHEMA_REVISION_KEY, &CURRENT_SCHEMA_REVISION.to_string()).unwrap();
         upgrade(&conn, &path, "0.2.0").unwrap();
 
         assert!(!dir.path().join("backups").exists());
@@ -3882,4 +4079,146 @@ mod tests {
         assert!(mirror_get(&conn, rid).unwrap().is_none());
         assert_eq!(queue_len(&conn), 0, "a queue row for a dead resource is gone too");
     }
+
+    #[test]
+    fn upgrade_backs_up_semantic_zero_nine_to_zero_ten() {
+        let (dir, path, conn) = file_db();
+        set_kv(&conn, LAST_APP_VERSION_KEY, "0.9.0").unwrap();
+        set_kv(&conn, SCHEMA_REVISION_KEY, "8").unwrap();
+        conn.execute_batch("CREATE TABLE legacy (id INTEGER); INSERT INTO legacy VALUES (1);")
+            .unwrap();
+
+        upgrade(&conn, &path, "0.10.0").unwrap();
+
+        let names = backup_names(&dir);
+        assert_eq!(names.len(), 1, "one backup expected: {names:?}");
+        assert!(names[0].starts_with("quanta-pulse-0.9.0-"), "{}", names[0]);
+        assert_eq!(get_kv(&conn, LAST_APP_VERSION_KEY).as_deref(), Some("0.10.0"));
+        assert_eq!(get_kv(&conn, SCHEMA_REVISION_KEY), Some(CURRENT_SCHEMA_REVISION.to_string()));
+    }
+
+    #[test]
+    fn upgrade_backs_up_prerelease_progression() {
+        let (dir, path, conn) = file_db();
+        set_kv(&conn, LAST_APP_VERSION_KEY, "0.2.0-rc.1").unwrap();
+        set_kv(&conn, SCHEMA_REVISION_KEY, "8").unwrap();
+
+        upgrade(&conn, &path, "0.2.0").unwrap();
+
+        let names = backup_names(&dir);
+        assert_eq!(names.len(), 1, "one backup expected: {names:?}");
+        assert!(names[0].starts_with("quanta-pulse-0.2.0-rc.1-"), "{}", names[0]);
+    }
+
+    #[test]
+    fn upgrade_backs_up_numeric_prerelease_progression() {
+        let (dir, path, conn) = file_db();
+        set_kv(&conn, LAST_APP_VERSION_KEY, "0.2.0-rc.2").unwrap();
+        set_kv(&conn, SCHEMA_REVISION_KEY, &CURRENT_SCHEMA_REVISION.to_string()).unwrap();
+
+        upgrade(&conn, &path, "0.2.0-rc.10").unwrap();
+
+        assert_eq!(backup_names(&dir).len(), 1);
+    }
+
+    #[test]
+    fn upgrade_prerelease_order_and_metadata_control_backups() {
+        for (recorded, running, expected_backups) in [
+            ("0.2.0-rc.10", "0.2.0-rc.2", 0),
+            ("0.2.0-1", "0.2.0-alpha", 1),
+            ("0.2.0-alpha", "0.2.0-1", 0),
+            ("0.2.0-beta", "0.2.0-beta.1", 1),
+            ("0.2.0-beta.1", "0.2.0-beta", 0),
+            ("0.2.0-rc.2+old", "0.2.0-rc.2+new", 0),
+            ("0.2.0-rc.2+old", "0.2.0-rc.10+new", 1),
+            ("0.2.0-rc.999999999999999999999", "0.2.0-rc.1000000000000000000000", 1),
+        ] {
+            let (dir, path, conn) = file_db();
+            set_kv(&conn, LAST_APP_VERSION_KEY, recorded).unwrap();
+            set_kv(&conn, SCHEMA_REVISION_KEY, &CURRENT_SCHEMA_REVISION.to_string()).unwrap();
+
+            upgrade(&conn, &path, running).unwrap();
+
+            assert_eq!(
+                backup_names(&dir).len(),
+                expected_backups,
+                "backup decision for {recorded} -> {running}"
+            );
+        }
+    }
+
+    #[test]
+    fn upgrade_no_backup_same_version_current_schema() {
+        let (dir, path, conn) = file_db();
+        set_kv(&conn, LAST_APP_VERSION_KEY, "0.2.0").unwrap();
+
+        set_kv(&conn, SCHEMA_REVISION_KEY, &CURRENT_SCHEMA_REVISION.to_string()).unwrap();
+        upgrade(&conn, &path, "0.2.0").unwrap();
+
+        assert!(!dir.path().join("backups").exists());
+    }
+
+    #[test]
+    fn upgrade_backs_up_pending_same_version_schema_revision() {
+        let (dir, path, conn) = file_db();
+        set_kv(&conn, LAST_APP_VERSION_KEY, "0.2.0").unwrap();
+        set_kv(&conn, SCHEMA_REVISION_KEY, "7").unwrap();
+        conn.execute_batch("CREATE TABLE legacy (id INTEGER); INSERT INTO legacy VALUES (1);")
+            .unwrap();
+
+        upgrade(&conn, &path, "0.2.0").unwrap();
+
+        let names = backup_names(&dir);
+        assert_eq!(names.len(), 1, "one backup expected: {names:?}");
+        let backup = Connection::open(dir.path().join("backups").join(&names[0])).unwrap();
+        let count: i64 = backup.query_row("SELECT COUNT(*) FROM legacy", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn upgrade_refuses_unsupported_newer_schema() {
+        let (dir, path, conn) = file_db();
+        set_kv(&conn, LAST_APP_VERSION_KEY, "0.2.0").unwrap();
+        set_kv(&conn, SCHEMA_REVISION_KEY, "99").unwrap();
+
+        let result = upgrade(&conn, &path, "0.2.0");
+        let err = result.expect_err("newer schema must be refused");
+        assert!(err.contains("newer"), "unexpected error: {err}");
+        assert_eq!(get_kv(&conn, LAST_APP_VERSION_KEY).as_deref(), Some("0.2.0"));
+        assert_eq!(get_kv(&conn, SCHEMA_REVISION_KEY).as_deref(), Some("99"));
+        assert!(!dir.path().join("backups").exists());
+    }
+
+    #[test]
+    fn upgrade_unknown_legacy_still_backs_up() {
+        let (dir, path, conn) = file_db();
+        // No recorded version, but user data present.
+        conn.execute_batch("CREATE TABLE legacy (id INTEGER); INSERT INTO legacy VALUES (1);")
+            .unwrap();
+
+        upgrade(&conn, &path, "0.2.0").unwrap();
+
+        let names = backup_names(&dir);
+        assert_eq!(names.len(), 1, "one backup expected: {names:?}");
+        assert!(names[0].starts_with("quanta-pulse-unknown-"), "{}", names[0]);
+    }
+
+    #[test]
+    fn upgrade_idempotent_reopen_records_revision() {
+        let (dir, path, conn) = file_db();
+        set_kv(&conn, LAST_APP_VERSION_KEY, "0.1.0").unwrap();
+        upgrade(&conn, &path, "0.2.0").unwrap();
+        drop(conn);
+        let reopened = Connection::open(&path).unwrap();
+        // Re-running upgrade at same version/schema must not back up again.
+        let before = backup_names(&dir).len();
+        upgrade(&reopened, &path, "0.2.0").unwrap();
+        let after = backup_names(&dir).len();
+        assert_eq!(before, after);
+        assert_eq!(get_kv(&reopened, SCHEMA_REVISION_KEY), Some(CURRENT_SCHEMA_REVISION.to_string()));
+    }
 }
+
+#[cfg(test)]
+#[path = "../../tests/academic_migration.rs"]
+mod academic_migration_tests;

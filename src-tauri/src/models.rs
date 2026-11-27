@@ -59,6 +59,17 @@ pub struct Resource {
     pub is_external: bool,
 }
 
+/// Atomic desktop search inventory: courses and resources read under one
+/// database connection lock so concurrent writes cannot split the snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopSearchInventory {
+    pub courses: Vec<Course>,
+    pub resources: Vec<Resource>,
+    /// Canonical attention membership from the same read transaction.
+    pub unread_resource_ids: Vec<i64>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChangeType {
@@ -307,6 +318,7 @@ pub struct ScanOutcome {
     pub errors: Vec<String>,
     pub auth_expired: bool,
     pub cancelled: bool,
+    pub committed: bool,
 }
 
 /// Local byte-cache occupancy, for Settings > Data.

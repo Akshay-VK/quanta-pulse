@@ -17,6 +17,13 @@ export interface Course {
   resourceCount: number;
 }
 
+export interface DesktopSearchInventory {
+  courses: Course[];
+  resources: Resource[];
+  /** Canonical resource attention, from the same SQLite read transaction. */
+  unreadResourceIds: number[];
+}
+
 export interface Resource {
   id: number;
   externalResourceId: string;
@@ -259,6 +266,7 @@ export interface ScanOutcome {
   errors: string[];
   authExpired: boolean;
   cancelled: boolean;
+  committed: boolean;
 }
 
 export interface DbInfo {
@@ -443,5 +451,88 @@ export interface DueResource {
   resource: Resource;
   dateKind: "date" | "instant";
   coursePaused: boolean;
+  /** Private display projection, kept off the shared material record. */
+  projectedDueAt?: string;
 }
 export interface DuePage { items: DueResource[]; total: number }
+
+// Private academic read contracts, version 1. Domain collectors remain unverified.
+export interface AcademicOwner { origin: string; moodleUserId: number }
+export interface AcademicContext { contractVersion: 1; generation: string; owner: AcademicOwner | null; collectorsEnabled: boolean }
+export type AcademicCoverageStatus = "complete" | "partial" | "denied" | "unsupported" | "offline" | "cancelled" | "failed";
+export type AcademicVisibility = "visible" | "hidden" | "unreleased" | "unknown";
+export type AcademicDate = { kind: "unknown" } | { kind: "unset" } | { kind: "unsupported" } | { kind: "instant" | "dateOnly" | "ambiguous"; value: string };
+export interface AcademicSource { sourceId: string; sourceUrl: string; observedAt: string; visibility: AcademicVisibility }
+export interface AssignmentObservation {
+  source: AcademicSource; title: string; courseModuleId: number | null; activityInstanceId: number | null;
+  resourceId: number | null; due: AcademicDate; dueDisplay: string | null; submissionDisplay: string | null; calendarEventId: number | null; submissionStatus: "unknown" | "unsubmitted" | "draft" | "submitted" | "reopened" | "notRequired" | "notYetOpen"; attemptNumber: number | null;
+  details?: AssignmentFacts | null;
+}
+export interface AssignmentFacts {
+  baseDue: AcademicDate;
+  effectiveDue: AcademicDate;
+  opening: AcademicDate;
+  extension: AcademicDate;
+  cutOff: AcademicDate;
+  gradingDue: AcademicDate;
+  dueProvenance: "unknown" | "base" | "effective" | "extension";
+  mode: "unknown" | "individual" | "team";
+  pendingTeamConfirmations: number | null;
+  timeLimitSeconds: number | null;
+  description: string | null;
+  attachments: { title: string; url: string }[];
+  gradingStatus: string | null;
+  releasedFeedback: string | null;
+}
+export interface GradeObservation {
+  source: AcademicSource; title: string; gradeItemId: number | null; parentSourceId: string | null;
+  itemKind: "item" | "category" | "categoryTotal" | "courseTotal"; displayValue: string | null; numericValue: number | null;
+  rangeDisplay: string | null; weightDisplay: string | null; feedback: string | null;
+  details?: {
+    valueStatus: "reported" | "blank" | "ungraded" | "unknown";
+    percentageDisplay: string | null;
+    letterDisplay: string | null;
+  } | null;
+  omitted?: boolean;
+}
+export interface AttendanceObservation {
+  source: AcademicSource; activityInstanceId: number; courseModuleId: number | null; sessionId: number | null; scopeDisplay: string;
+  statusDisplay: string | null; pointsDisplay: string | null; maximumDisplay: string | null; summaryDisplay: string | null;
+  details?: AttendanceReportDetails | null;
+}
+export interface AttendanceReportDetails {
+  title: string;
+  groupId: number | null;
+  groupDisplay: string | null;
+  range: "all" | "month" | "week" | "custom";
+  from: string | null;
+  through: string | null;
+  page: number;
+  totalPages: number;
+  complete: boolean;
+  summaryLabel: string | null;
+  sessions: AttendanceSession[];
+}
+export interface AttendanceSession {
+  sessionId: number | null;
+  dateDisplay: string;
+  description: string | null;
+  state: "recorded" | "absent" | "unrecorded" | "future" | "enrollmentBoundary" | "unknown";
+  statusDisplay: string | null;
+  pointsDisplay: string | null;
+  maximumDisplay: string | null;
+  remarks: string | null;
+}
+export interface AcademicCoverage {
+  permission: "unknown" | "permitted" | "restricted";
+  reason: "incompleteSource" | "permissionDenied" | "sourceUnverified" | "networkUnavailable" | "workCancelled" | "collectionFailed" | null;
+  coverage: AcademicCoverageStatus; observedAt: string; lastSuccessfulAt: string | null; baselineEstablished: boolean; stale: boolean;
+}
+export interface AcademicPage<T> { context: AcademicContext; courseId: number; coverage: AcademicCoverage | null; records: T[] }
+
+export interface SavedContentResults {
+  state: "empty" | "building" | "cancelled" | "ready" | "limited" | "stale" | "tooLarge" | "queryTooLong" | "unavailable" | "unsupported";
+  indexed: number;
+  skipped: number;
+  hits: { resourceId: number; snippet: string }[];
+}

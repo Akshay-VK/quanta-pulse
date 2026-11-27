@@ -1,9 +1,10 @@
+import { BodyMatch } from "../../components/SavedContentSearch";
 import { useMaterialActions } from "../../hooks/useMaterialActions";
 import { MaterialButtons } from "../../components/MaterialButtons";
 import { type ReactNode } from "react";
 import { Check, ChevronRight, ExternalLink, Folder } from "lucide-react";
 import { cx } from "../../lib/cx";
-import { formatTimeOfDay } from "../../lib/format";
+import { formatCompact, formatListDate } from "../../lib/format";
 import { resourceSectionPath } from "../../lib/sectionPath";
 import type { CourseTreeNode } from "../../lib/courseTree";
 import type { Resource } from "../../lib/types";
@@ -55,6 +56,7 @@ interface TreeRowProps {
   index: number;
   focused: boolean;
   query: string;
+  bodySnippet?: string;
   onToggle: (id: string) => void;
   onChooseFolder?: (node: CourseTreeNode) => void;
   folderSelected?: boolean;
@@ -79,6 +81,7 @@ export default function TreeRow({
   index,
   focused,
   query,
+  bodySnippet,
   onToggle,
   onChooseFolder,
   folderSelected,
@@ -146,6 +149,7 @@ export default function TreeRow({
   const folder = sectionPath.join(" / ");
   const section = sectionPath.at(-1);
   const unavailable = resource.availabilityStatus === "unavailable";
+  const snippetId = bodySnippet === undefined ? undefined : `course-body-match-${resource.id}`;
 
   return (
     <div
@@ -158,15 +162,15 @@ export default function TreeRow({
     >
       <span className="course-material-marker">{unread && <UnreadDot unread />}</span>
       <FileTypeIcon type={resource.resourceType} />
-      <button type="button" className="tree-name" aria-label={`Show details for ${resource.title}`} onClick={(event) => onSelect(resource, event.currentTarget)} title={`${resource.title} — ${folder}`}>
+      <button type="button" className="tree-name" aria-label={`Show details for ${resource.title}`} aria-describedby={snippetId} onClick={(event) => onSelect(resource, event.currentTarget)} title={`${resource.title} — ${folder}`}>
         <span className="course-material-name"><Highlighted text={resource.title} query={searching ? query : ""} /></span>
-        {searching && <span className="tree-match-path">{folder}</span>}
+        {bodySnippet !== undefined ? <BodyMatch id={snippetId} snippet={bodySnippet} /> : searching && <span className="tree-match-path">{folder}</span>}
       </button>
       {compactCourse
         ? <CoursePill courseId={compactCourse.id} code={compactCourse.code} name={compactCourse.name} />
         : <span className="course-material-section mono" title={folder}>{section}</span>}
-      <span className="course-material-detected mono" title="Detected">
-        {formatTimeOfDay(resource.firstSeenAt)}
+      <span className="course-material-detected mono" title={`First detected ${formatCompact(resource.firstSeenAt)}`}>
+        {formatListDate(resource.firstSeenAt)}
       </span>
       <span className="course-material-saved">{saved && <Check aria-label="Saved" />}</span>
       <span className="course-material-actions">

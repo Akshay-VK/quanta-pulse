@@ -5,7 +5,6 @@ import {
   Folder,
   Inbox,
   PanelLeftOpen,
-  Pause,
   Search,
   SlidersHorizontal,
 } from "lucide-react";
@@ -13,14 +12,13 @@ import type { KeyboardEvent, ReactNode } from "react";
 import { useEffect, useRef } from "react";
 import { cx } from "../lib/cx";
 import { NAV, type ViewId } from "../lib/nav";
-import { courseDotClass } from "./ui/CoursePill";
 import { IconButton } from "./ui/IconButton";
-import { courseLabel } from "../lib/courseName";
 import { formatShortcut } from "../lib/platform";
 import { Tooltip } from "./ui/Tooltip";
+import SidebarCourseTree from "./SidebarCourseTree";
 import SyncStatus from "./SyncStatus";
 import SyncButton from "./SyncButton";
-import type { Course, SyncStatus as SyncStatusModel } from "../lib/types";
+import type { Course, Resource, SyncStatus as SyncStatusModel } from "../lib/types";
 
 const NAV_ICON: Record<ViewId, ReactNode> = {
   today: <Inbox aria-hidden="true" />,
@@ -69,60 +67,16 @@ function NavItem({
   );
 }
 
-/**
- * A sidebar course entry. It is a real navigation target: clicking it opens
- * the course page from any view, so it is never a toggle.
- */
-function CourseNavItem({
-  course,
-  unread,
-  active,
-  collapsed,
-  onSelect,
-}: {
-  course: Course;
-  unread: number | "–";
-  active: boolean;
-  collapsed: boolean;
-  onSelect: () => void;
-}) {
-  const paused = course.monitoringStatus !== "monitored";
-  const label = courseLabel(course.id);
-  const text = label?.name ?? course.shortName ?? course.name;
-  const button = (
-    <button
-      type="button"
-      className={cx("course-nav-item", paused && "paused")}
-      aria-current={active ? "page" : undefined}
-      title={label?.raw ?? course.name}
-      onClick={onSelect}
-    >
-      {paused ? (
-        <Pause className="course-warn" aria-hidden="true" />
-      ) : (
-        <span className={cx("course-dot", courseDotClass(course.id))} aria-hidden="true" />
-      )}
-      <span className="course-nav-code">{text}</span>
-      {(unread === "–" || unread > 0) && <span className="course-nav-count">{unread}</span>}
-    </button>
-  );
-  return collapsed ? (
-    <Tooltip content={text} side="right">
-      {button}
-    </Tooltip>
-  ) : (
-    button
-  );
-}
-
 /** The primary sidebar: brand, palette trigger, nav, courses and the sync block. */
 export default function Sidebar({
   view,
   onView,
   courses,
+  resources = [],
   unreadByCourse,
   unreadTotal,
   activeCourseId,
+  activeFolderPath = null,
   onCourse,
   sync,
   onSync,
@@ -137,10 +91,12 @@ export default function Sidebar({
   view: ViewId;
   onView: (id: ViewId) => void;
   courses: Course[];
+  resources?: Resource[];
   unreadByCourse: Map<number, number>;
   unreadTotal: number | "–";
   activeCourseId: number | null;
-  onCourse: (id: number | null) => void;
+  activeFolderPath?: string[] | null;
+  onCourse: (id: number, folderPath?: string[]) => void;
   sync: SyncStatusModel | null;
   onSync: () => void;
   onOpenScans: () => void;
@@ -198,14 +154,6 @@ export default function Sidebar({
     }
   };
 
-  const topCourses = [...courses]
-    .sort((a, b) => {
-      const code = (course: Course) => courseLabel(course.id)?.name ?? course.shortName ?? course.name;
-      const byCode = code(a).localeCompare(code(b), undefined, { sensitivity: "base", numeric: true });
-      return byCode || a.id - b.id;
-    })
-    .slice(0, 8);
-
   return (
     <div
       ref={sidebarRef}
@@ -249,26 +197,15 @@ export default function Sidebar({
         </nav>
 
         {(!collapsed || overlay) && courses.length > 0 && (
-          <div className="course-nav-section">
-            <p className="nav-section-label">Courses</p>
-            <div className="course-nav-list">
-              {topCourses.map((course) => (
-                <CourseNavItem
-                  key={course.id}
-                  course={course}
-                  unread={unreadTotal === "–" ? "–" : unreadByCourse.get(course.id) ?? 0}
-                  active={view === "library" && activeCourseId === course.id}
-                  collapsed={collapsed && !overlay}
-                  onSelect={() => onCourse(course.id)}
-                />
-              ))}
-            </div>
-            {courses.length > topCourses.length && (
-              <button type="button" className="all-courses-link" onClick={() => onCourse(null)}>
-                All courses
-              </button>
-            )}
-          </div>
+          <SidebarCourseTree
+            courses={courses}
+            resources={resources}
+            activeCourseId={view === "library" ? activeCourseId : null}
+            activeFolderPath={activeFolderPath}
+            unreadByCourse={unreadByCourse}
+            unreadTotal={unreadTotal}
+            onCourse={onCourse}
+          />
         )}
       </div>
 

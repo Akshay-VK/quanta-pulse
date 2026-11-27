@@ -1,5 +1,10 @@
 # Decision wiki
 
+- [2026-11-21 S1/S2 search integration checkpoint](2026-11-21-search-integration.md) — source `0b80b58` merged at `fad3b486`; preserved root prerelease/R1/R2/auth proofs, inherited 895 frontend / 294 Rust evidence, combined native-suite limit, pending spec/standards corrections and open-ticket status.
+
+- [2026-11-21 R2 integration and A0 prerequisite assessment](2026-11-21-r2-integration.md) — concrete collectors and atomic reconciliation merged at `b4f08a6` from `c0559f5`; inherited same-tree Windows 292 passed/1 ignored and check provenance, preserved R1/auth proofs, local synthetic A0 readiness and remaining live/migration/native limits.
+- [2026-11-21 search and academic expansion setup recovery](2026-11-21-search-and-academic-expansion-setup.md) — Tracker graph verified for #57/#58-#69, base commits recorded, baseline/log limits, and implementation-start handoff.
+- [2026-11-21 R1A/R1B integration evidence](2026-11-21-r1a-r1b-integration.md) — Serial integration of R1B (#61, e82ac7e/ecb7369) and R1A (#60, e8c9bbd/7d5abca) into `feat/search-academic-expansion`; R1A regression proof merged at `12391a3`/`ecfc5bf`; R1B identity/cookie/fence proof merged at `ce9ee1e`/`dd0d164` with same-tree Windows evidence and local A0 prerequisite limits; no final acceptance claimed.
 - [2026-11-20 redesign reference alignment](2026-11-20-redesign-reference-alignment.md) — Source-aligned UI fixes, browser geometry and zoom evidence, and remaining native and per-screen checks.
 
 - [2026-11-16: Paused redesign session handoff](2026-11-16-redesign-session-handoff.md) — resume entry point, accepted commits, interrupted patches, contracts, proof limits and next tasks.
@@ -42,3 +47,7 @@ This wiki preserves dated decisions and their evidence. It is not the live track
 - [2026-11-16: Complete History read contract](2026-11-16-history-read-contract.md) — B05A acceptance, timestamp correction, native proof, and bounded task splits.
 - [2026-11-16: Row foundation acceptance](2026-11-16-row-foundation.md) — 04A geometry, cascade correction, rendered proof, and remaining keyboard scope.
 - [2026-11-16: Baseline and History acceptance checkpoint](2026-11-16-baseline-and-history-acceptance.md) — accepted backend/policy commits, proof limits, and outstanding surface/recovery work.
+
+- [2026-11-21: Prerelease backup ordering proof](2026-11-21-r1a-r1b-integration.md#2026-11-21-prerelease-backup-ordering-corrected) — numeric prerelease and build-metadata correction, red/green upgrade evidence, and remaining A0 restore gate.
+
+- [2026-11-21 small search-review corrections](2026-11-21-search-integration.md#2026-11-21-small-search-review-corrections-verified) — query-policy ownership, duplicate guards and course-name ranking corrected at `35fd65b`; fresh 897-test/lint/build proof; P2 consistency fixes remain separate.

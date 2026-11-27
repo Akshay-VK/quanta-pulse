@@ -1,0 +1,386 @@
+import { act } from 'react';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { appApi, button, click, emitAppEvent, escape, deferred, flushApp, renderApp, resource, change, course, settings, setupApp } from './helpers/renderApp';
+let app: Awaited<ReturnType<typeof renderApp>>;
+beforeEach(() => setupApp());
+afterEach(() => { app?.unmount(); vi.useRealTimers(); });
+async function input(node: HTMLInputElement, value: string) {
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(node, value);
+    node.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+it('preserves quoted aliases, filters and relevance from palette to Library', async () => {
+  appApi.listCourses.mockResolvedValue([{ ...course, displayName: 'ECOM F222' }]);
+  appApi.listResources.mockResolvedValue([
+    resource({ id: 2, externalResourceId: "r2", title: 'Lecture 4 notes', resourceType: 'pdf' }),
+    resource({ id: 3, externalResourceId: "r3", title: 'Lecture 4 video', resourceType: 'url' }),
+    resource({ id: 1, title: 'Lecture 4', resourceType: 'pdf' }),
+  ]);
+  app = await renderApp();
+  await click(document.querySelector<HTMLButtonElement>('.search-trigger')!);
+  await input(document.querySelector<HTMLInputElement>('.palette-input')!, 'course:"ECOM F222" type:pdf lecture 4');
+  const hits = [...document.querySelectorAll('.palette-item')].filter(n => n.textContent?.includes('Lecture 4'));
+  expect(hits.map(n => n.textContent?.includes('notes') ? 'notes' : 'exact')).toEqual(['exact', 'notes']);
+  await click([...document.querySelectorAll<HTMLElement>('.palette-item')].find(n => n.textContent?.includes('See all results'))!);
+  expect(document.querySelector<HTMLInputElement>('input[aria-label="Search library"]')?.value).toBe('course:"ECOM F222" type:pdf lecture 4');
+  expect([...document.querySelectorAll('tbody tr')].map(n => n.textContent?.includes('notes') ? 'notes' : 'exact')).toEqual(['exact', 'notes']);
+  expect(appApi.openExternal).not.toHaveBeenCalled();
+});
+
+async function inputValue(input: HTMLInputElement, value: string) {
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+async function palette(raw: string) {
+  await click(document.querySelector<HTMLButtonElement>('.search-trigger')!);
+  await inputValue(document.querySelector<HTMLInputElement>('.palette-input')!, raw);
+}
+async function chooseScope(scope: object) {
+  const select = document.querySelector<HTMLSelectElement>('main select[aria-label="Search scope"]')!;
+  await act(async () => { select.value = JSON.stringify(scope); select.dispatchEvent(new Event('change', { bubbles: true })); });
+}
+
+it('opens the exact duplicate folder, reveals ancestors, preserves explicit scope and clears filters with the keyboard', async () => {
+  appApi.listCourses.mockResolvedValue([course, { ...course, id: 2, shortName: 'PHYS F111', displayName: 'Physics' }]);
+  appApi.listResources.mockResolvedValue([
+    resource({ title: 'Math slides', sectionPath: ['Week 05', 'Lectures'] }),
+    resource({ id: 2, externalResourceId: 'r2', courseId: 2, title: 'Physics slides', sectionPath: ['Week 05', 'Lectures'] }),
+    resource({ id: 3, externalResourceId: 'r3', courseId: 2, title: 'Physics tutorial', sectionPath: ['Week 05', 'Tutorials'] }),
+  ]);
+  app = await renderApp();
+  await palette('Lectures');
+  const folder = [...document.querySelectorAll<HTMLElement>('.palette-item')].find(n => n.textContent?.includes('Physics / Week 05 / Lectures'))!;
+  expect(folder).toBeTruthy();
+  const paletteInput = document.querySelector<HTMLInputElement>('.palette-input')!;
+  // cmdk keeps focus in its input and uses aria-selected for keyboard selection.
+  for (let step = 0; step < 12 && folder.getAttribute('aria-selected') !== 'true'; step++) {
+    await act(async () => paletteInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })));
+  }
+  expect(folder.getAttribute('aria-selected')).toBe('true');
+  await act(async () => paletteInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })));
+  await flushApp();
+  const main = document.querySelector('main')!;
+  expect(main.textContent).toContain('Physics slides');
+  expect(main.textContent).not.toContain('Math slides');
+  const selected = document.querySelector('.sidebar [aria-current="page"]')!;
+  expect(selected.textContent).toContain('Lectures');
+  expect(document.querySelector('.sidebar')?.textContent).toContain('Tutorials');
+  expect(JSON.parse(document.querySelector<HTMLSelectElement>('main select[aria-label="Search scope"]')!.value)).toEqual({ kind: 'folder', courseId: 2, path: ['Week 05', 'Lectures'] });
+  await chooseScope({ kind: 'course', courseId: 2 });
+  await inputValue(document.querySelector<HTMLInputElement>('main .search-field-input')!, 'slides');
+  await click(button('Tutorials', document.querySelector('.sidebar')!));
+  expect(document.querySelector<HTMLInputElement>('main .search-field-input')!.value).toBe('slides');
+  expect(JSON.parse(document.querySelector<HTMLSelectElement>('main select[aria-label="Search scope"]')!.value)).toEqual({ kind: 'course', courseId: 2 });
+  await click(button('Clear filters', main));
+  expect(main.textContent).toContain('Physics tutorial');
+  expect(JSON.parse(document.querySelector<HTMLSelectElement>('main select[aria-label="Search scope"]')!.value)).toEqual({ kind: 'course', courseId: 2 });
+  expect(appApi.openExternal).not.toHaveBeenCalled();
+
+});
+
+it('reevaluates See all after refresh, retains results on failure and reapplies repeated requests', async () => {
+  appApi.listCourses.mockResolvedValue([{ ...course, displayName: 'ECOM F222' }]);
+  app = await renderApp();
+  await palette('course:"ECOM F222" type:pdf lecture');
+  await click([...document.querySelectorAll<HTMLElement>('.palette-item')].find(n => n.textContent?.includes('See all results'))!);
+  appApi.listResources.mockResolvedValue([resource(), resource({ id: 2, externalResourceId: 'r2', title: 'Lecture 5' })]);
+  await emitAppEvent('sync:done', {});
+  expect(document.querySelector('main')?.textContent).toContain('Lecture 5');
+  appApi.listSearchInventory.mockRejectedValueOnce(new Error('Snapshot offline'));
+  await emitAppEvent('sync:done', {});
+  expect(document.querySelector('main')?.textContent).toContain('Lecture 5');
+  expect(document.querySelector('main')?.textContent).toContain('refresh failed');
+  await inputValue(document.querySelector<HTMLInputElement>('input[aria-label="Search library"]')!, 'nothing');
+  expect(document.querySelector('main')?.textContent).toContain('No files match');
+  await palette('course:"ECOM F222" type:pdf lecture');
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain("Search refresh failed");
+  await click([...document.querySelectorAll<HTMLElement>('.palette-item')].find(n => n.textContent?.includes('See all results'))!);
+  expect(document.querySelector<HTMLInputElement>('input[aria-label="Search library"]')!.value).toBe('course:"ECOM F222" type:pdf lecture');
+  expect(document.querySelector('main')?.textContent).toContain('Lecture 5');
+});
+
+it('shows invalid tokens with no file hits and restores palette focus on Escape', async () => {
+  app = await renderApp();
+  const origin = document.querySelector<HTMLButtonElement>('.search-trigger')!;
+  await act(async () => origin.focus());
+  await palette('owner:me');
+  expect(document.querySelector('[role="alert"]')?.textContent).toContain('Unsupported filter: owner');
+  expect(document.querySelector('.palette-group .palette-file')).toBeNull();
+  expect([...document.querySelectorAll('.palette-item')].some(n => n.textContent?.includes('Lecture 4'))).toBe(false);
+  await escape();
+  expect(document.querySelector('.palette-input')).toBeNull();
+  expect(document.activeElement).toBe(origin);
+});
+
+it('publishes only the newest atomic inventory when refresh requests resolve out of order', async () => {
+  app = await renderApp();
+  await palette('lecture');
+  await click([...document.querySelectorAll<HTMLElement>('.palette-item')].find(n => n.textContent?.includes('See all results'))!);
+  const older = deferred<{ courses: typeof course[]; resources: ReturnType<typeof resource>[]; unreadResourceIds: number[] }>();
+  const newer = deferred<{ courses: typeof course[]; resources: ReturnType<typeof resource>[]; unreadResourceIds: number[] }>();
+  appApi.listSearchInventory.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+  await emitAppEvent('sync:done', {});
+  await emitAppEvent('sync:done', {});
+  await act(async () => newer.resolve({ courses: [{ ...course, displayName: 'Latest course' }], resources: [resource({ title: 'Lecture latest' })], unreadResourceIds: [] }));
+  await flushApp();
+  await act(async () => older.resolve({ courses: [course], resources: [resource({ title: 'Lecture stale' })], unreadResourceIds: [] }));
+  await flushApp();
+  expect(document.querySelector('main')?.textContent).toContain('Lecture latest');
+  expect(document.querySelector('main')?.textContent).not.toContain('Lecture stale');
+  expect(document.querySelector('input[aria-label="Search library"]')).toHaveProperty('value', 'lecture');
+});
+
+it('updates saved and unread facts on both surfaces without downloading', async () => {
+  app = await renderApp();
+  await palette('is:saved is:unread lecture');
+  expect([...document.querySelectorAll('.palette-item')].some(n => n.textContent?.includes('Lecture 4'))).toBe(false);
+  await emitAppEvent('mirror:file', { resourceId: 1, status: 'ok', error: null });
+  expect([...document.querySelectorAll('.palette-item')].some(n => n.textContent?.includes('Lecture 4'))).toBe(true);
+  await click([...document.querySelectorAll<HTMLElement>('.palette-item')].find(n => n.textContent?.includes('See all results'))!);
+  expect(document.querySelector('tbody')?.textContent).toContain('Lecture 4');
+  appApi.listHistoryEvents.mockResolvedValue([]);
+  appApi.listDashboardEvents.mockResolvedValue([]);
+  appApi.listSearchInventory.mockResolvedValue({ courses: [course], resources: [resource()], unreadResourceIds: [] });
+  await emitAppEvent('sync:done', {});
+  expect(document.querySelector('tbody')?.textContent).not.toContain('Lecture 4');
+  await palette('is:saved is:unread lecture');
+  expect([...document.querySelectorAll('.palette-item')].some(n => n.textContent?.includes('Lecture 4'))).toBe(false);
+  expect(appApi.ensureLocal).not.toHaveBeenCalled();
+});
+
+it('preserves filter tokens and source dates when widening Materials to Everywhere', async () => {
+  app = await renderApp();
+  await click(button('MATH F111'));
+  await inputValue(document.querySelector<HTMLInputElement>('main .search-field-input')!, 'type:pdf "Lecture 4"');
+  await inputValue(document.querySelector<HTMLInputElement>('input[aria-label="Source date from"]')!, '2026-10-14');
+  await inputValue(document.querySelector<HTMLInputElement>('input[aria-label="Source date through"]')!, '2026-10-14');
+  await chooseScope({ kind: 'everywhere' });
+  expect(document.querySelector<HTMLInputElement>('input[aria-label="Search library"]')!.value).toBe('type:pdf "Lecture 4"');
+  expect(document.querySelector<HTMLInputElement>('input[aria-label="Source date from"]')!.value).toBe('2026-10-14');
+  expect(document.querySelector<HTMLInputElement>('input[aria-label="Source date through"]')!.value).toBe('2026-10-14');
+  expect(document.querySelector('tbody')?.textContent).toContain('Lecture 4');
+  await click(button('Clear filters', document.querySelector('main')!));
+  expect(JSON.parse(document.querySelector<HTMLSelectElement>('main select[aria-label="Search scope"]')!.value)).toEqual({ kind: 'everywhere' });
+  expect(document.querySelector<HTMLInputElement>('input[aria-label="Source date from"]')!.value).toBe('');
+  expect(appApi.ensureLocal).not.toHaveBeenCalled();
+});
+
+it('retains stable folder identity through course renames and shows removed destinations honestly', async () => {
+  const second = { ...course, id: 2, shortName: 'PHYS F111', displayName: 'Physics' };
+  appApi.listCourses.mockResolvedValue([course, second]);
+  const math = resource({ title: 'Math notes', sectionPath: ['Week 05', 'Lectures'] });
+  const physics = resource({ id: 2, externalResourceId: 'r2', courseId: 2, title: 'Physics notes', sectionPath: ['Week 05', 'Lectures'] });
+  appApi.listResources.mockResolvedValue([math, physics]);
+  app = await renderApp();
+  await palette('course:Physics Lectures');
+  await click([...document.querySelectorAll<HTMLElement>('.palette-item')].find(n => n.textContent?.includes('Physics / Week 05 / Lectures'))!);
+  appApi.listCourses.mockResolvedValue([course, { ...second, displayName: 'Renamed physics' }]);
+  await emitAppEvent('sync:done', {});
+  expect(document.querySelector('main')?.textContent).toContain('Physics notes');
+  expect(JSON.parse(document.querySelector<HTMLSelectElement>('main select[aria-label="Search scope"]')!.value)).toEqual({ kind: 'folder', courseId: 2, path: ['Week 05', 'Lectures'] });
+  appApi.listResources.mockResolvedValue([math]);
+  await emitAppEvent('sync:done', {});
+  expect(document.querySelector('main')?.textContent).toContain('Folder unavailable');
+  expect(document.querySelector('main')?.textContent).not.toContain('Math notes');
+  await click(button('Back to course materials'));
+  appApi.listCourses.mockResolvedValue([course]);
+  await emitAppEvent('sync:done', {});
+  expect(document.querySelector('main')?.textContent).toContain('Course unavailable');
+  expect(button('Back to Library')).toBeTruthy();
+});
+
+const boundaries = [
+  { name: 'instant overdue', zone: 'UTC', start: '2026-11-21T12:00:00Z', due: '2026-11-21T12:00:15Z', raw: 'due:overdue', before: false, after: true },
+  { name: 'Kolkata midnight', zone: 'Asia/Kolkata', start: '2026-11-21T18:29:45Z', due: '2026-11-21', raw: 'due:today', before: true, after: false },
+  { name: 'New York midnight after DST', zone: 'America/New_York', start: '2026-11-22T04:59:45Z', due: '2026-11-21', raw: 'due:today', before: true, after: false },
+];
+for (const surface of ['palette', 'all files', 'materials']) {
+  it.each(boundaries)(`refreshes ${surface} at $name using the App clock without inventory or query edits`, async ({ zone, start, due, raw, before, after }) => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    vi.setSystemTime(new Date(start));
+    appApi.getSettings.mockResolvedValue({ ...settings, timezone: zone });
+    appApi.listResources.mockResolvedValue([resource({ title: 'Boundary lecture', dueAt: due })]);
+    app = await renderApp();
+    if (surface === 'materials') {
+      await click(button('MATH F111'));
+      await inputValue(document.querySelector<HTMLInputElement>('main .search-field-input')!, raw);
+    } else if (surface === 'all files') {
+      await click(button('Library'));
+      await click(button('All files'));
+      await inputValue(document.querySelector<HTMLInputElement>('input[aria-label="Search library"]')!, raw);
+    } else {
+      await palette(raw);
+    }
+    const visible = () => surface === 'palette'
+      ? [...document.querySelectorAll('.palette-item')].some(n => n.textContent?.includes('Boundary lecture'))
+      : document.querySelector('main')!.textContent!.includes('Boundary lecture');
+    expect(visible()).toBe(before);
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(visible()).toBe(after);
+  });
+}
+
+it.each(['delayed', 'failed'])('keeps Materials unread filtering and dots aligned with %s Activity', async (state) => {
+  if (state === 'delayed') appApi.eventsRange.mockReturnValue(deferred<Awaited<ReturnType<typeof appApi.eventsRange>>>().promise);
+  else appApi.eventsRange.mockRejectedValue(new Error('Activity unavailable'));
+  app = await renderApp();
+  await click(button('MATH F111'));
+  await inputValue(document.querySelector<HTMLInputElement>('main .search-field-input')!, 'is:unread');
+  expect(document.querySelector('.course-material-row')?.textContent).toContain('Lecture 4');
+  expect(document.querySelector('.course-material-row .unread-dot[title="Unread"]')).not.toBeNull();
+  await inputValue(document.querySelector<HTMLInputElement>('main .search-field-input')!, 'is:read');
+  expect(document.querySelector('.course-material-row')).toBeNull();
+});
+
+it.each([{ kind: 'everywhere' }, { kind: 'course', courseId: 2 }, { kind: 'folder', courseId: 2, path: ['Lectures'] }])('preserves the Materials category alongside text and dates when changing scope to $kind', async (scope) => {
+  appApi.listCourses.mockResolvedValue([course, { ...course, id: 2, shortName: 'PHYS F111', displayName: 'Physics' }]);
+  appApi.listResources.mockResolvedValue([
+    resource({ resourceType: 'note' }),
+    resource({ id: 2, externalResourceId: 'r2', courseId: 2, resourceType: 'page', sectionPath: ['Lectures'] }),
+    resource({ id: 3, externalResourceId: 'r3', courseId: 2, title: 'Lecture 4 PDF', resourceType: 'pdf', sectionPath: ['Lectures'] }),
+  ]);
+  app = await renderApp();
+  await click(button('MATH F111'));
+  const category = document.querySelector<HTMLElement>('[aria-label="Filter by category"]')!;
+  await act(async () => category.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true })));
+  await click([...document.querySelectorAll<HTMLElement>('[role="option"]')].find(n => n.textContent?.startsWith('Lecture notes'))!);
+  await inputValue(document.querySelector<HTMLInputElement>('main .search-field-input')!, '"Lecture 4"');
+  await inputValue(document.querySelector<HTMLInputElement>('input[aria-label="Source date from"]')!, '2026-10-14');
+  await inputValue(document.querySelector<HTMLInputElement>('input[aria-label="Source date through"]')!, '2026-10-14');
+  await chooseScope(scope);
+  expect(document.querySelector<HTMLInputElement>('input[aria-label="Search library"]')!.value).toBe('"Lecture 4"');
+  expect(document.querySelector<HTMLInputElement>('input[aria-label="Source date from"]')!.value).toBe('2026-10-14');
+  expect(document.querySelector<HTMLInputElement>('input[aria-label="Source date through"]')!.value).toBe('2026-10-14');
+  expect(JSON.parse(document.querySelector<HTMLSelectElement>('main select[aria-label="Search scope"]')!.value)).toEqual(scope);
+  expect(document.querySelector('tbody')?.textContent).toContain('Lecture 4');
+  expect(document.querySelector('tbody')?.textContent).not.toContain('Lecture 4 PDF');
+  expect(document.querySelector('main')?.textContent).toContain('Lecture notes');
+  await click(button('Clear filters', document.querySelector('main')!));
+  expect(document.querySelector('tbody')?.textContent).toContain('Lecture 4 PDF');
+  expect(JSON.parse(document.querySelector<HTMLSelectElement>('main select[aria-label="Search scope"]')!.value)).toEqual(scope);
+});
+
+it('uses only the atomic snapshot for read membership even when History and Inbox disagree or omit resources', async () => {
+  appApi.listSearchInventory.mockResolvedValue({ courses: [course], resources: [resource(), resource({ id: 2, externalResourceId: 'r2', title: 'Unloaded unread' })], unreadResourceIds: [2] });
+  app = await renderApp();
+  await palette('is:unread');
+  expect([...document.querySelectorAll('.palette-item')].some(n => n.textContent?.includes('Unloaded unread'))).toBe(true);
+  expect([...document.querySelectorAll('.palette-item')].some(n => n.textContent?.includes('Lecture 4'))).toBe(false);
+  await click([...document.querySelectorAll<HTMLElement>('.palette-item')].find(n => n.textContent?.includes('See all results'))!);
+  expect(document.querySelector('tbody')?.textContent).toContain('Unloaded unread');
+  expect(document.querySelector('tbody')?.textContent).not.toContain('Lecture 4');
+  await click(button('MATH F111'));
+  await inputValue(document.querySelector<HTMLInputElement>('main .search-field-input')!, 'is:unread');
+  expect(document.querySelector('.course-material-row')?.textContent).toContain('Unloaded unread');
+  expect(document.querySelector('.course-material-row .unread-dot[title="Unread"]')).not.toBeNull();
+});
+
+it('refreshes coherent Materials dots and filters after inspector acknowledgment without dropping unloaded unread resources', async () => {
+  const resources = [resource(), resource({ id: 2, externalResourceId: 'r2', title: 'Unloaded unread' })];
+  appApi.listSearchInventory.mockResolvedValue({ courses: [course], resources, unreadResourceIds: [1, 2] });
+  appApi.eventsRange.mockResolvedValue([change()]);
+  const write = deferred<void>();
+  appApi.setEventReadState.mockReturnValue(write.promise);
+  app = await renderApp();
+  await click(button('MATH F111'));
+  await inputValue(document.querySelector<HTMLInputElement>('main .search-field-input')!, 'lecture');
+  expect(document.querySelector('.course-material-row .unread-dot[title="Unread"]')).not.toBeNull();
+  await click(button('Show details for Lecture 4'));
+  // The previous complete snapshot stays coherent while the write is pending.
+  expect(document.querySelector('.course-material-row .unread-dot[title="Unread"]')).not.toBeNull();
+  appApi.listSearchInventory.mockResolvedValue({ courses: [course], resources, unreadResourceIds: [2] });
+  await act(async () => write.resolve());
+  await flushApp();
+  expect(document.querySelector('.course-material-row .unread-dot')).toBeNull();
+  await escape();
+  await inputValue(document.querySelector<HTMLInputElement>('main .search-field-input')!, 'is:read');
+  expect(document.querySelector('.course-material-row')?.textContent).toContain('Lecture 4');
+  expect(document.querySelector('.course-material-row .unread-dot')).toBeNull();
+  await inputValue(document.querySelector<HTMLInputElement>('main .search-field-input')!, 'is:unread');
+  expect(document.querySelector('.course-material-row')?.textContent).toContain('Unloaded unread');
+  expect(document.querySelector('.course-material-row .unread-dot[title="Unread"]')).not.toBeNull();
+  await palette('is:unread');
+  expect([...document.querySelectorAll('.palette-item')].some(n => n.textContent?.includes('Unloaded unread'))).toBe(true);
+  expect([...document.querySelectorAll('.palette-item')].some(n => n.textContent?.includes('Lecture 4'))).toBe(false);
+});
+
+it.each(['write', 'refresh'])('retains the complete unread snapshot after inspector %s failure and recovers on retry', async (failure) => {
+  const snapshot = { courses: [course], resources: [resource()], unreadResourceIds: [1] };
+  appApi.listSearchInventory.mockResolvedValue(snapshot);
+  appApi.eventsRange.mockResolvedValue([change()]);
+  app = await renderApp();
+  await click(button('MATH F111'));
+  await inputValue(document.querySelector<HTMLInputElement>('main .search-field-input')!, 'lecture');
+  if (failure === 'write') appApi.setEventReadState.mockRejectedValueOnce(new Error('Read write failed'));
+  else appApi.listSearchInventory.mockRejectedValueOnce(new Error('Snapshot refresh failed'));
+  await click(button('Show details for Lecture 4'));
+  expect(document.querySelector('.course-material-row .unread-dot[title="Unread"]')).not.toBeNull();
+  expect(document.body.textContent).toContain(failure === 'write' ? 'Read write failed' : 'refresh failed');
+  await escape();
+  await inputValue(document.querySelector<HTMLInputElement>('main .search-field-input')!, 'is:unread');
+  expect(document.querySelector('.course-material-row')?.textContent).toContain('Lecture 4');
+  appApi.listSearchInventory.mockResolvedValue({ ...snapshot, unreadResourceIds: [] });
+  await emitAppEvent('sync:done', {});
+  expect(document.querySelector('.course-material-row')).toBeNull();
+});
+
+it('rejects a pre-acknowledgment snapshot arriving after the coherent inspector refresh', async () => {
+  appApi.listSearchInventory.mockResolvedValue({ courses: [course], resources: [resource()], unreadResourceIds: [1] });
+  app = await renderApp();
+  await click(button('MATH F111'));
+  await inputValue(document.querySelector<HTMLInputElement>('main .search-field-input')!, 'lecture');
+  const older = deferred<Awaited<ReturnType<typeof appApi.listSearchInventory>>>();
+  appApi.listSearchInventory.mockReturnValueOnce(older.promise).mockResolvedValueOnce({ courses: [course], resources: [resource({ title: 'Lecture latest' })], unreadResourceIds: [] });
+  await emitAppEvent('sync:done', {});
+  await click(button('Show details for Lecture 4'));
+  expect(document.querySelector('.course-material-row')?.textContent).toContain('Lecture latest');
+  expect(document.querySelector('.course-material-row .unread-dot')).toBeNull();
+  await act(async () => older.resolve({ courses: [course], resources: [resource({ title: 'Lecture stale' })], unreadResourceIds: [1] }));
+  await flushApp();
+  expect(document.querySelector('.course-material-row')?.textContent).toContain('Lecture latest');
+  expect(document.querySelector('.course-material-row')?.textContent).not.toContain('Lecture stale');
+  expect(document.querySelector('.course-material-row .unread-dot')).toBeNull();
+});
+
+it('uses the same content results and filters in the palette and Library and escapes snippets', async () => {
+  appApi.listResources.mockResolvedValue([
+    resource({ title: 'regression', resourceType: 'text' }),
+    resource({ id: 2, externalResourceId: 'r2', title: 'Handout', resourceType: 'text' }),
+    resource({ id: 3, externalResourceId: 'r3', title: 'Slides', resourceType: 'pdf' }),
+  ]);
+  const snippet = '<img src=x onerror=alert(1)> residual regression';
+  appApi.searchSavedContent.mockResolvedValue({
+    state: 'ready', indexed: 2, skipped: 1,
+    hits: [{ resourceId: 2, snippet }, { resourceId: 3, snippet: 'Filtered out' }],
+  });
+  app = await renderApp();
+  await palette('type:text regression');
+  await click(button('Include saved text'));
+  const waitForBody = async () => {
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 130)); });
+  };
+  await waitForBody();
+  expect(appApi.searchSavedContent).toHaveBeenLastCalledWith(['regression']);
+  const dialog = document.querySelector('[role="dialog"]')!;
+  const hits = () => [...dialog.querySelectorAll('.palette-item[data-value^="File "]')];
+  expect(hits().map(node => node.getAttribute('data-value'))).toEqual(['File 1 regression', 'File 2 Handout']);
+  expect(hits()[1].querySelector('.body-match')?.textContent).toBe(`Body match${snippet}`);
+  expect(dialog.querySelector('.body-match img')).toBeNull();
+  expect(dialog.textContent).toContain('PDF contents are unavailable');
+  await click([...dialog.querySelectorAll<HTMLElement>('.palette-item')].find(node => node.textContent?.includes('See all results'))!);
+  await waitForBody();
+  const rows = document.querySelectorAll('tbody tr');
+  expect([...rows].map(row => row.querySelector('.cell-title-main')?.textContent)).toEqual(['regression', 'Handout']);
+  expect(rows[1].querySelector('.body-match')?.textContent).toContain(snippet);
+  expect(appApi.previewResource).not.toHaveBeenCalled();
+
+  appApi.searchSavedContent.mockRejectedValueOnce(new Error('FTS disabled'));
+  await inputValue(document.querySelector<HTMLInputElement>('input[aria-label="Search library"]')!, 'type:text regress');
+  await waitForBody();
+  expect(document.querySelector('main')?.textContent).toContain('Saved text search is temporarily unavailable.');
+  expect(document.querySelector('tbody')?.textContent).toContain('regression');
+  expect(document.querySelector('tbody')?.textContent).not.toContain('Handout');
+});

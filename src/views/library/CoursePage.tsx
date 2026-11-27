@@ -1,8 +1,13 @@
+import { SavedContentControls } from "../../components/SavedContentSearch";
+import { useSavedContent } from "../../hooks/useSavedContent";
+import { SearchControls } from "../../components/SearchControls";
+import { searchDesktop, type SearchScope, type SearchFilters } from "../../lib/desktopSearch";
+import { buildDisplayNames, loadAliases } from "../../lib/courseName";
 import { resourceSectionPath } from "../../lib/sectionPath";
 import { useMaterialActions } from "../../hooks/useMaterialActions";
 import { getListNavigationIntent, recoverFocusedId, type ListNavigationInput } from "../../lib/listNavigation";
 import { useSessionScroll, useSessionValue } from "../../hooks/useSessionViews";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMirror } from "../../hooks/useMirror";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -31,9 +36,7 @@ import {
 import {
   RESOURCE_SORTS,
   categoryOptions,
-  filterCourseResources,
   sortResources,
-  typeOptions,
   type ResourceCategoryId,
   type ResourceSort,
 } from "../../lib/courseLibrary";
@@ -57,12 +60,18 @@ import { Banner } from "../../components/ui/Banner";
 import { Skeleton } from "../../components/ui/Skeleton";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import TreeRow, { type FlatRow } from "./TreeRow";
+import { CourseAttendance } from "./CourseAttendance";
+import { CourseGrades } from "./CourseGrades";
 import { courseHomeUrl } from "./courseUrl";
 import CourseRenameDialog from "./CourseRenameDialog";
 import { LibraryFooter, LibraryHeader } from "./LibraryFrame";
 
 interface CoursePageProps {
   course: Course;
+  searchCourses?: Course[];
+  searchUnreadIds?: ReadonlySet<number>;
+  timeZone?: string;
+  now?: Date;
   folderPath?: string[] | null;
   /** Last complete inventory published by App; never queried again here. */
   inventory?: Resource[];
@@ -80,13 +89,15 @@ interface CoursePageProps {
   onActivityChanged?: () => Promise<void>;
   onSyncNow?: () => void;
   details?: DetailsAdapter;
-  allCourses?: Course[];
-  onNavigate?: (courseId: number) => void;
-  onAllFiles?: () => void;
+  /** App-managed folder navigation in the primary sidebar. */
+  sidebarNavigation?: boolean;
   headerActions?: ReactNode;
   compact?: boolean;
+  onSeeAllFiles?: (raw: string, options?: SearchFilters & { scope?: SearchScope }) => void;
+  onNavigate?: (courseId: number | null, folderPath?: string[] | null) => void;
 }
 
+const EMPTY_UNREAD_IDS: ReadonlySet<number> = new Set();
 const identity = (resource: Resource) => `resource:${resource.externalResourceId || `local:${resource.id}`}`;
 const modalOpen = () => Boolean(document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], .sidebar-drawer'));
 interface Capture {
@@ -141,7 +152,7 @@ function latestIn(node: CourseTreeNode): number {
 
 /** One course's page: contents tree and per-course activity. */
 export default function CoursePage({
-  course,
+  course, searchCourses, searchUnreadIds, timeZone, now,
   folderPath,
   inventory,
   inventoryPending = false,
@@ -157,12 +168,13 @@ export default function CoursePage({
   onActivityChanged,
   onSyncNow = () => {},
   details,
-  allCourses,
-  onNavigate,
-  onAllFiles,
+  sidebarNavigation = false,
   headerActions,
   compact = false,
+  onSeeAllFiles,
+  onNavigate,
 }: CoursePageProps) {
+  const mirror = useMirror();
   const items = useMemo(() => inventory?.filter(resource => resource.courseId === course.id) ?? null, [inventory, course.id]);
   const activityMatchingCourse = activityCourseId === course.id;
   const activityEventsList = activityMatchingCourse && Array.isArray(activityEvents) ? activityEvents : EMPTY_EVENTS;
@@ -171,7 +183,7 @@ export default function CoursePage({
     const byDay = groupEventsByDay(activityEventsList);
     return [...byDay.entries()].sort((a, b) => b[0].localeCompare(a[0]));
   }, [activityEventsList]);
-  const unreadResourceIds = useMemo(() => new Set(activityEventsList.filter((event) => !event.read).map((event) => event.resourceId)), [activityEventsList]);
+  const unreadResourceIds = searchUnreadIds ?? EMPTY_UNREAD_IDS;
   const activityIds = useMemo(() => activityGroups.flatMap(([, group]) => group.map((event) => `change:${event.id}`)), [activityGroups]);
   const activityScopeReadyEffective = activityMatchingCourse && Boolean(activityScopeReady) && !activityPending && !activityError && Array.isArray(activityEvents);
   const loading = inventoryPending;
@@ -180,43 +192,45 @@ export default function CoursePage({
   const [confirmRebaseline, setConfirmRebaseline] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
 
-  const [tab, setTab] = useSessionValue<"contents" | "activity">(`course:${course.id}:tab`, "contents");
+  const [tab, setTab] = useSessionValue<"contents" | "activity" | "grades" | "attendance">(`course:${course.id}:tab`, "contents");
+  const gradePanelId = useId();
+  const attendancePanelId = useId();
+  const academicPanelId = tab === "grades" ? gradePanelId : tab === "attendance" ? attendancePanelId : undefined;
   const previousTab = useRef(tab);
   useEffect(() => {
     if (previousTab.current !== tab) details?.clear();
     previousTab.current = tab;
   }, [tab, details]);
   const [search, setSearch] = useSessionValue(`course:${course.id}:search`, "");
-  const [sort, setSort] = useSessionValue<ResourceSort>(`course:${course.id}:sort`, "newest");
-  const [type, setType] = useSessionValue(`course:${course.id}:type`, "all");
+  const [sort, setSort] = useSessionValue<ResourceSort | "relevance">(`course:${course.id}:sort`, "relevance");
   const [category, setCategory] = useSessionValue<ResourceCategoryId | "all">(`course:${course.id}:category`, "all");
   const [expanded, setExpanded] = useSessionValue<Set<string>>(`course:${course.id}:expanded`, new Set());
   const [selectedFolder, setSelectedFolder] = useSessionValue<string[]>(`course:${course.id}:folder`, []);
+  const [explicitScope, setExplicitScope] = useSessionValue<"course" | null>(`course:${course.id}:search-scope`, null);
+  const [dateFilters, setDateFilters] = useSessionValue<SearchFilters>(`course:${course.id}:source-dates`, {});
+  const searchScope = useMemo<SearchScope>(() => explicitScope === "course" || !folderPath?.length ? { kind: "course", courseId: course.id } : { kind: "folder", courseId: course.id, path: folderPath }, [explicitScope, folderPath, course.id]);
   const [showFilters, setShowFilters] = useState(false);
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [initialised, setInitialised] = useSessionValue(`course:${course.id}:initialised`, false);
 
   const unique = useMemo(() => dedupeCourseResources(items ?? []), [items]);
-  const types = useMemo(() => typeOptions(unique), [unique]);
-  const categories = useMemo(() => categoryOptions(unique), [unique]);
-
   const needle = search.trim();
-  const searching = needle !== "";
-  const typeFilter = type === "all" ? "" : type;
-
-  const filtered = useMemo(
-    () => filterCourseResources(unique, { type: typeFilter, category }),
-    [unique, typeFilter, category],
-  );
-  const searchResults = useMemo(
-    () =>
-      searching
-        ? sortResources(filterCourseResources(unique, { search, type: typeFilter, category }), sort)
-        : [],
-    [searching, unique, search, typeFilter, category, sort],
-  );
+  const searching = needle !== "" || Boolean(dateFilters.sourceFrom || dateFilters.sourceThrough);
+  const pathInSidebar = sidebarNavigation ? folderPath : undefined;
+  const folderName = pathInSidebar?.at(-1);
+  const scoped = unique.filter(r => searchScope.kind !== "folder" || searchScope.path.every((p, i) => resourceSectionPath(r)[i] === p));
+  const courses = useMemo(() => searchCourses ?? [course], [searchCourses, course]);
+  const displayNames = useMemo(() => buildDisplayNames(courses, loadAliases()), [courses]);
+  const savedIds = useMemo(() => new Set(unique.filter(r => !r.isExternal && mirror && isLocal(mirror.statusOf(r.id))).map(r => r.id)), [unique, mirror]);
+  const content = useSavedContent(Boolean(dateFilters.includeSavedText), search, { courses, resources: inventory ?? unique, displayNames }, mirror);
+  const result = useMemo(() => searchDesktop({ raw: search, scope: searchScope, filters: { ...dateFilters, category }, timeZone, now }, {
+    courses, resources: inventory ?? unique, displayNames, savedIds, unreadIds: unreadResourceIds, bodyHits: content.hits,
+  }), [search, searchScope, dateFilters, category, timeZone, now, courses, inventory, unique, displayNames, savedIds, unreadResourceIds, content.hits]);
+  const filtered = result.files;
+  const searchResults = useMemo(() => sort === "relevance" ? filtered : sortResources(filtered, sort), [filtered, sort]);
+  const categories = useMemo(() => categoryOptions(unique), [unique]);
   const tree = useMemo(() => buildCourseTree(filtered, course.name), [filtered, course.name]);
-  const activeFolder = findNode(tree, selectedFolder) ?? tree;
+  const activeFolder = findNode(tree, sidebarNavigation ? folderPath ?? [] : selectedFolder) ?? tree;
   const compactFolders = useMemo(() => {
     const flatten = (node: CourseTreeNode): CourseTreeNode[] => [node, ...node.children.flatMap(flatten)];
     return flatten(tree);
@@ -232,9 +246,14 @@ export default function CoursePage({
         searching: true,
       }));
     }
+    if (sidebarNavigation) {
+      return (sort === "relevance" ? filtered : sortResources(filtered, sort)).map(resource => ({
+        kind: "file", id: identity(resource), resource, depth: 0, searching: false,
+      }));
+    }
     const out: FlatRow[] = [];
     const addFiles = (node: CourseTreeNode, depth: number) => {
-      for (const resource of sortResources(node.resources, sort)) {
+      for (const resource of sortResources(node.resources, sort === "relevance" ? "newest" : sort)) {
         out.push({ kind: "file", id: identity(resource), resource, depth, searching: false });
       }
     };
@@ -262,7 +281,7 @@ export default function CoursePage({
     };
     walk(tree, 0);
     return out;
-  }, [searching, searchResults, tree, sort, expanded, activeFolder, compact]);
+  }, [searching, searchResults, tree, sort, expanded, activeFolder, compact, sidebarNavigation, filtered]);
 
   const selectedResourceId = details?.selected?.kind === "resource" ? details.selected.resource.id : null;
   const selectedDetails = details?.selected;
@@ -286,16 +305,22 @@ export default function CoursePage({
   // Open the two most recently changed sections the first time this course is
   // shown in a session, then remember whatever the user does.
   useEffect(() => {
-    if (loading || items === null) return;
+    if (sidebarNavigation || loading || items === null) return;
     if (initialised) return;
     setInitialised(true);
     setExpanded(new Set(pickDefaultSections(tree.children, latestIn)));
-  }, [loading, items, initialised, setInitialised, setExpanded, tree]);
+  }, [sidebarNavigation, loading, items, initialised, setInitialised, setExpanded, tree]);
+
+  useEffect(() => {
+    if (!sidebarNavigation || !folderPath?.length) return;
+    setTab("contents");
+  }, [sidebarNavigation, folderPath, setTab]);
 
   const pathIdentity = JSON.stringify(folderPath ?? []);
+  const scrollScope = folderName ? `course:${course.id}:${tab}:${pathIdentity}` : `course:${course.id}:${tab}`;
   const appliedPath = useRef<string | null>(null);
   useEffect(() => {
-    if (loading || appliedPath.current === pathIdentity) return;
+    if (sidebarNavigation || loading || appliedPath.current === pathIdentity) return;
     appliedPath.current = pathIdentity;
     if (!folderPath?.length) return;
     const ids: string[] = [];
@@ -310,11 +335,11 @@ export default function CoursePage({
     setSelectedFolder(folderPath);
     setExpanded((previous) => new Set([...previous, ...ids]));
     // Only a new route path expands folders; background refresh preserves explicit collapse.
-  }, [pathIdentity, loading]);
+  }, [pathIdentity, loading, sidebarNavigation]);
 
   const shown = searching ? searchResults.length : filtered.length;
-  const total = unique.length;
-  const filtersActive = type !== "all" || category !== "all" || searching;
+  const total = scoped.length;
+  const filtersActive = category !== "all" || searching;
 
   const toggle = useCallback(
     (id: string) => {
@@ -345,7 +370,7 @@ export default function CoursePage({
   }, [tree]);
 
   // Local mirror stats for this course (derived from the global mirror).
-  const mirror = useMirror();
+
 
   const setAllExpanded = (expand: boolean) => {
     const next = new Set(expand ? allFolderIds() : []);
@@ -365,7 +390,7 @@ export default function CoursePage({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const mainScroll = useRef<HTMLDivElement>(null);
-  useSessionScroll(`course:${course.id}:${tab}:main`, mainScroll, items !== null);
+  useSessionScroll(`${scrollScope}:main`, mainScroll, items !== null);
   const pendingFocus = useRef<string | null>(null);
   const ownedFocus = useRef(false);
   const previousRows = useRef<FlatRow[]>([]);
@@ -391,7 +416,7 @@ export default function CoursePage({
     overscan: 10,
   });
   const virtualItems = virtualActive ? virtualizer.getVirtualItems() : [];
-  useSessionScroll(`course:${course.id}:${tab}:tree`, scrollRef, items !== null && (!virtualActive || virtualItems.length > 0));
+  useSessionScroll(`${scrollScope}:tree`, scrollRef, items !== null && (!virtualActive || virtualItems.length > 0));
   const latestNavigation = useRef({ rows, fileRows, currentFocus, tab, virtualActive });
   latestNavigation.current = { rows, fileRows, currentFocus, tab, virtualActive };
   const focusIdentity = useCallback((id: string | null) => {
@@ -439,12 +464,13 @@ export default function CoursePage({
   const [selection, setSelection] = useState<string[]>([]);
   const matching = useMemo(() => {
     if (searching) return searchResults;
+    if (sidebarNavigation) return filtered;
     if (activeFolder === tree) return filtered;
     return filtered.filter((resource) => {
       const path = resourceSectionPath(resource);
       return activeFolder.path.every((segment, index) => path[index] === segment);
     });
-  }, [activeFolder, filtered, searchResults, searching, tree]);
+  }, [activeFolder, filtered, searchResults, searching, tree, sidebarNavigation]);
   const matchingIds = useMemo(() => matching.map(identity), [matching]);
   useEffect(() => { setSelection(prev => prev.filter(id => matchingIds.includes(id))); }, [matchingIds]);
   const [activitySelection, setActivitySelection] = useState<string[]>([]);
@@ -484,7 +510,7 @@ export default function CoursePage({
   activityWaitRef.current = activityRefreshWait;
   const generation = useRef(0);
   const lock = useRef<number | null>(null);
-  const context = JSON.stringify([course.id, folderPath, selectedFolder, tab, search, type, category, sort]);
+  const context = JSON.stringify([course.id, folderPath, selectedFolder, tab, search, category, sort]);
   useLayoutEffect(() => {
     generation.current += 1;
     lock.current = null;
@@ -673,6 +699,7 @@ export default function CoursePage({
       return;
     }
     if (event.shiftKey) return;
+    if (sidebarNavigation && (event.key === "ArrowLeft" || event.key === "ArrowRight")) return;
     switch (event.key) {
       case "Home": handled(); move(0); break;
       case "End": handled(); move(rows.length - 1); break;
@@ -754,6 +781,7 @@ export default function CoursePage({
   };
 
   const paused = course.monitoringStatus === "paused";
+  const missingDestination = !inventoryPending && !inventoryError && sidebarNavigation && Boolean(folderPath?.length) && !findNode(buildCourseTree(unique, course.name), folderPath ?? []);
   const home = courseHomeUrl(course);
   const label = courseLabel(course.id);
   const display = courseTitle(course.id, displayName(course));
@@ -807,8 +835,16 @@ export default function CoursePage({
 
   const clearFilters = () => {
     setSearch("");
-    setType("all");
     setCategory("all");
+    setDateFilters({});
+  };
+  const handleSearchScopeChange = (scope: SearchScope) => {
+    if (scope.kind === "everywhere") { onSeeAllFiles?.(search, { scope, ...dateFilters, category }); return; }
+    if (scope.courseId !== course.id) { onSeeAllFiles?.(search, { scope, ...dateFilters, category }); return; }
+    if (scope.kind === "folder") {
+      setExplicitScope(null);
+      onNavigate?.(scope.courseId, scope.kind === "folder" ? scope.path : null);
+    } else setExplicitScope("course");
   };
 
   const renderFile = (row: (typeof fileRows)[number]) => (
@@ -818,6 +854,7 @@ export default function CoursePage({
       index={rowIndices.get(row.id) ?? 0}
       focused={row.id === currentFocus}
       query={search}
+      bodySnippet={content.hits?.get(row.resource.id)}
       onToggle={toggle}
       onOpen={onOpen}
       onPreview={onPreview}
@@ -832,13 +869,14 @@ export default function CoursePage({
   );
 
   const emptyCourse = (state: "error" | "empty" | "search") => {
+    if (state === "search" && content.pending) return <EmptyState title="Searching saved text…" />;
     const Icon = state === "error" ? AlertCircle : state === "empty" ? Folder : Search;
     const title = state === "error" ? "Couldn’t load this course" : state === "empty" ? "Nothing here yet" : "No files match your search";
     const body = state === "error"
       ? `Pulse couldn’t read the course from the local library. Your saved files are not affected. ${inventoryError ?? ""}`
       : state === "empty"
-        ? "This course has no materials on Quanta. New files will appear here as soon as they are posted."
-        : searching ? `Nothing in ${code} matches “${needle}”.` : "Try another file type or category.";
+        ? folderName ? "This folder has no materials." : "This course has no materials on Quanta. New files will appear here as soon as they are posted."
+        : searching ? `Nothing in ${folderName ?? code} matches “${needle}”.` : "Try another file type or category.";
     return (
       <div className="library-empty">
         <span className="library-empty-icon"><Icon aria-hidden="true" /></span>
@@ -863,12 +901,9 @@ export default function CoursePage({
         if (!event.currentTarget.contains(event.relatedTarget)) { ownedFocus.current = false; pendingFocus.current = null; }
       }}
     >
-      {!searching && !compact && <div className="course-folder-rail" role="group" aria-label="Folders">
-        {onAllFiles && <button type="button" className="course-folder-link" onClick={onAllFiles}>
-          <Folder aria-hidden="true" /> All files <span className="tree-count">{inventory?.length ?? 0}</span>
-        </button>}
+      {!sidebarNavigation && !searching && !compact && <div className="course-folder-rail" role="group" aria-label="Folders">
         <button type="button" className={cx("course-folder-link", activeFolder === tree && "is-current")} aria-current={activeFolder === tree ? "true" : undefined} onClick={() => chooseFolder(tree)}>
-          <Folder aria-hidden="true" /> <span>{allCourses ? code : "Course materials"}</span> <span className="tree-count">{total}</span>
+          <Folder aria-hidden="true" /> <span>Course materials</span> <span className="tree-count">{total}</span>
         </button>
         {folderRows.map((row) => (
           <TreeRow
@@ -886,18 +921,13 @@ export default function CoursePage({
             onSelect={inspect}
           />
         ))}
-        {onNavigate && allCourses?.filter((other) => other.id !== course.id).map((other) => (
-          <button key={other.id} type="button" className="course-folder-link" onClick={() => onNavigate(other.id)}>
-            <Folder aria-hidden="true" /> <span>{other.shortName || courseTitle(other.id, other.name)}</span> <span className="tree-count">{other.resourceCount}</span>
-          </button>
-        ))}
       </div>}
       <div className="course-material-table">
         {(total === 0 || (filtersActive && rows.length === 0)) ? emptyCourse(total > 0 ? "search" : inventoryError ? "error" : "empty") : (
           <>
             <div className="course-material-columns" aria-hidden="true"><span>Name</span><span>Section</span><span>Detected</span><span /></div>
             <GroupHeader
-              label={searching ? `${shown} ${shown === 1 ? "match" : "matches"}` : activeFolder === tree ? "Course materials" : activeFolder.path.slice(-2).join(" / ")}
+              label={searching ? `${shown} ${shown === 1 ? "match" : "matches"}` : sidebarNavigation && folderPath?.length ? folderPath.join(" / ") : activeFolder === tree ? "Course materials" : activeFolder.path.slice(-2).join(" / ")}
               count={fileRows.length}
             />
             <div className="tree-branch" ref={scrollRef} role="group" aria-label="Materials">
@@ -929,12 +959,23 @@ export default function CoursePage({
   );
 
   const visibleCount = fileRows.length;
-  const footer = tab === "activity" ? `Recorded changes in ${code}`
+  const footer = academicPanelId ? null : tab === "activity" ? `Recorded changes in ${code}`
     : inventoryError && total === 0 ? "Loading failed"
     : total === 0 ? "0 materials"
     : searching ? `${shown} ${shown === 1 ? "match" : "matches"}${shown > 0 ? ` in ${code}` : ""}`
-    : `Library / ${[code, ...activeFolder.path].join(" / ")} · ${visibleCount.toLocaleString()} ${visibleCount === 1 ? "material" : "materials"}`;
+    : `Library / ${[code, ...(sidebarNavigation ? folderPath ?? [] : activeFolder.path)].join(" / ")} · ${visibleCount.toLocaleString()} ${visibleCount === 1 ? "material" : "materials"}`;
 
+  if (missingDestination) {
+    return (
+      <div className={cx("library-panel", "course-panel", details?.selected && "has-library-inspector")}>
+        <LibraryHeader title={<span>{course.shortName ?? course.name}</span>} tabs={null} actions={headerActions} />
+        <div className="library-panel-scroll course-panel-scroll">
+          <EmptyState title="Folder unavailable" body="This folder is no longer available in this course." />
+          {onNavigate && <Button size="sm" onClick={() => onNavigate(course.id, null)}>Back to course materials</Button>}
+        </div>
+      </div>
+    );
+  }
   return (
     <div className={cx("library-panel", "course-panel", details?.selected && "has-library-inspector")}>
       <LibraryHeader
@@ -944,9 +985,11 @@ export default function CoursePage({
           items={[
             { id: "contents", label: "Materials" },
             { id: "activity", label: "Activity" },
+            { id: "grades", label: "Grades", panelId: gradePanelId },
+            { id: "attendance", label: "Attendance", panelId: attendancePanelId },
           ]}
           value={tab}
-          onChange={(id) => setTab(id as "contents" | "activity")}
+          onChange={(id) => setTab(id as "contents" | "activity" | "grades" | "attendance")}
           ariaLabel="Course views"
         />}
         actions={<>
@@ -961,7 +1004,10 @@ export default function CoursePage({
           {headerActions}
         </>}
       />
-      <div className="library-panel-scroll course-panel-scroll" ref={mainScroll}>
+      <div className="library-panel-scroll course-panel-scroll" ref={mainScroll}
+        role={academicPanelId ? "tabpanel" : undefined}
+        id={academicPanelId}
+        aria-labelledby={academicPanelId ? `${academicPanelId}-tab` : undefined}>
       {tab === "contents" && (status || (inventoryError && total > 0) || (inventoryPending && total > 0)) && (
         <Banner kind={inventoryError ? "error" : "info"} action={inventoryError ? { label: "Retry", onClick: () => void onChanged() } : undefined}>
           {status ?? (inventoryError ? `Inventory refresh failed: ${inventoryError}. Retained materials remain inspectable; new changes are blocked.` : "Inventory unavailable or refreshing; new changes are blocked.")}
@@ -973,7 +1019,11 @@ export default function CoursePage({
           {loadError}
         </Banner>
       )}
-      {tab === "contents" && (items === null || (inventoryPending && total === 0)) && !inventoryError ? (
+      {tab === "attendance" ? (
+        <CourseAttendance key={course.id} courseId={course.id} courseUrl={course.url} onOpen={onOpen} timeZone={timeZone} />
+      ) : tab === "grades" ? (
+        <CourseGrades course={course} onOpen={onOpen} timeZone={timeZone} />
+      ) : tab === "contents" && (items === null || (inventoryPending && total === 0)) && !inventoryError ? (
         loading ? <Skeleton rows={8} /> : null
       ) : tab === "contents" ? (
         <>
@@ -982,42 +1032,33 @@ export default function CoursePage({
             <Button variant="secondary" size="sm" trailingIcon={<X aria-hidden="true" />} onClick={() => setSearch("")}>Search “{needle}”</Button>
             <span className="library-toolbar-end">Flat matches show their original section path</span>
           </div>}
-          {!searching && <div className="library-toolbar course-compact-toolbar">
+          {!sidebarNavigation && !searching && <div className="library-toolbar course-compact-toolbar">
             <Select value={activeFolder.id} onValueChange={(id) => {
               const folder = compactFolders.find((node) => node.id === id);
               if (folder) chooseFolder(folder);
             }} options={compactFolders.map((node) => ({ value: node.id, label: node === tree ? "Course materials" : node.path.join(" / ") }))} ariaLabel="Course folder" />
             <span className="library-toolbar-end">{visibleCount} {visibleCount === 1 ? "material" : "materials"}</span>
           </div>}
+          <SearchControls raw={search} onRaw={setSearch} scope={searchScope} onScope={handleSearchScopeChange} filters={dateFilters} onFilters={setDateFilters} courses={courses} resources={inventory ?? []} />
+          <SavedContentControls enabled={Boolean(dateFilters.includeSavedText)} onToggle={() => setDateFilters(value => ({ ...value, includeSavedText: !value.includeSavedText }))} content={content} />
+          {result.errors.length > 0 && <Banner kind="error">{result.errors.join(" ")}</Banner>}
           <div className={cx("library-toolbar course-page-toolbar", !showFilters && "library-search-collapsed", !headerActions && "library-filters-standalone")}>
             <SearchField
               inputRef={searchRef}
               value={search}
               onChange={setSearch}
               placeholder="Search resources…"
-              label="Search resources in this course"
+              label={folderName ? `Search resources in ${folderName}` : "Search resources in this course"}
               debounceMs={0}
             />
             <Select
               value={sort}
               onValueChange={(value) => setSort(value as ResourceSort)}
-              options={RESOURCE_SORTS.map((option) => ({
+              options={[{ value: "relevance", label: result.parsed.terms.length ? "Relevance" : "Newest (activity date)" }, ...RESOURCE_SORTS.map((option) => ({
                 value: option.id,
                 label: option.label,
-              }))}
+              }))]}
               ariaLabel="Sort resources"
-            />
-            <Select
-              value={type}
-              onValueChange={setType}
-              options={[
-                { value: "all", label: "All types" },
-                ...types.map((option) => ({
-                  value: option.type,
-                  label: `${option.type} (${option.count})`,
-                })),
-              ]}
-              ariaLabel="Filter by file type"
             />
             <Select
               value={category}
@@ -1047,7 +1088,7 @@ export default function CoursePage({
                   Download all
                 </Button>
               )}
-              <span className="course-page-expand">
+              {!sidebarNavigation && <span className="course-page-expand">
               {expanded.size > 0 ? (
                 <Button variant="ghost" size="sm" onClick={() => setAllExpanded(false)}>
                   <FolderTree aria-hidden="true" />
@@ -1059,7 +1100,7 @@ export default function CoursePage({
                   Expand all
                 </Button>
               )}
-            </span>
+            </span>}
           </div>
 
           {renderTree()}
@@ -1117,7 +1158,7 @@ export default function CoursePage({
       )}
 
       </div>
-      <LibraryFooter course folders={tab === "contents"}>{footer}</LibraryFooter>
+      {footer && <LibraryFooter course folders={!sidebarNavigation && tab === "contents"}>{footer}</LibraryFooter>}
       {capture && <ConfirmDialog key={capture.generation} open onOpenChange={open => {
         if (!open && generation.current === capture.generation && lock.current === null) {
           setCapture(null); setStatus(null);
