@@ -4,7 +4,7 @@
 //! and it is cooperatively cancellable. All database mutation for a scan occurs
 //! inside one transaction, so an interrupted scan cannot corrupt the inventory.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -16,7 +16,7 @@ use crate::notify;
 use crate::quanta::discover::{self, CrawlLimits, Progress, ProgressFn};
 use crate::state::AppState;
 use crate::sync::diagnostics::Collector;
-use crate::sync::reconcile::{commit_scan, AssignmentReminderScope};
+use crate::sync::reconcile::{commit_scan, AssignmentReminderScope, BaselineState};
 
 /// Run a full scan. Returns immediately (with an empty outcome) if one is
 /// already in progress.
@@ -73,39 +73,17 @@ pub async fn run_scan(app: AppHandle, reason: &str) -> ScanOutcome {
 async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
     let mut outcome = ScanOutcome::default();
 
-    let (limits, baseline, baseline_generation, global_generation, reminder_hours, rebaseline) = {
-        let state = app.state::<AppState>();
-        let s = state.settings();
-        let conn = state.conn();
-        let baseline = db::get_kv(&conn, "baseline_established").is_none();
-        let baseline_generation = db::get_kv(&conn, "baseline_reset_generation")
-            .and_then(|value| value.parse::<i64>().ok())
-            .unwrap_or(0);
-        let global_generation = db::get_kv(&conn, "baseline_global_reset_generation")
-            .and_then(|value| value.parse::<i64>().ok())
-            .unwrap_or(0);
-        let rebaseline: HashSet<i64> = db::get_kv(&conn, "rebaseline_courses")
-            .and_then(|raw| serde_json::from_str::<Vec<i64>>(&raw).ok())
-            .map(|v| v.into_iter().collect())
-            .unwrap_or_default();
-        (
-            CrawlLimits {
-                max_courses: s.max_courses,
-                max_resources_per_course: s.max_resources_per_course,
-                max_detail_fetches: s.max_detail_fetches,
-                concurrency: s.concurrency,
-            },
-            baseline,
-            baseline_generation,
-            global_generation,
-            s.deadline_reminder_hours,
-            rebaseline,
-        )
+    let state = app.state::<AppState>();
+    let s = state.settings();
+    let limits = CrawlLimits {
+        max_courses: s.max_courses,
+        max_resources_per_course: s.max_resources_per_course,
+        max_detail_fetches: s.max_detail_fetches,
+        concurrency: s.concurrency,
     };
 
-    let academic_generation = crate::academic::context(&app.state::<AppState>()).generation;
-    let Some(client) = app.state::<AppState>().client() else {
-        let state = app.state::<AppState>();
+    let academic_generation = crate::academic::context(&state).generation;
+    let Some(client) = state.client() else {
         state.sync.set_auth_state("unauthenticated");
         state
             .sync
@@ -116,17 +94,10 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
         return outcome;
     };
 
-    let scan_id = {
-        let state = app.state::<AppState>();
-        let conn = state.conn();
-        match db::start_scan(&conn, &db::now_rfc3339()) {
-            Ok(id) => id,
-            Err(e) => {
-                outcome.errors.push(format!("scan start failed: {e}"));
-                0
-            }
-        }
+    let Some((scan_id, captured)) = start_scan(&state, &mut outcome) else {
+        return outcome;
     };
+    let baseline = !captured.established;
 
     // Progress reporting.
     let progress: ProgressFn = {
@@ -140,7 +111,7 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
         })
     };
 
-    let cancel = { app.state::<AppState>().sync.cancel.clone() };
+    let cancel = state.sync.cancel.clone();
     let collector = Collector::default();
     let discovery =
         discover::discover_all(client, limits, cancel, progress, collector.observer()).await;
@@ -153,14 +124,13 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
     outcome.cancelled = discovery.cancelled;
 
     if discovery.auth_expired {
-        let state = app.state::<AppState>();
         state.sync.set_auth_state("expired");
         *state.sync.last_error.lock().unwrap() =
             Some("Quanta session expired. Sign in again to resume monitoring.".into());
         {
             let conn = state.conn();
             let now = db::now_rfc3339();
-            let _ = db::finish_scan(
+            if let Err(error) = db::finish_scan(
                 &conn,
                 scan_id,
                 "auth_expired",
@@ -173,10 +143,12 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
                 Some("Session expired"),
                 false,
                 &now,
-            );
+            ) {
+                outcome.errors.push(format!("scan finish failed: {error}"));
+            }
         }
         persist_diagnostics(
-            app,
+            &state,
             &collector,
             scan_id,
             &HashMap::new(),
@@ -194,52 +166,19 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
     // A reset cancels discovery because its partial result is not a reliable
     // inventory snapshot. Record the cancelled run without changing resources
     // or generating events from an interrupted traversal.
-    if discovery.cancelled
-        && app
-            .state::<AppState>()
-            .sync
-            .auth_resetting
-            .load(Ordering::SeqCst)
-    {
-        let state = app.state::<AppState>();
-        let conn = state.conn();
-        let now = db::now_rfc3339();
-        let _ = db::finish_scan(
-            &conn,
-            scan_id,
-            "cancelled",
-            0,
-            0,
-            0,
-            0,
-            discovery.courses_scanned as i64,
-            discovery.courses_failed as i64,
-            Some("Cancelled for Quanta session reset"),
-            false,
-            &now,
-        );
-        outcome.cancelled = true;
-        persist_diagnostics(
-            app,
-            &collector,
-            scan_id,
-            &HashMap::new(),
-            true,
-            false,
-            &mut outcome,
-        );
+    if discovery.cancelled && state.sync.auth_resetting.load(Ordering::SeqCst) {
+        record_reset_cancellation(&state, &collector, scan_id, &mut outcome);
         return outcome;
     }
 
     // Only successful discovery can clear expiry and re-arm its notification.
     // A failed manual scan (e.g. offline) does not verify the stale session.
     if !discovery.cancelled && (discovery.errors.is_empty() || discovery.courses_scanned > 0) {
-        app.state::<AppState>().sync.set_auth_state("authenticated");
+        state.sync.set_auth_state("authenticated");
     }
 
     let now = db::now_rfc3339();
     let reconcile_result = {
-        let state = app.state::<AppState>();
         let max_age =
             chrono::Duration::minutes(state.settings().sync_interval_minutes.min(60) as i64);
         // Lock order matches academic reads/commits. An auth change during
@@ -255,26 +194,51 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
         let conn = state.conn();
         commit_scan(
             &conn,
+            scan_id,
             &discovery,
             baseline,
-            baseline_generation,
-            global_generation,
-            &rebaseline,
-            reminder_hours,
+            captured.generation,
+            captured.global_generation,
+            &captured.rebaseline,
+            s.deadline_reminder_hours,
             &now,
             assignment_scope,
         )
     };
     outcome.errors.extend(reconcile_result.errors);
     let commit_ok = reconcile_result.committed;
-    let new_count = reconcile_result.new as i64;
-    let updated_count = reconcile_result.updated as i64;
-    let unavailable_count = reconcile_result.unavailable as i64;
-    let missing_ids = reconcile_result.missing_ids;
+    if !commit_ok {
+        let status = if discovery.cancelled {
+            "cancelled"
+        } else {
+            "partial"
+        };
+        let summary = outcome.errors.join("; ");
+        let finish = db::finish_scan(
+            &state.conn(),
+            scan_id,
+            status,
+            outcome.discovered as i64,
+            0,
+            0,
+            0,
+            outcome.courses_scanned as i64,
+            outcome.courses_failed as i64,
+            Some(&summary),
+            baseline,
+            &now,
+        );
+        if let Err(error) = finish {
+            outcome
+                .errors
+                .push(format!("failure History write failed: {error}"));
+        }
+    }
+    *state.sync.last_error.lock().unwrap() =
+        (!outcome.errors.is_empty()).then(|| outcome.errors.join("; "));
 
     // Reconciliation has committed availability before mirror labeling runs.
-    if commit_ok && !missing_ids.is_empty() {
-        let state = app.state::<AppState>();
+    if commit_ok && !reconcile_result.missing_ids.is_empty() {
         let conn = state.conn();
         // A resource Quanta keeps hiding keeps whatever it has, labelled: the
         // local copy is exactly what should outlive the listing.
@@ -284,7 +248,6 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
     // Hand the scan's findings to the mirror. Only when the scan completed:
     // a cancelled half-scan must not push the backfill ahead of a full one.
     if commit_ok && !discovery.cancelled {
-        let state = app.state::<AppState>();
         let conn = state.conn();
         let queued = state.mirror.enqueue_all(&conn);
         if queued > 0 {
@@ -292,47 +255,7 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
         }
     }
 
-    // Finalise the scan run.
-    {
-        let state = app.state::<AppState>();
-        let conn = state.conn();
-        let status = if discovery.cancelled {
-            "cancelled"
-        } else if !commit_ok
-            || discovery.courses_failed > 0
-            || !discovery.errors.is_empty()
-            || !outcome.errors.is_empty()
-        {
-            "partial"
-        } else {
-            "ok"
-        };
-        let summary = if outcome.errors.is_empty() {
-            None
-        } else {
-            Some(outcome.errors.join("; "))
-        };
-        if let Err(e) = db::finish_scan(
-            &conn,
-            scan_id,
-            status,
-            discovery.resources.len() as i64,
-            if commit_ok { new_count } else { 0 },
-            if commit_ok { updated_count } else { 0 },
-            if commit_ok { unavailable_count } else { 0 },
-            discovery.courses_scanned as i64,
-            discovery.courses_failed as i64,
-            summary.as_deref(),
-            baseline,
-            &now,
-        ) {
-            outcome.errors.push(format!("scan finish failed: {e}"));
-        }
-        *state.sync.last_error.lock().unwrap() = if status == "ok" { None } else { summary };
-    }
-
     let observed_course_ids: HashMap<String, i64> = {
-        let state = app.state::<AppState>();
         let conn = state.conn();
         discovery
             .courses
@@ -344,7 +267,7 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
             .collect()
     };
     persist_diagnostics(
-        app,
+        &state,
         &collector,
         scan_id,
         &observed_course_ids,
@@ -356,15 +279,9 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
     // This helper claims the durable scan row before making a native attempt.
     notify::notify_scan_failure(app, scan_id);
 
-    if commit_ok {
-        outcome.new = new_count as usize;
-        outcome.updated = updated_count as usize;
-        outcome.unavailable = unavailable_count as usize;
-    } else {
-        outcome.new = 0;
-        outcome.updated = 0;
-        outcome.unavailable = 0;
-    }
+    outcome.new = reconcile_result.new;
+    outcome.updated = reconcile_result.updated;
+    outcome.unavailable = reconcile_result.unavailable;
     outcome.committed = commit_ok;
 
     // Native notifications for genuinely new changes.
@@ -375,11 +292,84 @@ async fn scan_inner(app: &AppHandle, _reason: &str) -> ScanOutcome {
     outcome
 }
 
+/// Reserve a History row and capture baseline state before discovery. If
+/// capture fails, retain an unsuccessful run when History is still writable.
+fn start_scan(state: &AppState, outcome: &mut ScanOutcome) -> Option<(i64, BaselineState)> {
+    let conn = state.conn();
+    let now = db::now_rfc3339();
+    match db::start_scan(&conn, &now) {
+        Ok(scan_id) => match BaselineState::capture(&conn) {
+            Ok(baseline) => return Some((scan_id, baseline)),
+            Err(error) => {
+                outcome.errors.push(error.clone());
+                if let Err(error) = db::finish_scan(
+                    &conn,
+                    scan_id,
+                    "failed",
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    Some(&error),
+                    false,
+                    &now,
+                ) {
+                    outcome
+                        .errors
+                        .push(format!("failure History write failed: {error}"));
+                }
+            }
+        },
+        Err(error) => outcome.errors.push(format!("scan start failed: {error}")),
+    }
+    *state.sync.last_error.lock().unwrap() = Some(outcome.errors.join("; "));
+    None
+}
+
+fn record_reset_cancellation(
+    state: &AppState,
+    collector: &Collector,
+    scan_id: i64,
+    outcome: &mut ScanOutcome,
+) {
+    // Finish the History write and release the connection before diagnostics
+    // takes the same mutex.
+    let finish = db::finish_scan(
+        &state.conn(),
+        scan_id,
+        "cancelled",
+        0,
+        0,
+        0,
+        0,
+        outcome.courses_scanned as i64,
+        outcome.courses_failed as i64,
+        Some("Cancelled for Quanta session reset"),
+        false,
+        &db::now_rfc3339(),
+    );
+    if let Err(error) = finish {
+        outcome.errors.push(format!("scan finish failed: {error}"));
+    }
+    outcome.cancelled = true;
+    persist_diagnostics(
+        state,
+        collector,
+        scan_id,
+        &HashMap::new(),
+        true,
+        false,
+        outcome,
+    );
+}
+
 /// Persist observed diagnostics after aggregate scan history has been finalized.
 /// The callback/collector never touches SQLite and failures do not rewrite the
 /// aggregate row; they are surfaced to the caller and redacted in logs.
 fn persist_diagnostics(
-    app: &AppHandle,
+    state: &AppState,
     collector: &Collector,
     scan_id: i64,
     course_ids: &HashMap<String, i64>,
@@ -398,7 +388,6 @@ fn persist_diagnostics(
     if details.courses.is_empty() {
         return;
     }
-    let state = app.state::<AppState>();
     let conn = state.conn();
     if let Err(error) = crate::sync::diagnostics::persist(&conn, &details) {
         let redacted = crate::logging::redact(&error.to_string());
@@ -413,3 +402,7 @@ fn emit_status(app: &AppHandle) {
     let status = app.state::<AppState>().sync_status();
     let _ = app.emit("sync:status", status);
 }
+
+#[cfg(test)]
+#[path = "../../../tests/scan_engine_review.rs"]
+mod review_tests;

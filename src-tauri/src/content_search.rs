@@ -234,6 +234,20 @@ fn stamp_within(root: &Path, path: &Path) -> Option<Stamp> {
     if !drive_path(root) {
         return None;
     }
+    let relative = path.strip_prefix(root).ok()?;
+    let mut original = root.to_path_buf();
+    if !local_metadata(&original)?.is_dir() {
+        return None;
+    }
+    for part in relative.components() {
+        let std::path::Component::Normal(name) = part else {
+            return None;
+        };
+        original.push(name);
+        // Canonicalization follows symlinks and junctions, so check every
+        // component under the original root before resolving the path.
+        local_metadata(&original)?;
+    }
     let root = root.canonicalize().ok()?;
     let real = path.canonicalize().ok()?;
     #[cfg(windows)]
@@ -248,7 +262,19 @@ fn stamp_within(root: &Path, path: &Path) -> Option<Stamp> {
     }) {
         return None;
     }
-    let meta = fs::symlink_metadata(&real).ok()?;
+    let meta = local_metadata(&real)?;
+    meta.is_file().then_some(Stamp {
+        path: real,
+        len: meta.len(),
+        modified: meta.modified().ok()?,
+    })
+}
+
+fn local_metadata(path: &Path) -> Option<fs::Metadata> {
+    let meta = fs::symlink_metadata(path).ok()?;
+    if meta.file_type().is_symlink() {
+        return None;
+    }
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
@@ -258,11 +284,7 @@ fn stamp_within(root: &Path, path: &Path) -> Option<Stamp> {
             return None;
         }
     }
-    meta.is_file().then_some(Stamp {
-        path: real,
-        len: meta.len(),
-        modified: meta.modified().ok()?,
-    })
+    Some(meta)
 }
 
 #[cfg(windows)]
@@ -662,6 +684,34 @@ mod tests {
             6
         );
         assert_eq!(db::count_events(&conn), 0);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn rust_review_saved_text_excludes_in_root_directory_links() {
+        let fixture = Fixture::new();
+        let body = b"quartz directory linked text";
+        let saved = fixture.material(1, "alias/document.txt", body, "resource");
+        assert_eq!(fixture.rebuild().indexed, 1);
+        let alias = saved.parent().unwrap();
+        let target = fixture.mirror().join("target");
+        fs::rename(alias, &target).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, alias).unwrap();
+        #[cfg(windows)]
+        {
+            // Junctions exercise the reparse attribute without needing the
+            // Windows privilege required to create symbolic links.
+            let output = std::process::Command::new("cmd.exe")
+                .args(["/C", "mklink", "/J"])
+                .arg(alias)
+                .arg(&target)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{output:?}");
+        }
+        assert!(fixture.search(&["quartz"]).hits.is_empty());
+        assert_eq!(fixture.rebuild().indexed, 0);
     }
 
     #[test]

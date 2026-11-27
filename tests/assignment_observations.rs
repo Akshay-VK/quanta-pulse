@@ -265,9 +265,12 @@ async fn assignment_reminders_use_current_finality_and_deduplicate_attempt_and_d
                 owner,
                 max_age: Delta::minutes(60),
             });
+        let conn = state.conn();
+        let scan_id = db::start_scan(&conn, &scan_time).unwrap();
         assert!(
             commit_scan(
-                &state.conn(),
+                &conn,
+                scan_id,
                 discovery,
                 baseline,
                 0,

@@ -46,11 +46,12 @@ async fn academic_owner_logout_late_commit_and_same_owner_reconnect() {
     )
     .is_err());
     let fixture = Fixture::start(200, 1);
+    let attempt = claim(&state, "same-owner-reconnect");
     fixture.release.send(()).unwrap();
     verify_and_install_session(
         &state,
-        fixture.candidate("password", "renamed@example.invalid"),
-        None,
+        fixture.candidate("sso", "quanta-account"),
+        Some(&attempt.id),
     )
     .await
     .unwrap();
@@ -1044,11 +1045,10 @@ async fn absent_unverified_identity_and_failed_account_change_never_unlock_old_p
     assert!(grades(&state, &generation, 101).is_err());
     let failed = Fixture::start(401, 1);
     failed.release.send(()).unwrap();
-    assert!(verify_and_install_session_in_generation(
+    assert!(verify_candidate_session(
         &state,
         failed.candidate("password", "b@example.invalid"),
-        None,
-        &attempt
+        SessionAdmission::Generation(&attempt),
     )
     .await
     .is_err());
@@ -1165,7 +1165,7 @@ async fn delayed_academic_http_cancels_and_drains_on_logout_or_reset_before_b_ca
         assert!(request.starts_with("GET /grade/report/user/index.php?id=101 "));
         if reset {
             state.sync.auth_resetting.store(true, Ordering::SeqCst);
-            invalidate(&state); // same authority operation used before reset drain
+            begin_account_change(&state); // production admission before reset drain
             assert!(matches!(
                 read_student_report(
                     &state,
@@ -1527,9 +1527,13 @@ async fn existing_session_reverification_rotates_generation_and_preserves_shared
             .stale
     );
     let candidate = state.client().unwrap().verification_candidate();
-    verify_and_install_session_in_generation(&state, candidate, None, &before.generation)
-        .await
-        .unwrap();
+    verify_candidate_session(
+        &state,
+        candidate,
+        SessionAdmission::Generation(&before.generation),
+    )
+    .await
+    .unwrap();
     let after = context(&state);
     assert_ne!(before.generation, after.generation);
     assert_eq!(before.owner, after.owner);

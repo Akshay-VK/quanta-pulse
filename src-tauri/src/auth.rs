@@ -47,12 +47,24 @@ enum SsoLoginFailure {
 #[derive(Clone)]
 pub(crate) struct SsoAttempt {
     id: String,
+    generation: String,
     window_label: String,
     completion: tokio::sync::watch::Sender<Option<Result<AuthStatus, String>>>,
     terminal: Arc<AtomicBool>,
 }
 
 impl SsoAttempt {
+    fn new(id: String, generation: String) -> Self {
+        let (completion, _) = tokio::sync::watch::channel(None);
+        Self {
+            window_label: format!("{SSO_WINDOW_LABEL}-{id}"),
+            id,
+            generation,
+            completion,
+            terminal: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
     fn publish(&self, result: Result<AuthStatus, String>) -> bool {
         if self.terminal.swap(true, Ordering::SeqCst) {
             return false;
@@ -75,7 +87,7 @@ fn take_sso_attempt(active: &mut Option<SsoAttempt>, id: &str) -> Option<SsoAtte
 fn claim_sso_attempt(
     active: &mut Option<SsoAttempt>,
     resetting: &std::sync::atomic::AtomicBool,
-    candidate: SsoAttempt,
+    admit: impl FnOnce() -> SsoAttempt,
 ) -> Result<(SsoAttempt, bool), String> {
     if resetting.load(Ordering::SeqCst) {
         return Err("Quanta session reset is in progress. Try signing in again shortly.".into());
@@ -83,9 +95,20 @@ fn claim_sso_attempt(
     if let Some(attempt) = active.as_ref() {
         Ok((attempt.clone(), false))
     } else {
+        let candidate = admit();
         *active = Some(candidate.clone());
         Ok((candidate, true))
     }
+}
+
+fn claim_account_change_sso(
+    state: &AppState,
+    active: &mut Option<SsoAttempt>,
+    id: String,
+) -> Result<(SsoAttempt, bool), String> {
+    claim_sso_attempt(active, &state.sync.auth_resetting, || {
+        SsoAttempt::new(id, crate::academic::begin_account_change(state))
+    })
 }
 
 fn matching_sso_window_label(active: &Option<SsoAttempt>, id: &str) -> Option<String> {
@@ -241,7 +264,7 @@ pub async fn login_with_password(
         sesskey,
         acquired_at: db::now_rfc3339(),
     };
-    let status = finalize_session(&app, session, None, Some(&generation)).await?;
+    let status = finalize_session(&app, session, SessionAdmission::Generation(&generation)).await?;
     resume_monitoring(app.clone(), "login");
     Ok(status)
 }
@@ -255,15 +278,7 @@ pub async fn start_sso_login(app: AppHandle) -> Result<AuthStatus, String> {
         // Serialize the reset gate with claiming an attempt. Reset sets its flag
         // before taking this lock, so it either rejects this start or cancels it.
         let id = uuid::Uuid::new_v4().to_string();
-        let (completion, _candidate_receiver) = tokio::sync::watch::channel(None);
-        let candidate = SsoAttempt {
-            id: id.clone(),
-            window_label: format!("{SSO_WINDOW_LABEL}-{id}"),
-            completion,
-            terminal: Arc::new(AtomicBool::new(false)),
-        };
-        let (attempt, owner) =
-            claim_sso_attempt(&mut active, &state.sync.auth_resetting, candidate)?;
+        let (attempt, owner) = claim_account_change_sso(&state, &mut active, id)?;
         if !owner {
             let receiver = attempt.completion.subscribe();
             (
@@ -274,7 +289,6 @@ pub async fn start_sso_login(app: AppHandle) -> Result<AuthStatus, String> {
             )
         } else {
             let receiver = attempt.completion.subscribe();
-            crate::academic::begin_account_change(&state);
             state.sync.sso_login_active.store(true, Ordering::SeqCst);
             (attempt, receiver, true, None)
         }
@@ -399,7 +413,7 @@ async fn run_sso_login_inner(
         sesskey: None,
         acquired_at: db::now_rfc3339(),
     };
-    finalize_sso_session(app, session, &attempt.id)
+    finalize_session(app, session, SessionAdmission::Sso(attempt))
         .await
         .map_err(|message| {
             if message == "Sign-in did not establish a usable session." {
@@ -420,8 +434,25 @@ async fn verify_and_install_session(
     client: QuantaClient,
     sso_attempt: Option<&str>,
 ) -> Result<(), String> {
+    let attempt = sso_attempt
+        .map(|id| {
+            state
+                .sync
+                .sso_lifecycle
+                .lock()
+                .unwrap()
+                .as_ref()
+                .filter(|attempt| attempt.id == id)
+                .cloned()
+                .ok_or_else(|| "Sign-in attempt is no longer active.".to_string())
+        })
+        .transpose()?;
     let generation = crate::academic::context(state).generation;
-    verify_and_install_session_in_generation(state, client, sso_attempt, &generation)
+    let admission = match attempt.as_ref() {
+        Some(attempt) => SessionAdmission::Sso(attempt),
+        None => SessionAdmission::Generation(&generation),
+    };
+    verify_candidate_session(state, client, admission)
         .await
         .map_err(|error| error.to_string())
 }
@@ -434,12 +465,16 @@ enum SessionVerificationFailure {
     Other(String),
 }
 
-/// The generation is captured before credential acquisition, not after it.
-async fn verify_and_install_session_in_generation(
+/// The authorization to install is captured before credential acquisition.
+enum SessionAdmission<'a> {
+    Generation(&'a str),
+    Sso(&'a SsoAttempt),
+}
+
+async fn verify_candidate_session(
     state: &AppState,
     mut client: QuantaClient,
-    sso_attempt: Option<&str>,
-    generation: &str,
+    admission: SessionAdmission<'_>,
 ) -> Result<(), SessionVerificationFailure> {
     let mut session = client.session.clone();
     let my = client
@@ -478,55 +513,35 @@ async fn verify_and_install_session_in_generation(
     client.session = session.clone();
     let client = Arc::new(client);
 
-    let installed =
-        std::cell::RefCell::new(Err("Sign-in session is no longer active.".to_string()));
-    let install = || {
-        *installed.borrow_mut() =
-            state.install_client_if_current(&generation, client, &session.email);
-    };
-    if let Some(attempt_id) = sso_attempt {
-        if !commit_sso_if_current(&state.sync.sso_lifecycle, attempt_id, install) {
-            return Err(SessionVerificationFailure::Other(
-                "Sign-in attempt is no longer active.".into(),
-            ));
+    let installed = match admission {
+        SessionAdmission::Generation(generation) => {
+            state.install_client_if_current(generation, client, &session.email)
         }
-    } else {
-        install();
-    }
-
-    installed
-        .into_inner()
-        .map_err(SessionVerificationFailure::Other)
+        SessionAdmission::Sso(attempt) => {
+            let mut installed = Err("Sign-in attempt is no longer active.".to_string());
+            commit_sso_if_current(&state.sync.sso_lifecycle, &attempt.id, || {
+                installed =
+                    state.install_client_if_current(&attempt.generation, client, &session.email);
+            });
+            installed
+        }
+    };
+    installed.map_err(SessionVerificationFailure::Other)
 }
 
 async fn finalize_session(
     app: &AppHandle,
     session: SessionInfo,
-    sso_attempt: Option<&str>,
-    generation: Option<&str>,
+    admission: SessionAdmission<'_>,
 ) -> Result<AuthStatus, String> {
     let state = app.state::<AppState>();
     let client = QuantaClient::from_session(session, state.settings().request_timeout_secs)
         .map_err(|e| e.to_string())?;
-    let current_generation = crate::academic::context(&state).generation;
-    verify_and_install_session_in_generation(
-        &state,
-        client,
-        sso_attempt,
-        generation.unwrap_or(&current_generation),
-    )
-    .await
-    .map_err(|error| error.to_string())?;
+    verify_candidate_session(&state, client, admission)
+        .await
+        .map_err(|error| error.to_string())?;
     let _ = app.emit("auth:changed", ());
     Ok(auth_status(&state))
-}
-
-async fn finalize_sso_session(
-    app: &AppHandle,
-    session: SessionInfo,
-    attempt_id: &str,
-) -> Result<AuthStatus, String> {
-    finalize_session(app, session, Some(attempt_id), None).await
 }
 
 fn is_current_attempt(app: &AppHandle, attempt: &SsoAttempt) -> bool {
@@ -595,10 +610,14 @@ pub fn restore_session(state: &AppState) {
 pub fn logout(state: &AppState) -> Result<(), String> {
     // Release the SSO slot as well: its credential acquisition may predate the
     // verification generation. The attempt loop observes terminal cancellation.
-    if let Some(attempt) = state.sync.sso_lifecycle.lock().unwrap().take() {
-        attempt.publish(Err("Sign-in was cancelled by logout.".into()));
+    {
+        let mut active = state.sync.sso_lifecycle.lock().unwrap();
+        if let Some(attempt) = active.take() {
+            attempt.publish(Err("Sign-in was cancelled by logout.".into()));
+            state.sync.sso_login_active.store(false, Ordering::SeqCst);
+        }
+        state.set_client(None);
     }
-    state.set_client(None);
     state.sync.cancel.store(true, Ordering::SeqCst);
     {
         let conn = state.conn();
@@ -660,9 +679,8 @@ pub async fn restart_quanta_session(app: AppHandle) -> SessionResetResult {
 async fn reset_and_login(app: &AppHandle) -> SessionResetResult {
     let state = app.state::<AppState>();
 
-    crate::academic::invalidate(&state);
     // Gate every new Quanta operation before asking existing work to stop.
-    state.sync.cancel.store(true, Ordering::SeqCst);
+    let generation = crate::academic::begin_account_change(&state);
     if let Some(id) = active_sso_attempt_id(&state) {
         let _ = cancel_sso_login(app, &id);
     }
@@ -676,9 +694,10 @@ async fn reset_and_login(app: &AppHandle) -> SessionResetResult {
 
     // Drop the in-memory reqwest client only after its scan/preview users have
     // released it. The old client is never handed to the new login flow.
-    state.set_client(None);
-    state.sync.set_auth_state("expired");
-    *state.sync.last_error.lock().unwrap() = None;
+    let generation = match state.clear_client_for_reset(&generation) {
+        Ok(generation) => generation,
+        Err(error) => return reset_result("failed", error),
+    };
     let _ = app.emit("auth:changed", ());
     let _ = app.emit("sync:status", state.sync_status());
 
@@ -691,14 +710,10 @@ async fn reset_and_login(app: &AppHandle) -> SessionResetResult {
     // second login window from racing this reset.
     let attempt = {
         let mut active = state.sync.sso_lifecycle.lock().unwrap();
-        let id = uuid::Uuid::new_v4().to_string();
-        let (completion, _receiver) = tokio::sync::watch::channel(None);
-        let attempt = SsoAttempt {
-            window_label: format!("{SSO_WINDOW_LABEL}-{id}"),
-            id,
-            completion,
-            terminal: Arc::new(AtomicBool::new(false)),
-        };
+        if crate::academic::context(&state).generation != generation {
+            return reset_result("failed", "Quanta session changed during reset.");
+        }
+        let attempt = SsoAttempt::new(uuid::Uuid::new_v4().to_string(), generation);
         *active = Some(attempt.clone());
         state.sync.sso_login_active.store(true, Ordering::SeqCst);
         attempt
@@ -725,15 +740,15 @@ async fn reset_and_login(app: &AppHandle) -> SessionResetResult {
             "Quanta access was verified. Monitoring is resuming.",
         ),
         Err(SsoLoginFailure::LoginRequired(message)) => {
-            state.set_client(None);
-            state.sync.set_auth_state("expired");
             let _ = app.emit("auth:changed", ());
             reset_result("login_required", message)
         }
         Err(SsoLoginFailure::Failed(message)) => {
-            state.set_client(None);
-            state.sync.set_auth_state("expired");
-            *state.sync.last_error.lock().unwrap() = Some(message.clone());
+            let authority = state.sync.academic.lock().unwrap();
+            if authority.is_generation(&attempt.generation) {
+                *state.sync.last_error.lock().unwrap() = Some(message.clone());
+            }
+            drop(authority);
             let _ = app.emit("auth:changed", ());
             reset_result("failed", message)
         }
@@ -836,11 +851,10 @@ pub async fn refresh_existing_session(app: AppHandle) -> SessionRefreshResult {
                 message: "No active Quanta session is available. Sign in again to continue.".into(),
             };
         };
-        let verification = verify_and_install_session_in_generation(
+        let verification = verify_candidate_session(
             &state,
             client.verification_candidate(),
-            None,
-            &generation,
+            SessionAdmission::Generation(&generation),
         );
         match tokio::time::timeout(Duration::from_secs(20), verification).await {
             Ok(Ok(())) => {
@@ -908,16 +922,9 @@ mod tests {
         SsoAttempt,
         tokio::sync::watch::Receiver<Option<Result<super::AuthStatus, String>>>,
     ) {
-        let (completion, receiver) = tokio::sync::watch::channel(None);
-        (
-            SsoAttempt {
-                id: id.to_string(),
-                window_label: format!("quanta-login-{id}"),
-                completion,
-                terminal: std::sync::Arc::new(AtomicBool::new(false)),
-            },
-            receiver,
-        )
+        let attempt = SsoAttempt::new(id.into(), "fixture-generation".into());
+        let receiver = attempt.completion.subscribe();
+        (attempt, receiver)
     }
 
     /// Interactive Windows/WebView2 proof, explicitly opted into by the operator.
@@ -1167,7 +1174,7 @@ mod tests {
         let (a, waiter) = attempt("A");
         let mut guard = lifecycle.lock().unwrap();
         assert!(
-            claim_sso_attempt(&mut guard, &resetting, a.clone())
+            claim_sso_attempt(&mut guard, &resetting, || a.clone())
                 .unwrap()
                 .1
         );
@@ -1201,7 +1208,7 @@ mod tests {
         let mut slot = None;
         let resetting = AtomicBool::new(true);
         let (candidate, _) = attempt("A");
-        assert!(claim_sso_attempt(&mut slot, &resetting, candidate).is_err());
+        assert!(claim_sso_attempt(&mut slot, &resetting, || candidate).is_err());
         assert!(slot.is_none());
     }
 

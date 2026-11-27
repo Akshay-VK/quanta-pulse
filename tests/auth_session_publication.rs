@@ -162,17 +162,10 @@ async fn assert_verified_publication(method: &str, email: &str, attempt_id: Opti
 }
 
 fn claim(state: &AppState, id: &str) -> SsoAttempt {
-    let (completion, _) = tokio::sync::watch::channel(None);
-    let candidate = SsoAttempt {
-        id: id.into(),
-        window_label: format!("fixture-{id}"),
-        completion,
-        terminal: Arc::new(AtomicBool::new(false)),
-    };
-    let (attempt, owns) = claim_sso_attempt(
+    let (attempt, owns) = claim_account_change_sso(
+        state,
         &mut state.sync.sso_lifecycle.lock().unwrap(),
-        &state.sync.auth_resetting,
-        candidate,
+        id.into(),
     )
     .unwrap();
     assert!(owns);
@@ -292,6 +285,59 @@ async fn unusable_session_never_replaces_active_identity() {
         "Sign-in did not establish a usable session."
     );
     assert_prior_session_untouched(&state, &previous);
+}
+
+#[tokio::test]
+async fn rust_review_sso_credentials_cannot_borrow_a_later_password_admission() {
+    let data = tempfile::tempdir().unwrap();
+    let state = state(&data);
+    let fixture = Fixture::start(200, 1);
+    let attempt = claim(&state, "earlier-sso");
+    let newer = crate::academic::begin_account_change(&state);
+    fixture.release.send(()).unwrap();
+    let result = verify_and_install_session(
+        &state,
+        fixture.candidate("sso", "quanta-account"),
+        Some(&attempt.id),
+    )
+    .await;
+    fixture.server.join().unwrap();
+    assert_eq!(result.unwrap_err(), "Sign-in session is no longer active.");
+    assert_eq!(crate::academic::context(&state).generation, newer);
+    assert!(state.client().is_none());
+    assert!(db::get_kv(&state.conn(), "current_email").is_none());
+}
+
+#[tokio::test]
+async fn rust_review_logout_invalidates_a_drained_reset_attempt() {
+    let data = tempfile::tempdir().unwrap();
+    let state = state(&data);
+    let admitted = crate::academic::begin_account_change(&state);
+    let generation = state.clear_client_for_reset(&admitted).unwrap();
+    let attempt = SsoAttempt::new("reset-sso".into(), generation);
+    *state.sync.sso_lifecycle.lock().unwrap() = Some(attempt.clone());
+    state.sync.sso_login_active.store(true, Ordering::SeqCst);
+
+    logout(&state).unwrap();
+    assert!(!state.sync.sso_login_active.load(Ordering::SeqCst));
+    assert!(state.clear_client_for_reset(&attempt.generation).is_err());
+
+    let fixture = Fixture::start(200, 1);
+    fixture.release.send(()).unwrap();
+    let result = verify_candidate_session(
+        &state,
+        fixture.candidate("sso", "quanta-account"),
+        SessionAdmission::Sso(&attempt),
+    )
+    .await;
+    fixture.server.join().unwrap();
+    assert_eq!(
+        result.err().unwrap().to_string(),
+        "Sign-in attempt is no longer active."
+    );
+    assert_eq!(state.sync.auth_state(), "unauthenticated");
+    assert!(crate::academic::context(&state).owner.is_none());
+    assert!(state.client().is_none());
 }
 
 include!("academic_foundation.rs");

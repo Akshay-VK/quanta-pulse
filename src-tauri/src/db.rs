@@ -1473,10 +1473,13 @@ pub fn event_exists(conn: &Connection, dedup_key: &str) -> bool {
 /* --------------------------------------------------------------- scan runs */
 
 pub fn start_scan(conn: &Connection, now: &str) -> rusqlite::Result<i64> {
-    conn.execute(
+    let changed = conn.execute(
         "INSERT INTO scan_runs(started_at, status) VALUES(?1, 'running')",
         params![now],
     )?;
+    if changed != 1 {
+        return Err(rusqlite::Error::StatementChangedRows(changed));
+    }
     Ok(conn.last_insert_rowid())
 }
 
@@ -1495,11 +1498,11 @@ pub fn finish_scan(
     is_baseline: bool,
     now: &str,
 ) -> rusqlite::Result<()> {
-    conn.execute(
+    let changed = conn.execute(
         "UPDATE scan_runs SET completed_at = ?1, status = ?2, discovered_count = ?3,
             new_count = ?4, updated_count = ?5, unavailable_count = ?6,
             courses_scanned = ?7, courses_failed = ?8, error_summary = ?9, is_baseline = ?10
-         WHERE id = ?11",
+         WHERE id = ?11 AND status = 'running'",
         params![
             now,
             status,
@@ -1514,6 +1517,9 @@ pub fn finish_scan(
             id
         ],
     )?;
+    if changed != 1 {
+        return Err(rusqlite::Error::StatementChangedRows(changed));
+    }
     Ok(())
 }
 

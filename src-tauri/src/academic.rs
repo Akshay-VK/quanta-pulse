@@ -43,12 +43,13 @@ impl Default for Authority {
     }
 }
 impl Authority {
-    pub(crate) fn replace(&mut self, owner: Option<AcademicOwner>) {
+    pub(crate) fn replace(&mut self, owner: Option<AcademicOwner>) -> &str {
         self.cancelled
             .store(true, std::sync::atomic::Ordering::SeqCst);
         self.cancelled = Default::default();
         self.context.generation = uuid::Uuid::new_v4().to_string();
         self.context.owner = owner;
+        &self.context.generation
     }
     pub(crate) fn is_generation(&self, generation: &str) -> bool {
         self.context.generation == generation
@@ -70,20 +71,16 @@ impl Authority {
 pub fn context(state: &AppState) -> AcademicContext {
     state.sync.academic.lock().unwrap().context.clone()
 }
-/// Hide immediately, also when a reset later fails to drain or sign in.
-pub fn invalidate(state: &AppState) {
-    state.sync.academic.lock().unwrap().replace(None);
-}
-
 /// Account-change admission hides private reads immediately even if the new
 /// authentication fails. Material retention remains under its existing policy.
 pub fn begin_account_change(state: &AppState) -> String {
-    invalidate(state);
+    let mut authority = state.sync.academic.lock().unwrap();
+    let generation = authority.replace(None).to_owned();
     state
         .sync
         .cancel
         .store(true, std::sync::atomic::Ordering::SeqCst);
-    context(state).generation
+    generation
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -207,6 +207,20 @@ impl AppState {
         *self.client.lock().unwrap() = client;
     }
 
+    /// Discard the drained transport only if this reset still owns admission.
+    /// Return the new generation that the reset's SSO attempt must verify in.
+    pub(crate) fn clear_client_for_reset(&self, generation: &str) -> Result<String, String> {
+        let mut authority = self.sync.academic.lock().unwrap();
+        if !authority.is_generation(generation) {
+            return Err("Quanta session changed during reset.".into());
+        }
+        let generation = authority.replace(None).to_owned();
+        *self.client.lock().unwrap() = None;
+        self.sync.set_auth_state("expired");
+        *self.sync.last_error.lock().unwrap() = None;
+        Ok(generation)
+    }
+
     /// Commit verified authentication under the same fence as academic reads
     /// and writes. A pre-logout verification cannot reinstall its old client.
     pub(crate) fn install_client_if_current(
