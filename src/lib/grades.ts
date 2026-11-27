@@ -13,6 +13,21 @@ export function gradeValue(grade: GradeObservation): string {
   }
 }
 
+/** Use the item's own numeric scale for display, when Moodle supplies both bounds. */
+export function gradeScale(grade: GradeObservation) {
+  const { numericValue: value, rangeDisplay } = grade;
+  if (grade.source.visibility !== "visible" || grade.omitted || !grade.displayValue || value === null || !Number.isFinite(value) || !rangeDisplay) return null;
+
+  const bounds = /^\s*(-?\d+(?:\.\d+)?)\s*[-–—]\s*(-?\d+(?:\.\d+)?)\s*$/.exec(rangeDisplay.replaceAll("−", "-"));
+  if (!bounds) return null;
+
+  const min = Number(bounds[1]);
+  const max = Number(bounds[2]);
+  if (!Number.isFinite(max - min) || min >= max || value < min || value > max) return null;
+
+  return { min, max, value, label: min === 0 ? ` / ${bounds[2]}` : ` (${rangeDisplay})` };
+}
+
 export function gradeReportUrl(externalCourseId: string): string | null {
   return /^[1-9]\d*$/.test(externalCourseId)
     ? `https://quanta.bits-pilani.ac.in/grade/report/user/index.php?id=${externalCourseId}`

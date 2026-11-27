@@ -3,7 +3,7 @@ import { Button } from "../../components/ui/Button";
 import { useLocalAcademicReport } from "../../hooks/useLocalAcademicReport";
 import { api } from "../../lib/api";
 import { resolveTimezone } from "../../lib/agenda";
-import { gradeGroups, gradeReportUrl, gradeValue } from "../../lib/grades";
+import { gradeGroups, gradeReportUrl, gradeScale, gradeValue } from "../../lib/grades";
 import type { AcademicCoverage, Course, GradeObservation } from "../../lib/types";
 
 function coverageLabel(coverage: AcademicCoverage | null | undefined) {
@@ -22,6 +22,7 @@ function coverageLabel(coverage: AcademicCoverage | null | undefined) {
 
 function GradeRow({ grade }: { grade: GradeObservation }) {
   const visible = grade.source.visibility === "visible";
+  const scale = gradeScale(grade);
   const fields = visible ? [
     ["Range", grade.rangeDisplay],
     ["Weight", grade.weightDisplay],
@@ -32,7 +33,10 @@ function GradeRow({ grade }: { grade: GradeObservation }) {
   const label = <>
     <span className="course-grade-title">{grade.title}</span>
     {grade.omitted && <span className="course-grade-omitted">Missing from latest report</span>}
-    <span className="course-grade-value">{gradeValue(grade)}</span>
+    <span className="course-grade-value">
+      {scale && <meter className="course-grade-meter" aria-hidden="true" min={scale.min} max={scale.max} value={scale.value} />}
+      <span>{gradeValue(grade)}{scale && <span className="course-grade-scale">{scale.label}</span>}</span>
+    </span>
   </>;
   if (!fields.length) return <div className="course-grade-row">{label}</div>;
   return (

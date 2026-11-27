@@ -819,7 +819,7 @@
 
   .course-grade-row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 35%);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 45%);
     gap: var(--sp-1) var(--sp-3);
     align-items: baseline;
     padding: var(--sp-2) var(--sp-3);
@@ -841,7 +841,35 @@
   details[open] > summary.course-grade-row .course-grade-title::before { transform: rotate(45deg); }
   summary.course-grade-row:focus-visible { outline-offset: -2px; }
 
-  .course-grade-value { grid-column: 2; grid-row: 1; text-align: end; font-variant-numeric: tabular-nums; }
+  .course-grade-value {
+    grid-area: 1 / 2;
+    display: grid;
+    grid-template-columns: minmax(0, 7rem) min(6rem, 65%);
+    align-items: center;
+    justify-content: end;
+    gap: var(--sp-2);
+    text-align: end;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .course-grade-value > span { grid-column: 2; }
+  .course-grade-scale { color: var(--muted); font-weight: 400; }
+
+  .course-grade-meter {
+    appearance: none;
+    width: 100%;
+    min-width: 0;
+    height: 4px;
+    overflow: hidden;
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: var(--line);
+  }
+
+  .course-grade-meter::-webkit-meter-bar { height: 100%; border: 0; background: var(--line); }
+  .course-grade-meter::-webkit-meter-optimum-value { background: var(--accent); }
+  .course-grade-meter::-moz-meter-bar { background: var(--accent); }
+  .course-grade-total .course-grade-meter { height: 6px; }
   .course-grade-omitted,
   .course-grade-empty { color: var(--muted); font-size: 12px; }
   .course-grade-properties { margin: 0; padding: 0 var(--sp-3) var(--sp-3); font-size: 12px; }

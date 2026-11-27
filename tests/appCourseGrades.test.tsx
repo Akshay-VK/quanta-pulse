@@ -20,10 +20,10 @@ const grade = (id: string, title: string, extra: Partial<GradeObservation> = {})
   rangeDisplay: null, weightDisplay: null, feedback: null, ...extra,
 });
 const grades = [
-  grade("grade:900", "Course total", { itemKind: "courseTotal", displayValue: "71.25 / 95" }),
+  grade("grade:900", "Course total", { itemKind: "courseTotal", displayValue: "71.25", numericValue: 71.25, rangeDisplay: "0–95" }),
   grade("category:12", "Assessments", { itemKind: "category" }),
-  grade("grade:11", "Manual checkpoint", { parentSourceId: "category:12", displayValue: "0.00", rangeDisplay: "0–10", feedback: "<img src=x onerror=alert(1)> literal", details: { valueStatus: "reported", percentageDisplay: "0.00 %", letterDisplay: null } }),
-  grade("grade:12", "Hidden component", { source: { ...grade("grade:12", "").source, visibility: "hidden" }, displayValue: "PRIVATE", feedback: "PRIVATE" }),
+  grade("grade:11", "Manual checkpoint", { parentSourceId: "category:12", displayValue: "0.00", numericValue: 0, rangeDisplay: "0–10", feedback: "<img src=x onerror=alert(1)> literal", details: { valueStatus: "reported", percentageDisplay: "0.00 %", letterDisplay: null } }),
+  grade("grade:12", "Hidden component", { source: { ...grade("grade:12", "").source, visibility: "hidden" }, displayValue: "PRIVATE", numericValue: 5, rangeDisplay: "0–10", feedback: "PRIVATE" }),
   grade("grade:13", "Missed observation", { displayValue: "A−", omitted: true }),
   grade("grade:14", "Blank total", { itemKind: "categoryTotal", details: { valueStatus: "blank", percentageDisplay: null, letterDisplay: null } }),
   grade("grade:15", "Pending mark", { details: { valueStatus: "ungraded", percentageDisplay: null, letterDisplay: null } }),
@@ -95,7 +95,20 @@ it("fetches grades only when asked and displays the checked report", async () =>
   pending.resolve(page());
   await flushApp();
   expect(report().textContent).toContain("71.25 / 95");
+  expect(Array.from(report().querySelectorAll("meter"), meter => [meter.value, meter.min, meter.max])).toEqual([[71.25, 0, 95], [0, 0, 10]]);
   expect(button("Check grades", report()).hasAttribute("disabled")).toBe(false);
+  check = () => page([
+    grade("grade:900", "Course total", { itemKind: "courseTotal", displayValue: "80.00", numericValue: 80, rangeDisplay: "0–120" }),
+    grade("grade:21", "Signed scale", { displayValue: "0.50", numericValue: 0.5, rangeDisplay: "−2.5 – 2.5" }),
+    grade("grade:22", "Extra credit", { displayValue: "12.00", numericValue: 12, rangeDisplay: "0–10" }),
+    grade("grade:23", "Invalid scale", { displayValue: "0.00", numericValue: 0, rangeDisplay: "0–0" }),
+    grade("grade:24", "Text scale", { displayValue: "Meets expectations", rangeDisplay: "Unsatisfactory–Exceeds" }),
+  ]);
+  await click(button("Check grades", report()));
+  expect(Array.from(report().querySelectorAll("meter"), meter => [meter.value, meter.min, meter.max])).toEqual([[80, 0, 120], [0.5, -2.5, 2.5]]);
+  expect(report().textContent).toContain("80.00 / 120");
+  expect(report().textContent).toContain("12.00");
+  expect(report().textContent).toContain("Meets expectations");
 });
 
 it("discards an in-flight grade check after an account change", async () => {
