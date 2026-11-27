@@ -21,6 +21,11 @@ export function attendanceSource(report: ScopedAttendance): string | null {
   return report.source.sourceUrl === canonical ? canonical : null;
 }
 
+/** Allow the course page as a fallback without inferring an attendance route. */
+export function attendanceCourseSource(courseUrl: string): string | null {
+  return /^https:\/\/quanta\.bits-pilani\.ac\.in\/course\/view\.php\?id=[1-9][0-9]*$/.test(courseUrl) ? courseUrl : null;
+}
+
 export function attendanceScope(details: AttendanceReportDetails): string {
   const group = details.groupDisplay ?? "Course-wide";
   if (details.range === "all") return `All dates · ${group}`;

@@ -130,6 +130,8 @@ it("discards delayed prior-owner results and keeps attendance errors local", asy
   read = () => page([], { ...coverage, coverage: "unsupported", permission: "unknown", reason: "sourceUnverified" });
   await emitAppEvent("auth:changed", undefined);
   expect(report().textContent).toContain("Unsupported attendance report");
+  await click(button("Open course in Quanta", report()));
+  expect(appApi.openExternal).toHaveBeenCalledWith(origin + "/course/view.php?id=1");
   delayed.resolve({ ...page(), context: ownerA });
   await flushApp();
   expect(report().textContent).not.toContain("Calibration");

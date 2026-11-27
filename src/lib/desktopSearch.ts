@@ -90,15 +90,11 @@ function nowOf(request: SearchRequest, inventory: SearchInventory, options?: { n
 
 
 function activityDateKey(resource: Resource, timeZone: string): string | null {
-  const ts = activityTimestamp(resource);
+  const ts = activityTimestamp(resource)?.trim();
   if (!ts) return null;
   if (isDateOnly(ts)) return validCalendarDate(ts) ? ts : null;
-  const parsed = validCalendarInstant(ts) ? parseTimestamp(ts) : null;
-  if (!parsed) {
-    if (validCalendarDate(ts)) return ts;
-    return null;
-  }
-  return localDateKey(parsed, timeZone);
+  const parsed = parseTimestamp(ts);
+  return parsed ? localDateKey(parsed, timeZone) : null;
 }
 
 function isDateOnly(value: string): boolean {
@@ -224,9 +220,7 @@ export function searchDesktop(request: SearchRequest, inventory: SearchInventory
     return 3;
   };
   const activityTime = (r: Resource): number => {
-    const ts = activityTimestamp(r);
-    const parsedTs = ts && (validCalendarInstant(ts) || validCalendarDate(ts)) ? parseTimestamp(ts) : null;
-    return parsedTs ? parsedTs.getTime() : Number.NEGATIVE_INFINITY;
+    return parseTimestamp(activityTimestamp(r))?.getTime() ?? Number.NEGATIVE_INFINITY;
   };
   const rankedFiles = terms.length === 0 ? sortResources(candidateFiles, "newest") : [...candidateFiles].sort((a, b) => {
     const sa = bodyOnly.has(a.id) ? 4 : scoreTitle(a.title);

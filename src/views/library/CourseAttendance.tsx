@@ -5,7 +5,7 @@ import { useLocalAcademicReport } from "../../hooks/useLocalAcademicReport";
 import { resolveTimezone } from "../../lib/agenda";
 import { api } from "../../lib/api";
 import {
-  attendanceActivities, attendanceCoverage, attendanceScope, attendanceSource, attendanceStates,
+  attendanceActivities, attendanceCourseSource, attendanceCoverage, attendanceScope, attendanceSource, attendanceStates,
   type ScopedAttendance,
 } from "../../lib/attendance";
 
@@ -65,8 +65,9 @@ function ScopedReport({ report, timeZone }: { report: ScopedAttendance; timeZone
   );
 }
 
-export function CourseAttendance({ courseId, onOpen, timeZone }: {
+export function CourseAttendance({ courseId, courseUrl, onOpen, timeZone }: {
   courseId: number;
+  courseUrl: string;
   onOpen: (url: string) => void;
   timeZone?: string;
 }) {
@@ -78,6 +79,7 @@ export function CourseAttendance({ courseId, onOpen, timeZone }: {
   const activity = activities.find(item => item.id === activityId) ?? activities[0];
   const report = activity?.reports.find(item => item.source.sourceId === scopeId) ?? activity?.reports[0];
   const source = report && attendanceSource(report);
+  const courseSource = coverage?.coverage === "unsupported" && attendanceCourseSource(courseUrl);
   const statusLabel = status === "loading" ? "Loading local attendance…" :
     status === "locked" ? "Verify your Quanta session to view attendance" :
       status === "failed" ? "Couldn’t load local attendance" : attendanceCoverage(coverage);
@@ -93,6 +95,7 @@ export function CourseAttendance({ courseId, onOpen, timeZone }: {
         <div className="course-grade-actions">
           <Button size="sm" onClick={reload} aria-label="Reload local attendance" leadingIcon={<RotateCw aria-hidden="true" />}>Reload</Button>
           {source && <Button size="sm" onClick={() => onOpen(source)} leadingIcon={<ExternalLink aria-hidden="true" />}>Open in Quanta</Button>}
+          {!source && courseSource && <Button size="sm" onClick={() => onOpen(courseSource)} leadingIcon={<ExternalLink aria-hidden="true" />}>Open course in Quanta</Button>}
         </div>
       </div>
       {activity && report ? (

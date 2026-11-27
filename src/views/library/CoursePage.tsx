@@ -1020,7 +1020,7 @@ export default function CoursePage({
         </Banner>
       )}
       {tab === "attendance" ? (
-        <CourseAttendance key={course.id} courseId={course.id} onOpen={onOpen} timeZone={timeZone} />
+        <CourseAttendance key={course.id} courseId={course.id} courseUrl={course.url} onOpen={onOpen} timeZone={timeZone} />
       ) : tab === "grades" ? (
         <CourseGrades course={course} onOpen={onOpen} timeZone={timeZone} />
       ) : tab === "contents" && (items === null || (inventoryPending && total === 0)) && !inventoryError ? (

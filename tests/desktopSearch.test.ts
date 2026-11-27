@@ -4,6 +4,18 @@ import { course, resource as makeResource } from './helpers/data';
 import type { Resource } from '../src/lib/types';
 const resource = (overrides: Partial<Resource> = {}) => makeResource({ externalResourceId: `r${overrides.id ?? 1}`, ...overrides });
 
+it('filters and ranks stored local activity timestamps the same way as Library', () => {
+  const inventory = { courses: [course], resources: [
+    resource({ id: 1, title: 'Lecture', uploadedAt: '2026-11-21T10:00:00' }),
+    resource({ id: 2, title: 'Lecture', uploadedAt: '2026-11-21T13:00:00' }),
+    resource({ id: 3, title: 'Lecture', uploadedAt: '2026-02-30T13:00:00' }),
+  ] };
+  const request = { raw: 'lecture', scope: { kind: 'everywhere' } as const, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone };
+  expect(searchDesktop(request, inventory).files.map(file => file.id)).toEqual([2, 1, 3]);
+  expect(searchDesktop({ ...request, filters: { sourceFrom: '2026-11-21', sourceThrough: '2026-11-21' } }, inventory)
+    .files.map(file => file.id)).toEqual([2, 1]);
+});
+
 it('ANDs terms across metadata, ranks titles, and retains exact folder identities', () => {
   const result = searchDesktop({ raw: 'lecture 4', scope: { kind: 'everywhere' } }, {
     courses: [course, { ...course, id: 2 }], resources: [
