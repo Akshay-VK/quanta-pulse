@@ -8,6 +8,7 @@ import { useAcademicPage } from "./useAcademicPage";
 export function useLocalAcademicReport<T>(
   courseId: number,
   read: (generation: string, courseId: number) => Promise<AcademicPage<T>>,
+  check?: (generation: string, courseId: number) => Promise<AcademicPage<T>>,
 ) {
   const epoch = useSyncExternalStore(subscribeAcademicSession, academicEpoch);
   const [attempt, setAttempt] = useState(0);
@@ -17,6 +18,10 @@ export function useLocalAcademicReport<T>(
     attempt: number;
     page: AcademicPage<T> | null;
     status: "ready" | "locked" | "failed";
+  }>();
+  const [checkResult, setCheckResult] = useState<{
+    report: typeof result;
+    status: "checking" | "failed";
   }>();
   useEffect(() => {
     let active = true;
@@ -47,5 +52,25 @@ export function useLocalAcademicReport<T>(
   const current = result?.courseId === courseId && result.epoch === epoch && result.attempt === attempt ? result : undefined;
   const page = useAcademicPage(current?.page ?? null);
   const status = current?.status === "ready" && !page ? "locked" : current?.status ?? "loading";
-  return { page, status, reload: () => setAttempt(value => value + 1) };
+  const checkStatus = checkResult && checkResult.report === current ? checkResult.status : null;
+
+  async function checkNow() {
+    if (!check || !page || !current || checkStatus === "checking" || epoch !== academicEpoch()) return;
+    setCheckResult({ report: current, status: "checking" });
+    try {
+      const next = await check(page.context.generation, courseId);
+      if (epoch !== academicEpoch()) return;
+      if (next.courseId !== courseId || !sameAcademicSession(page.context, next.context)) {
+        throw new Error("Academic session changed");
+      }
+      setResult(previous => previous === current ? { ...current, page: next } : previous);
+      setCheckResult(previous => previous?.report === current ? undefined : previous);
+    } catch {
+      if (epoch === academicEpoch()) {
+        setCheckResult(previous => previous?.report === current ? { ...previous, status: "failed" } : previous);
+      }
+    }
+  }
+
+  return { page, status, reload: () => setAttempt(value => value + 1), checkNow, checkStatus };
 }

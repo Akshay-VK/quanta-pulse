@@ -7,7 +7,7 @@ import { gradeGroups, gradeReportUrl, gradeValue } from "../../lib/grades";
 import type { AcademicCoverage, Course, GradeObservation } from "../../lib/types";
 
 function coverageLabel(coverage: AcademicCoverage | null | undefined) {
-  if (!coverage) return "Grade source awaiting verification";
+  if (!coverage) return "No grades checked yet";
   if (coverage.permission === "restricted") return "Grade report access is restricted";
   switch (coverage.coverage) {
     case "complete": return coverage.stale ? "Stale · session expired" : "Complete report";
@@ -52,7 +52,7 @@ export function CourseGrades({ course, onOpen, timeZone }: {
   onOpen: (url: string) => void;
   timeZone?: string;
 }) {
-  const { page, status, reload } = useLocalAcademicReport(course.id, api.academicGrades);
+  const { page, status, reload, checkNow, checkStatus } = useLocalAcademicReport(course.id, api.academicGrades, api.checkCourseGrades);
   const coverage = page?.coverage;
   const reportUrl = gradeReportUrl(course.externalCourseId);
   const records = coverage?.permission === "permitted" && coverage.coverage !== "unsupported" ? page?.records ?? [] : [];
@@ -74,9 +74,13 @@ export function CourseGrades({ course, onOpen, timeZone }: {
             : status === "failed" ? "Couldn’t load local grades" : coverageLabel(coverage)}</strong>
           {timestamp && <span>Last complete report <time dateTime={lastSuccess ?? undefined}>{timestamp}</time></span>}
           {status === "ready" && !coverage && !page?.context.collectorsEnabled && <span>Automatic grade collection is disabled.</span>}
+          {checkStatus === "failed" && <span>Couldn’t check grades. Confirm your Quanta session and try again.</span>}
         </div>
         <div className="course-grade-actions">
-          <Button size="sm" onClick={reload} aria-label="Reload local grades" leadingIcon={<RotateCw aria-hidden="true" />}>Reload</Button>
+          {reportUrl && <Button size="sm" variant="primary" onClick={() => void checkNow()} disabled={status !== "ready"} loading={checkStatus === "checking"}>
+            {checkStatus === "checking" ? "Checking grades…" : "Check grades"}
+          </Button>}
+          <Button size="sm" onClick={reload} disabled={checkStatus === "checking"} aria-label="Reload local grades" leadingIcon={<RotateCw aria-hidden="true" />}>Reload</Button>
           {reportUrl && <Button size="sm" onClick={() => onOpen(reportUrl)} leadingIcon={<ExternalLink aria-hidden="true" />}>Open in Quanta</Button>}
         </div>
       </div>

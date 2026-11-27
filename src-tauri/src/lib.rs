@@ -52,6 +52,7 @@ pub fn run() {
             commands::academic_context,
             commands::academic_assignments,
             commands::academic_grades,
+            commands::check_course_grades,
             commands::academic_attendance,
             commands::login,
             commands::auth_status,

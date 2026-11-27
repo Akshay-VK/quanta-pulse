@@ -32,6 +32,7 @@ const grades = [
 let app: Awaited<ReturnType<typeof renderApp>> | undefined;
 let owner: AcademicContext;
 let read: () => AcademicPage<GradeObservation> | Promise<AcademicPage<GradeObservation>>;
+let check: typeof read;
 
 function page(records = grades, state: AcademicCoverage | null = coverage): AcademicPage<GradeObservation> {
   return { context: owner, courseId: 1, coverage: state, records };
@@ -42,14 +43,17 @@ beforeEach(async () => {
   invalidateAcademicSession();
   owner = ownerA;
   read = () => page();
+  check = () => page();
   invoke.mockReset().mockImplementation((command: string) => {
     if (command === "academic_context") return Promise.resolve(owner);
     if (command === "academic_grades") return Promise.resolve(read());
+    if (command === "check_course_grades") return Promise.resolve(check());
     throw new Error(command);
   });
   const { api } = await vi.importActual<typeof import("../src/lib/api")>("../src/lib/api");
   appApi.academicContext.mockImplementation(api.academicContext);
   appApi.academicGrades.mockImplementation(api.academicGrades);
+  appApi.checkCourseGrades.mockImplementation(api.checkCourseGrades);
 });
 afterEach(() => { app?.unmount(); app = undefined; });
 
@@ -77,6 +81,50 @@ function report() {
   expect(result).not.toBeNull();
   return result!;
 }
+
+it("fetches grades only when asked and displays the checked report", async () => {
+  read = () => page([], null);
+  const pending = deferred<AcademicPage<GradeObservation>>();
+  check = () => pending.promise;
+  await openCourse();
+  const gradeChecks = () => invoke.mock.calls.filter(([command]) => command === "check_course_grades");
+  expect(gradeChecks()).toHaveLength(0);
+  await click(button("Check grades", report()));
+  expect(gradeChecks()).toEqual([["check_course_grades", { generation: "A", courseId: 1 }]]);
+  expect(button("Checking grades…", report()).hasAttribute("disabled")).toBe(true);
+  pending.resolve(page());
+  await flushApp();
+  expect(report().textContent).toContain("71.25 / 95");
+  expect(button("Check grades", report()).hasAttribute("disabled")).toBe(false);
+});
+
+it("discards an in-flight grade check after an account change", async () => {
+  const pending = deferred<AcademicPage<GradeObservation>>();
+  check = () => pending.promise;
+  await openCourse();
+  await click(button("Check grades", report()));
+  owner = ownerB;
+  read = () => page([], null);
+  await emitAppEvent("auth:changed", undefined);
+  pending.resolve({ context: ownerA, courseId: 1, coverage, records: grades });
+  await flushApp();
+  expect(report().textContent).not.toContain("71.25 / 95");
+  expect(report().textContent).not.toContain("Couldn’t check grades");
+  expect(button("Check grades", report()).hasAttribute("disabled")).toBe(false);
+});
+
+it("keeps a rejected check local and allows another attempt", async () => {
+  read = () => page([], null);
+  check = () => { throw new Error("private diagnostic"); };
+  await openCourse();
+  await click(button("Check grades", report()));
+  expect(report().textContent).toContain("Couldn’t check grades");
+  expect(report().textContent).not.toContain("private diagnostic");
+  check = () => page();
+  await click(button("Check grades", report()));
+  expect(report().textContent).toContain("71.25 / 95");
+  expect(report().textContent).not.toContain("Couldn’t check grades");
+});
 
 it("renders source totals and disclosures while preserving Course Materials and Activity", async () => {
   await openCourse(true);

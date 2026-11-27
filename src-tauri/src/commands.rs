@@ -1490,5 +1490,16 @@ pub fn academic_assignments(state: State<AppState>, generation: String, course_i
 #[tauri::command]
 pub fn academic_grades(state: State<AppState>, generation: String, course_id: i64) -> Result<crate::academic::AcademicPage<crate::academic::GradeObservation>, String> { crate::academic::grades(&state, &generation, course_id) }
 
+/// Check the selected course once using the verified student's Quanta session.
+#[tauri::command]
+pub async fn check_course_grades(
+    state: State<'_, AppState>,
+    generation: String,
+    course_id: i64,
+) -> Result<crate::academic::AcademicPage<crate::academic::GradeObservation>, String> {
+    crate::grades::collect(&state, &generation, course_id).await?;
+    crate::academic::grades(&state, &generation, course_id)
+}
+
 #[tauri::command]
 pub fn academic_attendance(state: State<AppState>, generation: String, course_id: i64) -> Result<crate::academic::AcademicPage<crate::academic::AttendanceObservation>, String> { crate::academic::attendance(&state, &generation, course_id) }

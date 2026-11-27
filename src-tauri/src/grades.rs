@@ -1,5 +1,5 @@
-//! Local grade observation pipeline for a bounded, synthetic self-report dialect.
-//! No scheduler or desktop command fetches this source before V1 validation.
+//! Grade observations from a bounded, verified-student course report.
+//! The desktop action checks a single course on demand.
 
 use std::collections::HashSet;
 
@@ -121,13 +121,16 @@ fn parse_report(body: &str, url: &str, student: i64) -> Option<(Coverage, Vec<Gr
     if table.ancestors().filter_map(ElementRef::wrap).any(hidden) || hidden(table) {
         return None;
     }
-    let container = table.parent().and_then(ElementRef::wrap)?;
+    let container = table
+        .ancestors()
+        .filter_map(ElementRef::wrap)
+        .find(|node| {
+            node.value()
+                .classes()
+                .any(|class| class == "user-report-container")
+        })?;
     let container_id = format!("user-report-{student}");
-    if !container.value().has_class(
-        "user-report-container",
-        scraper::CaseSensitivity::CaseSensitive,
-    ) || container.value().id() != Some(container_id.as_str())
-    {
+    if container.value().id() != Some(container_id.as_str()) {
         return None;
     }
     let header = unique(table.select(&selector("thead > tr")))?;

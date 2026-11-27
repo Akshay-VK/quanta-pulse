@@ -12,6 +12,13 @@ async fn own_grade_reports_keep_literal_values_and_reconcile_visibility_across_s
         )
     };
     let report = include_str!("fixtures/academic/grades/self-report.html");
+    let nested = report
+        .replace("<table", "<div class=\"table-responsive\"><table")
+        .replace("</table>", "</table></div>");
+    let wrong_nested = nested.replace(
+        "class=\"table-responsive\"",
+        "class=\"user-report-container\" id=\"user-report-5252\"",
+    );
     let restricted = report
         .replace(
             "headers=\"cat_12_4242 row_11_4242 grade4242\"",
@@ -31,7 +38,8 @@ async fn own_grade_reports_keep_literal_values_and_reconcile_visibility_across_s
     let server = ReportServer::start(vec![
         verified_reply(),
         reply(200, &report.replace("4242", "5252")),
-        reply(200, report),
+        reply(200, &wrong_nested),
+        reply(200, &nested),
         reply(503, ""),
         reply(200, &restricted),
         reply(200, &partial),
@@ -59,6 +67,10 @@ async fn own_grade_reports_keep_literal_values_and_reconcile_visibility_across_s
     let unsupported = page().coverage.unwrap();
     assert_eq!(unsupported.coverage, Coverage::Unsupported);
     assert!(!unsupported.baseline_established);
+    assert!(!collect().await.unwrap().changed);
+    let rejected = page();
+    assert_eq!(rejected.coverage.unwrap().coverage, Coverage::Unsupported);
+    assert!(rejected.records.is_empty());
     assert!(!collect().await.unwrap().changed);
     let observed = page();
     assert!(observed.coverage.unwrap().baseline_established);
@@ -165,7 +177,7 @@ async fn own_grade_reports_keep_literal_values_and_reconcile_visibility_across_s
     }
     server.server.join().unwrap();
     let requests = server.requests.try_iter().collect::<Vec<_>>();
-    assert_eq!(requests.len(), 7);
+    assert_eq!(requests.len(), 8);
     assert!(requests[1..]
         .iter()
         .all(|r| r.starts_with("GET /grade/report/user/index.php?id=101 ")));

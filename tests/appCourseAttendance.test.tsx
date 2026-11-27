@@ -140,7 +140,7 @@ it("discards delayed prior-owner results and keeps attendance errors local", asy
   expect(report().textContent).toContain("Couldn’t load local attendance");
   expect(report().textContent).not.toContain("private diagnostic");
   await click(button("Grades"));
-  expect(document.querySelector('[aria-label="Course grade report"]')?.textContent).toContain("Grade source awaiting verification");
+  expect(document.querySelector('[aria-label="Course grade report"]')?.textContent).toContain("No grades checked yet");
 });
 
 it("shows retained scope freshness after an unavailable check and hides restricted records and unsafe source actions", async () => {

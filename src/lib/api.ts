@@ -74,6 +74,7 @@ export const api = {
   },
   academicAssignments: (generation: string, courseId: number) => academicRead<AssignmentObservation>("academic_assignments", generation, courseId),
   academicGrades: (generation: string, courseId: number) => academicRead<GradeObservation>("academic_grades", generation, courseId),
+  checkCourseGrades: (generation: string, courseId: number) => academicRead<GradeObservation>("check_course_grades", generation, courseId),
   academicAttendance: (generation: string, courseId: number) => academicRead<AttendanceObservation>("academic_attendance", generation, courseId),
   login: (email: string, password: string) => {
     invalidateAcademicSession();
