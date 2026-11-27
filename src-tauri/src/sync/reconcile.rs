@@ -44,6 +44,56 @@ fn read_setting(conn: &rusqlite::Connection, key: &str) -> rusqlite::Result<Opti
     .optional()
 }
 
+/// Baseline decisions captured before collecting data. Legacy databases can
+/// omit reset keys, but an unreadable or malformed key must stop the scan.
+pub(crate) struct BaselineState {
+    pub established: bool,
+    pub generation: i64,
+    pub global_generation: i64,
+    pub rebaseline: HashSet<i64>,
+}
+
+impl BaselineState {
+    pub(crate) fn capture(conn: &rusqlite::Connection) -> Result<Self, String> {
+        let established = baseline_setting(conn, "baseline_established")?
+            .map(|raw| {
+                chrono::DateTime::parse_from_rfc3339(&raw)
+                    .map_err(|error| format!("invalid baseline_established: {error}"))
+            })
+            .transpose()?
+            .is_some();
+        Ok(Self {
+            established,
+            generation: baseline_generation_value(conn, "baseline_reset_generation")?,
+            global_generation: baseline_generation_value(conn, "baseline_global_reset_generation")?,
+            rebaseline: rebaseline_courses(conn)?,
+        })
+    }
+}
+
+fn baseline_setting(conn: &rusqlite::Connection, key: &str) -> Result<Option<String>, String> {
+    read_setting(conn, key).map_err(|error| format!("could not read {key}: {error}"))
+}
+
+fn baseline_generation_value(conn: &rusqlite::Connection, key: &str) -> Result<i64, String> {
+    baseline_setting(conn, key)?.map_or(Ok(0), |raw| {
+        raw.parse::<u64>()
+            .ok()
+            .and_then(|generation| i64::try_from(generation).ok())
+            .ok_or_else(|| format!("invalid {key}"))
+    })
+}
+
+fn rebaseline_courses(conn: &rusqlite::Connection) -> Result<HashSet<i64>, String> {
+    baseline_setting(conn, "rebaseline_courses")?.map_or_else(
+        || Ok(HashSet::new()),
+        |raw| {
+            serde_json::from_str(&raw)
+                .map_err(|error| format!("invalid rebaseline_courses: {error}"))
+        },
+    )
+}
+
 /// Remove only start-of-scan reset markers for courses that completed a full
 /// discovery. The setting is re-read before writing to preserve requests added
 /// by another command while the scan was in progress.
@@ -54,7 +104,7 @@ fn consume_completed_rebaseline_markers(
     completed_course_ids: &HashSet<i64>,
     captured_generation: i64,
     cancelled: bool,
-) -> rusqlite::Result<()> {
+) -> Result<(), String> {
     if cancelled {
         return Ok(());
     }
@@ -66,40 +116,35 @@ fn consume_completed_rebaseline_markers(
         return Ok(());
     }
 
-    let tx = conn.transaction()?;
+    let tx = conn.transaction().map_err(|error| error.to_string())?;
     consume_rebaseline_markers(&tx, &consumed, captured_generation)?;
-    tx.commit()
+    tx.commit().map_err(|error| error.to_string())
 }
 
 fn consume_rebaseline_markers(
     conn: &rusqlite::Connection,
     consumed: &HashSet<i64>,
     captured_generation: i64,
-) -> rusqlite::Result<()> {
+) -> Result<(), String> {
     if consumed.is_empty() {
         return Ok(());
     }
-    let current_generation = read_setting(conn, "baseline_reset_generation")?
-        .and_then(|value| value.parse::<i64>().ok())
-        .unwrap_or(0);
+    let current_generation = baseline_generation_value(conn, "baseline_reset_generation")?;
     if current_generation != captured_generation {
         return Ok(());
     }
-    let current: HashSet<i64> = read_setting(conn, "rebaseline_courses")?
-        .and_then(|raw| serde_json::from_str::<Vec<i64>>(&raw).ok())
-        .unwrap_or_default()
-        .into_iter()
-        .collect();
+    let current = rebaseline_courses(conn)?;
     let mut remaining: Vec<i64> = current.difference(&consumed).copied().collect();
     remaining.sort_unstable();
     if remaining.is_empty() {
-        db::del_kv(conn, "rebaseline_courses")?;
+        db::del_kv(conn, "rebaseline_courses").map_err(|error| error.to_string())?;
     } else {
         db::set_kv(
             conn,
             "rebaseline_courses",
             &serde_json::to_string(&remaining).expect("course IDs always serialize"),
-        )?;
+        )
+        .map_err(|error| error.to_string())?;
     }
     Ok(())
 }
@@ -306,6 +351,7 @@ fn reminder_deadline<'a>(
 /// backend regressions driven through loopback HTTP and real SQLite.
 pub fn commit_scan(
     conn: &rusqlite::Connection,
+    scan_id: i64,
     discovery: &discover::Discovery,
     baseline: bool,
     baseline_generation: i64,
@@ -321,7 +367,8 @@ pub fn commit_scan(
     let mut unavailable_count = 0i64;
     let mut seen_ids: Vec<String> = Vec::new();
     let mut missing_ids: Vec<String> = Vec::new();
-    let mut commit_ok = false;
+    let status = discovery_status(discovery);
+    let complete = status == "ok";
 
     let tx = match conn.unchecked_transaction() {
         Ok(tx) => tx,
@@ -470,7 +517,7 @@ pub fn commit_scan(
         }
     }
 
-    if discovery.errors.is_empty() && !discovery.cancelled && result.errors.is_empty() {
+    if complete && result.errors.is_empty() {
         let seen: HashSet<&String> = seen_ids.iter().collect();
         match db::all_resource_external_ids(&tx) {
             Ok(ids) => missing_ids = ids.into_iter().filter(|id| !seen.contains(id)).collect(),
@@ -601,23 +648,17 @@ pub fn commit_scan(
         }
     }
 
-    if baseline && !discovery.cancelled && discovery.errors.is_empty() && result.errors.is_empty() {
-        match read_setting(&tx, "baseline_global_reset_generation") {
-            Ok(value) => {
-                let current_generation = value
-                    .and_then(|value| value.parse::<i64>().ok())
-                    .unwrap_or(0);
-                if current_generation == global_generation {
-                    if let Err(error) = db::set_kv(&tx, "baseline_established", now) {
-                        result
-                            .errors
-                            .push(format!("baseline write failed: {error}"));
-                    }
+    if baseline && complete && result.errors.is_empty() {
+        match baseline_generation_value(&tx, "baseline_global_reset_generation") {
+            Ok(current_generation) if current_generation == global_generation => {
+                if let Err(error) = db::set_kv(&tx, "baseline_established", now) {
+                    result
+                        .errors
+                        .push(format!("baseline write failed: {error}"));
                 }
             }
-            Err(error) => result
-                .errors
-                .push(format!("baseline generation read failed: {error}")),
+            Ok(_) => {}
+            Err(error) => result.errors.push(error),
         }
     }
 
@@ -636,29 +677,50 @@ pub fn commit_scan(
         }
     }
 
-    if result.errors.is_empty() {
-        match tx.commit() {
-            Ok(()) => commit_ok = true,
-            Err(e) => result.errors.push(format!("commit failed: {e}")),
-        }
-    } else {
-        let _ = tx.rollback();
+    if !result.errors.is_empty() {
+        return result;
     }
 
-    if commit_ok {
-        result.committed = true;
-        result.new = new_count as usize;
-        result.updated = updated_count as usize;
-        result.unavailable = unavailable_count as usize;
-        result.missing_ids = missing_ids;
-    } else {
-        result.committed = false;
-        result.new = 0;
-        result.updated = 0;
-        result.unavailable = 0;
-        result.missing_ids.clear();
+    let summary = (!discovery.errors.is_empty()).then(|| discovery.errors.join("; "));
+    if let Err(error) = db::finish_scan(
+        &tx,
+        scan_id,
+        status,
+        discovery.resources.len() as i64,
+        new_count,
+        updated_count,
+        unavailable_count,
+        discovery.courses_scanned as i64,
+        discovery.courses_failed as i64,
+        summary.as_deref(),
+        baseline,
+        now,
+    ) {
+        result.errors.push(format!("scan finish failed: {error}"));
+        return result;
     }
+
+    if let Err(error) = tx.commit() {
+        result.errors.push(format!("commit failed: {error}"));
+        return result;
+    }
+
+    result.committed = true;
+    result.new = new_count as usize;
+    result.updated = updated_count as usize;
+    result.unavailable = unavailable_count as usize;
+    result.missing_ids = missing_ids;
     result
+}
+
+fn discovery_status(discovery: &discover::Discovery) -> &'static str {
+    if discovery.cancelled {
+        "cancelled"
+    } else if discovery.courses_failed > 0 || !discovery.errors.is_empty() {
+        "partial"
+    } else {
+        "ok"
+    }
 }
 
 #[cfg(test)]

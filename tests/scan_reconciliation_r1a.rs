@@ -96,6 +96,7 @@ fn failed_resource_statement_rolls_back() {
     let rebaseline = HashSet::new();
     let result = engine::commit_scan(
         &conn,
+        db::start_scan(&conn, &db::now_rfc3339()).unwrap(),
         &discovery,
         true,
         baseline_gen,
@@ -147,6 +148,7 @@ fn failed_event_statement_rolls_back() {
 
     let result = engine::commit_scan(
         &conn,
+        db::start_scan(&conn, &db::now_rfc3339()).unwrap(),
         &discovery,
         false,
         0,
@@ -257,6 +259,7 @@ fn commit_failure_via_deferred_fk_preserves_state() {
 
     let result = engine::commit_scan(
         &conn,
+        db::start_scan(&conn, &db::now_rfc3339()).unwrap(),
         &discovery,
         false,
         0,
@@ -314,6 +317,7 @@ fn complete_success_commits_and_preserves_quiet_baseline() {
 
     let result = engine::commit_scan(
         &conn,
+        db::start_scan(&conn, &db::now_rfc3339()).unwrap(),
         &discovery,
         true,
         0,
@@ -366,6 +370,7 @@ fn reset_during_collection_retains_newer_generation() {
     // scan captured stale generation 0
     let result = engine::commit_scan(
         &conn,
+        db::start_scan(&conn, &db::now_rfc3339()).unwrap(),
         &discovery,
         true,
         0,
@@ -384,4 +389,109 @@ fn reset_during_collection_retains_newer_generation() {
         .parse()
         .unwrap();
     assert_eq!(gen_after, newer_gen);
+}
+
+#[test]
+fn rust_review_rejected_scan_finalization_rolls_back_computed_counts_and_effects() {
+    let (addr, handle) = server(3, |path| {
+        if path == "/my/" {
+            (
+                200,
+                r#"<a href="/course/view.php?id=10">Course Ten</a>"#.into(),
+            )
+        } else if path.starts_with("/course/view.php") {
+            (200, course_page())
+        } else {
+            (200, "<html><body>details</body></html>".into())
+        }
+    });
+    let discovery = discovery_from(addr);
+    handle.join().unwrap();
+    assert!(discovery.errors.is_empty());
+
+    let dir = tempfile::tempdir().unwrap();
+    let conn = db::open(&dir.path().join("t.db")).unwrap();
+    let now = "2026-11-16T00:00:00Z";
+    db::set_kv(&conn, "baseline_established", now).unwrap();
+    let scan_id = db::start_scan(&conn, now).unwrap();
+    // The trigger only rejects finalization after discovery and reconciliation
+    // have produced a new resource and its event in the same transaction.
+    conn.execute_batch(
+        "CREATE TRIGGER reject_success BEFORE UPDATE ON scan_runs
+         WHEN NEW.new_count = 1 AND EXISTS (SELECT 1 FROM change_events WHERE change_type = 'new')
+         BEGIN SELECT RAISE(ABORT, 'rejected finalized result'); END;",
+    )
+    .unwrap();
+
+    let result = engine::commit_scan(
+        &conn,
+        scan_id,
+        &discovery,
+        false,
+        0,
+        0,
+        &HashSet::new(),
+        24,
+        now,
+        None,
+    );
+    assert!(!result.committed, "{result:?}");
+    assert!(result
+        .errors
+        .iter()
+        .any(|error| error.contains("rejected finalized result")));
+    assert_eq!((result.new, result.updated, result.unavailable), (0, 0, 0));
+    assert!(result.missing_ids.is_empty());
+    for table in ["courses", "resources", "change_events"] {
+        let count: i64 = conn
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0, "{table}");
+    }
+    let history: (String, Option<String>) = conn
+        .query_row(
+            "SELECT status, completed_at FROM scan_runs WHERE id = ?1",
+            [scan_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(history, ("running".into(), None));
+}
+
+#[test]
+fn rust_review_ignored_scan_finalization_preserves_pending_global_baseline() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut conn = db::open(&dir.path().join("t.db")).unwrap();
+    let now = "2026-11-16T00:00:00Z";
+    let generation = db::request_baseline_reset(&mut conn, None).unwrap();
+    let scan_id = db::start_scan(&conn, now).unwrap();
+    conn.execute_batch(
+        "CREATE TRIGGER ignore_completed_baseline BEFORE UPDATE ON scan_runs
+         WHEN EXISTS (SELECT 1 FROM settings WHERE key = 'baseline_established')
+         BEGIN SELECT RAISE(IGNORE); END;",
+    )
+    .unwrap();
+
+    let result = engine::commit_scan(
+        &conn,
+        scan_id,
+        &discover::Discovery::default(),
+        true,
+        generation,
+        generation,
+        &HashSet::new(),
+        24,
+        now,
+        None,
+    );
+    assert!(!result.committed, "{result:?}");
+    assert!(result.errors[0].contains("scan finish failed"));
+    assert!(db::get_kv(&conn, "baseline_established").is_none());
+    assert_eq!(
+        db::get_kv(&conn, "baseline_global_reset_generation").as_deref(),
+        Some("1"),
+    );
+    assert_eq!(db::list_scans(&conn, 10).unwrap()[0].status, "running");
 }

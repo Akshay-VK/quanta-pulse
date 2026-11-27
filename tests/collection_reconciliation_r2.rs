@@ -106,6 +106,7 @@ fn commit(
 ) -> engine::ReconcileResult {
     engine::commit_scan(
         conn,
+        db::start_scan(conn, &db::now_rfc3339()).unwrap(),
         found,
         baseline,
         0,
@@ -394,6 +395,7 @@ fn empty_and_failed_detail_containers_survive_without_consuming_course_reset() {
         db::set_kv(&conn, "rebaseline_courses", &format!("[{cid}]")).unwrap();
         let result = engine::commit_scan(
             &conn,
+            db::start_scan(&conn, &db::now_rfc3339()).unwrap(),
             &found,
             false,
             0,
@@ -503,6 +505,7 @@ fn rejected_deadline_reminder_does_not_report_committed_success() {
     // clock dependence on a short-lived fixture deadline.
     let result = engine::commit_scan(
         &conn,
+        db::start_scan(&conn, &db::now_rfc3339()).unwrap(),
         &found,
         false,
         0,
