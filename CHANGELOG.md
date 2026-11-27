@@ -8,6 +8,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Before 1.0.0 the policy is: **minor** for features, redesigns and migrations,
 **patch** for fixes. A version is never reused or lowered, and tags are `vX.Y.Z`.
 
+## [0.4.1] - 2026-11-27
+
+### Added
+
+- Check a course's grades on demand using your signed-in Quanta session. The
+  Grades tab shows Moodle's reported totals, categories, grade items and ranges,
+  with score bars for items that have a numeric range. Checks save the report
+  locally for the signed-in student.
+- Browse expandable course folders directly from the sidebar. Search across
+  courses, folders and materials in the command palette and Library, and carry
+  your query and filters into the full results view.
+- Opt into finding text inside supported saved files on Windows x64. Matches
+  show a snippet from the local copy. This covers supported UTF-8 text formats
+  in libraries with up to 5,000 inventory entries.
+
+### Changed
+
+- Sort numbered file names naturally, so Lecture 2 comes before Lecture 10.
+  Library distinguishes a file's activity date from when Pulse detected it.
+- Added support for displaying saved assignment details in Agenda and saved
+  attendance reports by activity and date range. Live attendance fetching and
+  automatic academic collection are still disabled.
+
+### Fixed
+
+- Keep Library search filters, unread indicators and deadline results consistent
+  as you change scope or as course data refreshes.
+- Keep failed scans from reporting success and incomplete discovery from
+  falsely marking missing files unavailable. Persist scan history and inventory
+  changes together.
+- Protect session changes and local database upgrades with verified-owner
+  checks, cancellation of stale sign-in attempts, and pre-migration backups.
+
 ## [0.4.0] - 2026-11-20
 
 ### Added
